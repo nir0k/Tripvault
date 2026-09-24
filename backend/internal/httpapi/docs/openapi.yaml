@@ -1,0 +1,5079 @@
+openapi: 3.1.0
+
+info:
+  title: Tripvault API
+  # Replaced at start-up with the running build's version, which comes from the
+  # repository's VERSION file. The placeholder keeps this a valid document.
+  version: 0.0.0-dev
+  summary: Self-hosted trip planning and trip reports
+  description: |
+    REST API of Tripvault. The web client uses exactly this API, and so can any
+    other client.
+
+    **Authentication.** Sign in with `POST /api/v1/auth/login` and send the
+    access token in the `Authorization: Bearer` header. Access tokens are
+    short-lived; exchange the refresh token for a new pair before the access
+    token expires. A refresh token works once: the one you present is replaced.
+
+    **Temporary passwords.** An account created or reset by an administrator
+    must change its password first. Until it does, every endpoint except
+    `GET /api/v1/me` and `POST /api/v1/me/password` answers
+    `403 password_change_required`.
+
+    **Amounts** are decimal strings with two fractional digits, such as
+    `"1240.50"`, in the trip currency. **Dates** are `YYYY-MM-DD`.
+
+    **Paging.** Paged lists accept `limit` and `cursor` and return
+    `next_cursor`, which is `null` on the last page.
+
+    **Errors.** Every error has the same shape: a stable `code` to branch on,
+    an English `message`, and optional `details`. Clients translate the code.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+
+servers:
+  # Relative on purpose: the document is served by the API itself, so this
+  # resolves to whichever host the reader reached it on.
+  - url: /
+    description: This instance
+
+tags:
+  - name: Service
+    description: Liveness, readiness and client configuration.
+  - name: Authentication
+    description: Sign-in, token refresh and sign-out.
+  - name: Profile
+    description: The signed-in account's own settings, password and sessions.
+  - name: Trips
+    description: |
+      Trips, their members and ownership. A person's role on a trip - owner,
+      editor or viewer - is read on every request. A trip the reader has no
+      access to answers `404`, exactly like a missing one; an action the role
+      does not allow answers `403 forbidden`.
+  - name: Documents
+    description: |
+      A trip's plan and report: days, places, stays and stay marks. Every
+      change answers with the whole document, recomputed, because a change to
+      one element moves stay marks, schedules and totals elsewhere. Owners and
+      editors change documents; viewers read them.
+  - name: Sharing
+    description: |
+      Read-only links to a trip, created and revoked by its owner. The token of
+      a link is 32 random bytes in base64url and lives in the fragment of the
+      external address, `https://<host>/s#token=<token>`, which the browser never
+      sends to a server. In requests it travels in the `X-Share-Token` header
+      rather than the query, so no proxy logs it. Only its SHA-256 is stored: the
+      full token appears once, in the answer that created the link, and a lost
+      link is replaced rather than recovered. Revoking takes effect at once.
+  - name: Budget
+    description: |
+      What a trip plans to spend, next to what it is willing to spend. Nothing
+      here is stored: the figures are assembled from the trip's plan on every
+      request, so a cost typed on a place, a stay, a leg or a separate expense is
+      in the totals at once. A report keeps its own record of what was actually
+      spent and reports it with the report, not here.
+  - name: Media
+    description: |
+      The files a trip carries: photographs of its report today. Bytes are
+      served only from these endpoints, which check the reader against the trip
+      on every request, and never from a static path. A file marked private is
+      left out of a read-only link unless that link was created to show private
+      files. Previews are rendered on demand at fixed widths and may be cached
+      by the browser, because the bytes under an identifier never change.
+  - name: Places
+    description: Place search, reverse lookups and reading positions from map links.
+  - name: Administration
+    description: Accounts, trips and service state. Administrators only.
+  - name: Backups
+    description: |
+      Copies of the whole service - every account, trip and photograph - and
+      putting one back. Administrators only. An archive is a gzipped tar holding
+      the tables as CSV beside the uploaded files, optionally locked with age, so
+      it can be opened years later by the `age` command line and a text editor
+      rather than only by this service. Credentials typed in here - an SFTP
+      password or private key, the passphrase archives are locked with - are
+      sealed with a key that lives outside the database and are never returned:
+      a configuration lists only the names of the credentials it holds.
+
+security:
+  - bearer: []
+
+paths:
+  /healthz:
+    get:
+      tags: [Service]
+      summary: Liveness probe
+      description: Reports that the process is alive. Checks no dependency.
+      operationId: getHealth
+      security: []
+      responses:
+        "200":
+          description: The process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+  /readyz:
+    get:
+      tags: [Service]
+      summary: Readiness probe
+      description: Reports whether the service can serve traffic.
+      operationId: getReadiness
+      security: []
+      responses:
+        "200":
+          description: Ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+        "503":
+          description: A dependency is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+
+  /version:
+    get:
+      tags: [Service]
+      summary: Running version
+      operationId: getVersion
+      security: []
+      responses:
+        "200":
+          description: The build information.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuildInfo"
+
+  /api/v1/config:
+    get:
+      tags: [Service]
+      summary: Client configuration
+      description: Instance settings a client needs before anybody signs in.
+      operationId: getClientConfig
+      security: []
+      responses:
+        "200":
+          description: The configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientConfig"
+
+  /api/v1/auth/login:
+    post:
+      tags: [Authentication]
+      summary: Sign in
+      description: |
+        Exchanges an email and password for a session. An unknown address, a
+        deactivated account and a wrong password all answer
+        `401 invalid_credentials`. Repeated attempts at one address, or many
+        wrong passwords from one client, answer `429 too_many_attempts` with
+        `Retry-After`.
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Signed in.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/TooManyAttempts"
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Refresh a session
+      description: Exchanges a refresh token for a new token pair on the same session.
+      operationId: refresh
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: Refreshed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Error"
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Sign out
+      description: Ends the session the refresh token belongs to. Always answers 204.
+      operationId: logout
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "204":
+          description: Signed out.
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+
+  /api/v1/me:
+    get:
+      tags: [Profile]
+      summary: The signed-in account
+      operationId: getMe
+      responses:
+        "200":
+          description: The account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    patch:
+      tags: [Profile]
+      summary: Change own settings
+      description: Every field is optional; omitted fields are left as they are.
+      operationId: updateMe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMeRequest"
+      responses:
+        "200":
+          description: The updated account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+    delete:
+      tags: [Profile]
+      summary: Delete own account
+      description: |
+        Deletes the signed-in account with everything only it holds: the trips it
+        owns, with their documents, costs and photographs, its memberships of
+        other people's trips and its sessions. The photographs it uploaded into
+        somebody else's trip stay there; only the record of who added them is
+        forgotten. There is no undo. The last active administrator is refused,
+        because the service must keep one.
+      operationId: deleteMe
+      responses:
+        "204":
+          description: The account is gone.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The account is the last active administrator.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/me/avatar:
+    put:
+      tags: [Profile]
+      summary: Set own picture
+      description: |
+        Stores the picture the account is shown by, sent as a multipart upload
+        with one `file` part. What is stored is not what was sent: the picture is
+        rendered to one small square, so nothing keeps the camera's metadata. The
+        kind of file is decided from its own bytes, and only the kinds this
+        service accepts are stored.
+      operationId: setAvatar
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: The account, now wearing the picture.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          description: The file is larger than this service accepts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          description: The bytes are not a kind of picture this service accepts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      tags: [Profile]
+      summary: Remove own picture
+      description: Leaves the account with the placeholder everybody starts with.
+      operationId: deleteAvatar
+      responses:
+        "200":
+          description: The account, without a picture.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/users/{userID}/avatar:
+    get:
+      tags: [Profile]
+      summary: Read an account's picture
+      description: |
+        The picture an account is shown by, as a JPEG. Readable by anybody signed
+        in: the people of a trip see each other's names, and the picture says no
+        more than the name does. An account without one answers `404`, which is
+        what the interface draws its placeholder on.
+      operationId: getAvatar
+      parameters:
+        - $ref: "#/components/parameters/UserID"
+      responses:
+        "200":
+          description: The picture.
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "304":
+          description: The copy the client holds is current.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/me/password:
+    post:
+      tags: [Profile]
+      summary: Change own password
+      description: |
+        Requires the current password. Ends every other session of the account;
+        the session making the change stays signed in. Clears the temporary
+        password flag.
+      operationId: changePassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "204":
+          description: Changed.
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/me/sessions:
+    get:
+      tags: [Profile]
+      summary: Own live sessions
+      operationId: listSessions
+      responses:
+        "200":
+          description: The sessions, most recently used first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SessionItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/me/sessions/{sessionID}:
+    delete:
+      tags: [Profile]
+      summary: End one of own sessions
+      description: Its access token stops working on the next request.
+      operationId: revokeSession
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "204":
+          description: Ended.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/users/search:
+    get:
+      tags: [Trips]
+      summary: Find people to add to a trip
+      description: |
+        Matches active accounts by name or email, leaving out the reader. A
+        query shorter than two characters returns nothing. At most ten results.
+      operationId: searchUsers
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+            maxLength: 200
+      responses:
+        "200":
+          description: The matches.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TripUser"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/geo/search:
+    get:
+      tags: [Places]
+      summary: Find places by name or address
+      description: |
+        Results near `lat`/`lng` come first. A query shorter than two
+        characters returns nothing. Answers are cached for everybody by text,
+        language and an area of about ten kilometres; clients should wait at
+        least 300 ms after typing stops. Without a configured geocoder the
+        answer is `503 geocoding_disabled`; when it is busy or down,
+        `503 geocoding_limited` or `503 geocoding_unavailable`.
+      operationId: geoSearch
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+            maxLength: 200
+        - $ref: "#/components/parameters/Lat"
+        - $ref: "#/components/parameters/Lng"
+        - $ref: "#/components/parameters/Lang"
+      responses:
+        "200":
+          $ref: "#/components/responses/Places"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/Error"
+
+  /api/v1/geo/reverse:
+    get:
+      tags: [Places]
+      summary: Name the places at a position
+      description: Nearest first, at most three. Errors as for the search.
+      operationId: geoReverse
+      parameters:
+        - $ref: "#/components/parameters/Lat"
+        - $ref: "#/components/parameters/Lng"
+        - $ref: "#/components/parameters/Lang"
+      responses:
+        "200":
+          $ref: "#/components/responses/Places"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/Error"
+
+  /api/v1/geo/parse-link:
+    get:
+      tags: [Places]
+      summary: Read a position from coordinates or a map link
+      description: |
+        Understands `lat, lng` pairs, `geo:` URIs, Google Maps links (place,
+        map centre, `q`/`ll`/`query` parameters, and `maps.app.goo.gl` short
+        links, which are followed only through Google hosts) and
+        openstreetmap.org links (`mlat`/`mlon` or `#map=zoom/lat/lng`). Needs no
+        geocoder. Anything else answers `422` with reason `unrecognized_link`.
+      operationId: geoParseLink
+      parameters:
+        - name: url
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 2000
+      responses:
+        "200":
+          description: The position, with the place name when the link carries one.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [lat, lng, name]
+                properties:
+                  lat:
+                    type: number
+                  lng:
+                    type: number
+                  name:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/Error"
+
+  /api/v1/trips:
+    get:
+      tags: [Trips]
+      summary: List own and shared trips
+      description: |
+        By relevance, the default, ongoing trips come first, then upcoming ones
+        by start date, then trips without dates, newest first, then completed
+        trips from the most recent. By update, the trip whose content anybody
+        changed last comes first. A plan and a report are separate trips;
+        `kind` lists one or the other.
+      operationId: listTrips
+      parameters:
+        - name: scope
+          in: query
+          schema:
+            type: string
+            enum: [all, owned, shared]
+            default: all
+        - name: kind
+          in: query
+          description: Keep only plans or only reports; omitted keeps both.
+          schema:
+            type: string
+            enum: [plan, report]
+        - name: year
+          in: query
+          description: Keep only trips whose period touches this year.
+          schema:
+            type: integer
+        - name: q
+          in: query
+          description: Part of the title.
+          schema:
+            type: string
+            maxLength: 200
+        - name: sort
+          in: query
+          description: |
+            The order of the list. A cursor continues only the order it was
+            returned for.
+          schema:
+            type: string
+            enum: [relevance, updated]
+            default: relevance
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of trips.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Trip"
+                  next_cursor:
+                    type: [string, "null"]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    post:
+      tags: [Trips]
+      summary: Create a trip
+      description: |
+        The reader becomes the owner. `kind` says whether the trip is a plan or a
+        report written from scratch; either comes with one empty day per date.
+        The currency defaults to the reader's default currency. A report made
+        from a plan is created with `POST /api/v1/trips/{tripID}/reports`.
+      operationId: createTrip
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTripRequest"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Trip"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/trips/years:
+    get:
+      tags: [Trips]
+      summary: Years of own and shared trips
+      description: The calendar years the reader's plans or reports touch, newest first, for the year filter.
+      operationId: listTripYears
+      parameters:
+        - name: kind
+          in: query
+          description: Count only plans or only reports; omitted counts both.
+          schema:
+            type: string
+            enum: [plan, report]
+      responses:
+        "200":
+          description: The years.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/trips/{tripID}:
+    get:
+      tags: [Trips]
+      summary: Read a trip
+      operationId: getTrip
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+      responses:
+        "200":
+          description: The trip.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Trip"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Trips]
+      summary: Change a trip
+      description: |
+        Owners and editors. Omitted fields are left as they are; `null` clears
+        the dates and the budget. Dates are set and cleared together.
+
+        New dates reshape the documents: moving the start moves every day and
+        stay by the same number of days, and a period of another length adds
+        empty days at the end or removes days from the end. When that removes
+        days holding content the answer is `409 days_would_be_removed` until
+        the request carries `"confirm": true`; a removed plan day hands its
+        places to the unassigned list.
+      operationId: updateTrip
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTripRequest"
+      responses:
+        "200":
+          description: The updated trip.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Trip"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/DaysWouldBeRemoved"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      tags: [Trips]
+      summary: Delete a trip
+      description: Owner only. The trip disappears at once and is purged after 30 days.
+      operationId: deleteTrip
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/trips/{tripID}/members:
+    get:
+      tags: [Trips]
+      summary: List the people on a trip
+      description: The owner first, then editors and viewers by name.
+      operationId: listTripMembers
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+      responses:
+        "200":
+          description: The people.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TripMember"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [Trips]
+      summary: Add a person to a trip
+      description: |
+        Owner only. A person who already has access answers
+        `409 already_member`; an unknown or deactivated account answers
+        `422` with reason `unknown_user` or `inactive_user`.
+      operationId: addTripMember
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddTripMemberRequest"
+      responses:
+        "201":
+          description: Added.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TripMember"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/trips/{tripID}/members/{userID}:
+    patch:
+      tags: [Trips]
+      summary: Change a member's role
+      description: Owner only. The owner is not a member and keeps the trip they created.
+      operationId: updateTripMember
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+        - $ref: "#/components/parameters/UserID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTripMemberRequest"
+      responses:
+        "200":
+          description: The updated member.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TripMember"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      tags: [Trips]
+      summary: Remove a member
+      description: Owner only.
+      operationId: removeTripMember
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+        - $ref: "#/components/parameters/UserID"
+      responses:
+        "204":
+          description: Removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/trips/{tripID}/share-links:
+    get:
+      tags: [Sharing]
+      summary: List the trip's links
+      description: |
+        Owner only. Revoked links are left out, and no link shows its token:
+        that is returned once, when the link is created.
+      operationId: listShareLinks
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+      responses:
+        "200":
+          description: The trip's live links, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ShareLink"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [Sharing]
+      summary: Create a link
+      description: |
+        Owner only. The answer is the only place the token and the full address
+        ever appear; neither can be read again.
+      operationId: createShareLink
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateShareLinkRequest"
+      responses:
+        "201":
+          description: The link, with its token shown once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedShareLink"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/share-links/{linkID}:
+    delete:
+      tags: [Sharing]
+      summary: Revoke a link
+      description: |
+        Owner only. The link stops opening the trip at once, for everybody who
+        has it. A link of a trip the reader does not own answers `404`.
+      operationId: revokeShareLink
+      parameters:
+        - $ref: "#/components/parameters/LinkID"
+      responses:
+        "204":
+          description: Revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/shared:
+    get:
+      tags: [Sharing]
+      summary: Read what a link opens
+      description: |
+        Authenticated by `X-Share-Token` alone, with no account. A missing,
+        unknown, revoked or expired token answers `401 invalid_share_token`,
+        without saying which. This is the request that counts as opening the
+        link; the document, pictures and files read after it are not counted.
+      operationId: getShared
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ShareToken"
+      responses:
+        "200":
+          description: The trip and what may be read of it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Shared"
+        "401":
+          $ref: "#/components/responses/Error"
+
+  /api/v1/shared/document:
+    get:
+      tags: [Sharing]
+      summary: Read the shared document
+      description: |
+        The trip's one document, its plan or its report as `kind` in
+        `/api/v1/shared` says, in the same form the application reads it and for
+        reading only. A trip without its document answers `404`.
+      operationId: getSharedDocument
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ShareToken"
+      responses:
+        "200":
+          $ref: "#/components/responses/Document"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/shared/report/pdf:
+    get:
+      tags: [Sharing]
+      summary: Download the shared report as a PDF
+      description: |
+        The same document the link opens, rendered as a file to keep or to print.
+        A link made without private files renders without them, exactly as the
+        screen shows it.
+      operationId: getSharedReportPDF
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ShareToken"
+        - $ref: "#/components/parameters/ReportPDFPhotos"
+        - $ref: "#/components/parameters/ReportPDFLanguage"
+        - $ref: "#/components/parameters/ReportPDFContentLanguage"
+        - $ref: "#/components/parameters/ReportPDFUnits"
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportPDF"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/trips/{tripID}/media:
+    get:
+      tags: [Media]
+      summary: List the trip's files
+      description: Every file of the trip, newest first. Viewers see private files too.
+      operationId: listMedia
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+      responses:
+        "200":
+          description: The trip's files.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Media"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [Media]
+      summary: Upload files
+      description: |
+        A multipart upload with one or more `file` parts; a `private` part set to
+        `true` before them marks everything that follows as private. What a file
+        is is decided from its own bytes, never from the declared type: only
+        JPEG, PNG and WebP are stored. A file above the configured size answers
+        `413`, and a trip that has used up its allowance answers `409`.
+      operationId: uploadMedia
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+                private:
+                  type: boolean
+      responses:
+        "201":
+          description: The stored files.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Media"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Error"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+
+  /api/v1/media/{mediaID}:
+    get:
+      tags: [Media]
+      summary: Read a file
+      description: |
+        The stored bytes, with the type they were stored as. The answer carries
+        an `ETag` of the file's checksum and may be cached for a year: the bytes
+        under an identifier never change.
+      operationId: getMediaFile
+      parameters:
+        - $ref: "#/components/parameters/MediaID"
+      responses:
+        "200":
+          description: The file.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "304":
+          description: The browser's copy is still current.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Media]
+      summary: Change a file
+      description: Only whether the file is private can be changed; the bytes cannot.
+      operationId: updateMedia
+      parameters:
+        - $ref: "#/components/parameters/MediaID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_private:
+                  type: boolean
+      responses:
+        "200":
+          description: The file as it now stands.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Media"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Media]
+      summary: Delete a file
+      description: |
+        Removes the file from the trip, from every gallery it hung in and from
+        the disk. There is no undo: the trash belongs to a later stage.
+      operationId: deleteMedia
+      parameters:
+        - $ref: "#/components/parameters/MediaID"
+      responses:
+        "204":
+          description: The file is gone.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/media/{mediaID}/thumbnail:
+    get:
+      tags: [Media]
+      summary: Read a preview
+      description: |
+        A JPEG preview no wider than the requested size, rendered on demand and
+        turned the way the picture's own metadata says it should be. Only the
+        offered widths are accepted.
+      operationId: getMediaThumbnail
+      parameters:
+        - $ref: "#/components/parameters/MediaID"
+        - $ref: "#/components/parameters/PreviewSize"
+      responses:
+        "200":
+          description: The preview.
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "304":
+          description: The browser's copy is still current.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/media-links:
+    put:
+      tags: [Media]
+      summary: Set a gallery
+      description: |
+        Makes a trip, a day or a place show exactly these files, in this order.
+        The call replaces whatever was shown before, so repeating it changes
+        nothing, and every file must belong to the same trip as the target.
+      operationId: setMediaLinks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetMediaLinksRequest"
+      responses:
+        "204":
+          description: The gallery is as described.
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/media-favorites:
+    post:
+      tags: [Media]
+      summary: Mark the report's favourites
+      description: |
+        Marks files as the pictures the report shows, or stops marking them. The
+        gallery of a trip names files rather than the places they hang in, so the
+        mark lands on every day and place of the report a file is linked to; a
+        day or a place that would end up showing more than seven is refused and
+        nothing is changed. The days and places of a plan have no favourites.
+      operationId: setMediaFavorites
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetMediaFavoritesRequest"
+      responses:
+        "204":
+          description: The files are marked as described.
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/shared/media/{mediaID}:
+    get:
+      tags: [Sharing]
+      summary: Read a shared file
+      description: |
+        A file of the trip the link opens. A file of another trip, and a private
+        file in a link that was not given private files, answer `404`.
+      operationId: getSharedMediaFile
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ShareToken"
+        - $ref: "#/components/parameters/MediaID"
+      responses:
+        "200":
+          description: The file.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "304":
+          description: The browser's copy is still current.
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/shared/tracks/{trackID}/file:
+    get:
+      tags: [Sharing]
+      summary: Download a shared track file
+      description: |
+        The file a track of the shared trip was imported from. A track of
+        another trip answers `404`.
+      operationId: getSharedTrackFile
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ShareToken"
+        - $ref: "#/components/parameters/TrackID"
+      responses:
+        "200":
+          $ref: "#/components/responses/TrackFile"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/shared/media/{mediaID}/thumbnail:
+    get:
+      tags: [Sharing]
+      summary: Read a shared preview
+      description: The preview of a file the link opens, under the same rules as the file itself.
+      operationId: getSharedMediaThumbnail
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ShareToken"
+        - $ref: "#/components/parameters/MediaID"
+        - $ref: "#/components/parameters/PreviewSize"
+      responses:
+        "200":
+          description: The preview.
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "304":
+          description: The browser's copy is still current.
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/trips/{tripID}/budget:
+    get:
+      tags: [Budget]
+      summary: Read the trip's budget
+      description: |
+        The totals, the breakdown by category and by day, and every individual
+        cost of the trip's document. A plan counts what it commits to; a report
+        counts the planned amounts it carries and what was really spent beside
+        them, read from the report alone.
+      operationId: getBudget
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+      responses:
+        "200":
+          $ref: "#/components/responses/Budget"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/trips/{tripID}/reports:
+    post:
+      tags: [Trips]
+      summary: Write a report from a plan
+      description: |
+        Creates a new report trip owned by the reader, who needs only to be able
+        to read the plan. The plan's title, summary, dates, time zone, currency,
+        travellers and budget are copied, and so is its content: the days, the
+        places put in them, the stays, the legs with their calculations, the
+        separate expenses and every planned amount, each copy remembering the row
+        it came from. The plan's unassigned places, members, links and pictures
+        are not copied.
+
+        From then on the two are independent trips: editing or deleting the plan
+        never moves a figure of the report. A trip that is itself a report
+        answers `409 not_a_plan`.
+      operationId: createReportFromPlan
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+      responses:
+        "201":
+          description: The new report trip.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Trip"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Error"
+
+  /api/v1/trips/{tripID}/report/pdf:
+    get:
+      tags: [Documents]
+      summary: Download the report as a PDF
+      description: |
+        The report rendered as a file: a cover, the figures it opens with, every
+        day with its places, journeys, stays and photographs, and the comparison
+        of what was planned against what was spent. Its language and its
+        distance units are the reader's own, from their profile.
+
+        The document is rendered by the server, so it reads the same wherever it
+        was asked for. Photographs are included at the width the page draws them
+        and are capped at 200; `photos=false` leaves them out, which is the
+        difference between a file of a few megabytes and one of a few dozen.
+      operationId: getReportPDF
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+        - $ref: "#/components/parameters/ReportPDFPhotos"
+        - $ref: "#/components/parameters/ReportPDFContentLanguage"
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportPDF"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/documents/{documentID}:
+    get:
+      tags: [Documents]
+      summary: Read a document
+      description: |
+        The whole document: days with their elements in schedule order, the
+        unassigned places, stays, nights and totals.
+      operationId: getDocument
+      parameters:
+        - $ref: "#/components/parameters/DocumentID"
+      responses:
+        "200":
+          $ref: "#/components/responses/Document"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Documents]
+      summary: Change a document's opening and closing words
+      description: |
+        The text before and after the days of a report. Omitted fields keep
+        their value.
+      operationId: updateDocument
+      parameters:
+        - $ref: "#/components/parameters/DocumentID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                intro_md:
+                  type: string
+                  maxLength: 20000
+                summary_md:
+                  type: string
+                  maxLength: 20000
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+  /api/v1/documents/{documentID}/translations/{lang}:
+    put:
+      tags: [Documents]
+      summary: Translate a report's words
+      description: |
+        Writes fields of a report in one of the languages it is translated
+        into: the trip's title and summary, the words before and after the
+        days, a day's title and notes, a stay's name and notes, a place's name,
+        description and story, and a leg's note. Times, ratings, amounts and
+        pictures are the same in every language and are not translated.
+
+        An empty value removes the translation, and the field is read in the
+        original again. Whoever may edit the report may translate it. The answer
+        is the whole document; a translation of the trip's own title or summary
+        is read back with the trip.
+      operationId: saveTranslations
+      parameters:
+        - $ref: "#/components/parameters/DocumentID"
+        - name: lang
+          in: path
+          required: true
+          description: A language the report is translated into; not its original.
+          schema:
+            type: string
+            enum: [en, ru]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [translations]
+              additionalProperties: false
+              properties:
+                translations:
+                  type: array
+                  maxItems: 500
+                  items:
+                    type: object
+                    required: [target_type, target_id, field, value]
+                    additionalProperties: false
+                    properties:
+                      target_type:
+                        type: string
+                        enum: [trip, document, day, stay, item, leg]
+                      target_id:
+                        type: string
+                        format: uuid
+                        description: The element translated; the trip's own identifier for `trip`.
+                      field:
+                        type: string
+                        enum: [title, summary, intro_md, summary_md, notes_md, name, description_md, story_md, note]
+                        description: One of the fields the target translates.
+                      value:
+                        type: string
+                        description: The translated text; empty removes the translation.
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+  /api/v1/documents/{documentID}/days:
+    post:
+      tags: [Documents]
+      summary: Add a day
+      description: |
+        On a trip with dates every day has a date, so a new day lengthens the
+        trip by one: its end date moves and the other document gains an empty day.
+      operationId: createDay
+      parameters:
+        - $ref: "#/components/parameters/DocumentID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDayRequest"
+      responses:
+        "201":
+          $ref: "#/components/responses/DocumentChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/documents/{documentID}/days:reorder:
+    post:
+      tags: [Documents]
+      summary: Reorder the days
+      description: |
+        Dates stay in calendar order, so the content moves between dates.
+      operationId: reorderDays
+      parameters:
+        - $ref: "#/components/parameters/DocumentID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReorderDaysRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/documents/{documentID}/items:
+    post:
+      tags: [Documents]
+      summary: Add an unassigned place
+      description: |
+        Plans only.
+      operationId: createUnassignedPlace
+      parameters:
+        - $ref: "#/components/parameters/DocumentID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePlaceRequest"
+      responses:
+        "201":
+          $ref: "#/components/responses/DocumentChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/documents/{documentID}/items:move:
+    post:
+      tags: [Documents]
+      summary: Move a place
+      description: |
+        Within a day, to another day, or between a day and the unassigned list
+        (`to_day_id` null). One transaction.
+      operationId: movePlace
+      parameters:
+        - $ref: "#/components/parameters/DocumentID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MovePlaceRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/documents/{documentID}/stays:
+    post:
+      tags: [Documents]
+      summary: Add a stay
+      description: |
+        Its morning and evening marks appear in the days whose nights it covers.
+      operationId: createStay
+      parameters:
+        - $ref: "#/components/parameters/DocumentID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StayRequest"
+      responses:
+        "201":
+          $ref: "#/components/responses/DocumentChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/documents/{documentID}/expenses:
+    post:
+      tags: [Budget]
+      summary: Add an expense
+      description: |
+        A cost that belongs to no place, stay or leg. With `day_id` it counts
+        towards that day's total; without one it belongs to the whole trip.
+      operationId: createExpense
+      parameters:
+        - $ref: "#/components/parameters/DocumentID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExpenseRequest"
+      responses:
+        "201":
+          $ref: "#/components/responses/DocumentChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/expenses/{expenseID}:
+    patch:
+      tags: [Budget]
+      summary: Change an expense
+      operationId: updateExpense
+      parameters:
+        - $ref: "#/components/parameters/ExpenseID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExpenseRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      tags: [Budget]
+      summary: Delete an expense
+      operationId: deleteExpense
+      parameters:
+        - $ref: "#/components/parameters/ExpenseID"
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/days/{dayID}:
+    patch:
+      tags: [Documents]
+      summary: Change a day
+      operationId: updateDay
+      parameters:
+        - $ref: "#/components/parameters/DayID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DayRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      tags: [Documents]
+      summary: Delete a day
+      description: |
+        A plan day's places go to the unassigned list. On a trip with dates the
+        trip becomes a day shorter; when the other document would lose a day with
+        content the answer is `409 days_would_be_removed` until `confirm=true`. A
+        document keeps at least one day (`422`, reason `last_day`).
+      operationId: deleteDay
+      parameters:
+        - $ref: "#/components/parameters/DayID"
+        - name: confirm
+          in: query
+          description: Accept that the other document loses its last day although it holds content.
+          schema:
+            type: boolean
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/DaysWouldBeRemoved"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/days/{dayID}:duplicate:
+    post:
+      tags: [Documents]
+      summary: Duplicate a day
+      description: |
+        Copies the day and its places right after it.
+      operationId: duplicateDay
+      parameters:
+        - $ref: "#/components/parameters/DayID"
+      responses:
+        "201":
+          $ref: "#/components/responses/DocumentChanged"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/days/{dayID}/items:
+    post:
+      tags: [Documents]
+      summary: Add a place to a day
+      operationId: createDayPlace
+      parameters:
+        - $ref: "#/components/parameters/DayID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePlaceRequest"
+      responses:
+        "201":
+          $ref: "#/components/responses/DocumentChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/items/{itemID}/track:
+    post:
+      tags: [Documents]
+      summary: Import the recorded line of a place or an activity
+      description: |
+        A multipart upload with one `file` part holding a GPX or KML export of
+        a hike, a walk or a descent that started at a place or makes up an
+        activity. It replaces whatever the place had. The length, the height
+        gained and lost and a thinned line are read from the file, and the file
+        itself is kept to be downloaded from `/tracks/{trackID}/file`. The
+        length is added to the legs of the day, as distance covered inside the
+        place rather than between places. A day has no recording of its own.
+        A place with no position takes the recording's first point. When the
+        file records time, a place with no `actual_time` or `actual_end_time`
+        takes the recording's first and last moment in the trip's time zone.
+        A position or a time already set is kept.
+        Only a report takes one; a plan answers `422` with `report_only`.
+      operationId: importItemTrack
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          $ref: "#/components/responses/Document"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      tags: [Documents]
+      summary: Remove the recorded line of a place or an activity
+      operationId: deleteItemTrack
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+      responses:
+        "200":
+          $ref: "#/components/responses/Document"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/tracks/{trackID}/file:
+    get:
+      tags: [Documents]
+      summary: Download the file a track was imported from
+      description: |
+        The GPX or KML file exactly as it was uploaded, as an attachment under
+        its original name.
+      operationId: getTrackFile
+      parameters:
+        - $ref: "#/components/parameters/TrackID"
+      responses:
+        "200":
+          $ref: "#/components/responses/TrackFile"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/items/{itemID}:
+    patch:
+      tags: [Documents]
+      summary: Change a place
+      description: |
+        Stay marks follow their stays and answer `422` with reason `stay_anchor`.
+      operationId: updatePlace
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaceRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      tags: [Documents]
+      summary: Delete a place
+      operationId: deletePlace
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/items/{itemID}:copy:
+    post:
+      tags: [Documents]
+      summary: Copy a place
+      description: |
+        Into a day or the unassigned list (`to_day_id` null).
+      operationId: copyPlace
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaceTarget"
+      responses:
+        "201":
+          $ref: "#/components/responses/DocumentChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/stays/{stayID}:
+    patch:
+      tags: [Documents]
+      summary: Change a stay
+      operationId: updateStay
+      parameters:
+        - $ref: "#/components/parameters/StayID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StayRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      tags: [Documents]
+      summary: Delete a stay
+      operationId: deleteStay
+      parameters:
+        - $ref: "#/components/parameters/StayID"
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/documents/{documentID}/legs:retry:
+    post:
+      tags: [Documents]
+      summary: Ask again about the legs that became estimates
+      description: |
+        A trip planned before the routing service was configured, or while its
+        daily limit was spent, holds straight-line estimates that nothing would
+        ever ask about again: they are not `pending`, so `legs:calculate` leaves
+        them alone. This takes the estimates whose reason may have passed -
+        `provider_disabled`, `rate_limited`, `daily_limit`, `provider_error` -
+        and asks the provider again.
+
+        A leg with no road route between its points is left as it is, and so is
+        a flight: neither becomes a road because a key was entered. At most 25
+        legs are retried per call, and `estimated_legs` in the answer says
+        whether any are left.
+      operationId: retryEstimatedLegs
+      parameters:
+        - $ref: "#/components/parameters/DocumentID"
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/documents/{documentID}/legs:calculate:
+    post:
+      tags: [Documents]
+      summary: Calculate waiting legs
+      description: |
+        A change to the order of elements, a mode or a position sends the
+        affected legs to `pending`; the client calls this a moment after edits
+        settle. At most 25 legs are calculated per call, and
+        `pending_legs` in the answer tells whether to call again. Road legs come
+        from the route cache or the provider; when neither can answer the leg
+        becomes an `estimate` with the reason in `error`.
+      operationId: calculateLegs
+      parameters:
+        - $ref: "#/components/parameters/DocumentID"
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/days/{dayID}:recalculate:
+    post:
+      tags: [Documents]
+      summary: Recalculate a day's legs
+      description: Calculates every leg of the day again, bypassing the route cache. Typed values stay.
+      operationId: recalculateDay
+      parameters:
+        - $ref: "#/components/parameters/DayID"
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/legs/{legID}:
+    patch:
+      tags: [Documents]
+      summary: Change a leg
+      description: |
+        Sets the mode, typed distance and time, cost or note. A typed value wins
+        over the calculated one until it is set to `null` or `reset_manual`
+        drops both. A new mode sends the leg back to `pending`.
+      operationId: updateLeg
+      parameters:
+        - $ref: "#/components/parameters/LegID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateLegRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/legs/{legID}:recalculate:
+    post:
+      tags: [Documents]
+      summary: Recalculate a leg
+      description: Calculates the leg again, bypassing the route cache - the retry next to an estimate.
+      operationId: recalculateLeg
+      parameters:
+        - $ref: "#/components/parameters/LegID"
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/admin/users:
+    get:
+      tags: [Administration]
+      summary: List accounts
+      operationId: listUsers
+      responses:
+        "200":
+          description: Every account.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AdminUser"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Administration]
+      summary: Create an account
+      description: The password is temporary; the owner must change it at the first sign-in.
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUser"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/admin/users/{userID}:
+    patch:
+      tags: [Administration]
+      summary: Change an account
+      description: |
+        Renames, grants or withdraws administration, deactivates or reactivates.
+        Deactivation ends every session of the account at once. A change that
+        would leave no active administrator answers `409 last_admin`.
+      operationId: updateUser
+      parameters:
+        - $ref: "#/components/parameters/UserID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: The updated account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUser"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/admin/users/{userID}/reset-password:
+    post:
+      tags: [Administration]
+      summary: Reset a password
+      description: Sets a temporary password and ends every session of the account.
+      operationId: resetPassword
+      parameters:
+        - $ref: "#/components/parameters/UserID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPasswordRequest"
+      responses:
+        "204":
+          description: Reset.
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/admin/status:
+    get:
+      tags: [Administration]
+      summary: Service state
+      operationId: getStatus
+      responses:
+        "200":
+          description: The state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/backup-configs:
+    get:
+      tags: [Backups]
+      summary: List backup configurations
+      operationId: listBackupConfigs
+      responses:
+        "200":
+          description: The configurations.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BackupConfig"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/BackupsUnavailable"
+    post:
+      tags: [Backups]
+      summary: Create a backup configuration
+      description: |
+        A configuration with only a destination keeps the five newest archives
+        and runs when somebody asks for it. A schedule is checked here rather
+        than by the scheduler, so an expression that cannot be read is refused
+        while the form is still open.
+      operationId: createBackupConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BackupConfigInput"
+      responses:
+        "201":
+          description: The stored configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupConfig"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/BackupsUnavailable"
+
+  /api/v1/admin/backup-configs/{configID}:
+    parameters:
+      - $ref: "#/components/parameters/ConfigID"
+    put:
+      tags: [Backups]
+      summary: Replace a backup configuration
+      description: |
+        A credential the body does not mention is kept, so a form that never
+        showed a stored password need not send it back; an empty value removes
+        it.
+      operationId: updateBackupConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BackupConfigInput"
+      responses:
+        "200":
+          description: The stored configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupConfig"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/BackupsUnavailable"
+    delete:
+      tags: [Backups]
+      summary: Withdraw a backup configuration
+      description: |
+        The instruction stops; the archives it already wrote stay where they are
+        and can still be listed and restored by naming this configuration.
+      operationId: deleteBackupConfig
+      responses:
+        "204":
+          description: Withdrawn.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/BackupsUnavailable"
+
+  /api/v1/admin/backup-configs/{configID}/run:
+    parameters:
+      - $ref: "#/components/parameters/ConfigID"
+    post:
+      tags: [Backups]
+      summary: Run a backup now
+      description: |
+        Answers as soon as the run is recorded and leaves the work going: an
+        instance with a few thousand photographs takes minutes over a slow link.
+        The answer is the run, still running; follow it at
+        `/api/v1/admin/backup-runs/{runID}` until it says how it ended.
+      operationId: runBackup
+      responses:
+        "202":
+          description: The run, still working.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupRun"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: This configuration is already running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/BackupsUnavailable"
+
+  /api/v1/admin/backup-runs:
+    get:
+      tags: [Backups]
+      summary: Backup history
+      description: |
+        Every attempt, most recent first, whether it worked or not. The cursor is
+        the offset of the next page.
+      operationId: listBackupRuns
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of the history.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BackupRun"
+                  next_cursor:
+                    type: [string, "null"]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/BackupsUnavailable"
+
+  /api/v1/admin/backup-runs/{runID}:
+    parameters:
+      - $ref: "#/components/parameters/RunID"
+    get:
+      tags: [Backups]
+      summary: One backup run
+      description: |
+        Carries `progress` while the run is working in this process. A run left
+        as `running` by a restart has none, which is how a reader tells the two
+        apart: one is worth watching, the other will never finish.
+      operationId: getBackupRun
+      responses:
+        "200":
+          description: The run.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupRun"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/BackupsUnavailable"
+
+  /api/v1/admin/archives:
+    get:
+      tags: [Backups]
+      summary: List the archives a restore can use
+      description: |
+        Archives never pass through the browser; a restore reads one back from
+        where backups are kept. Without `config_id` this is the server's own
+        backup directory, which is what a fresh instance whose volume holds
+        archives has to offer. With it, it is that configuration's destination,
+        an SFTP server typically; a withdrawn configuration still names where
+        its archives went. The list is read from the destination itself, not
+        from the history, which a fresh instance does not have.
+      operationId: listArchives
+      parameters:
+        - name: config_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The archives, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Archive"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          description: "`destination_unavailable`: the destination could not be reached."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/BackupsUnavailable"
+
+  /api/v1/admin/restore:
+    post:
+      tags: [Backups]
+      summary: Restore the service from an archive
+      description: |
+        Replaces everything: accounts, trips, plans, reports and files. That
+        includes the sessions, so the administrator who asks for it is signed out
+        by their own request unless their account is in the archive too.
+
+        The archive is named as `/admin/archives` lists it and read from the
+        same place. The answer is a restore run to follow at
+        `/restore-runs/{restoreID}`. From the moment it starts until it ends the
+        service is in maintenance: every other API request is cancelled or
+        answered `503 restore_in_progress`, and no backup runs. In the
+        background the archive is unpacked and every file and table checked
+        against its recorded size and checksum before staged data is activated.
+
+        An archive taken elsewhere is brought to the server on the host, into
+        the backup volume, or restored before the service starts with
+        `tripvault-backend --restore <archive>`.
+      operationId: restoreInstance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [archive, confirm]
+              properties:
+                config_id:
+                  type: string
+                  format: uuid
+                  description: The configuration whose destination holds the archive; omitted for the server's disk.
+                archive:
+                  type: string
+                  description: The archive's name at that destination.
+                passphrase:
+                  type: string
+                  description: |
+                    Opens an encrypted archive. Omitted, the configuration's own
+                    passphrase is used; it is typed for an archive another
+                    instance wrote.
+                confirm:
+                  type: string
+                  enum: [replace-everything]
+                  description: The consequence, typed out, rather than "yes".
+      responses:
+        "202":
+          description: The restore was queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RestoreRun"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: "`archive_not_found`, or no such configuration."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "`restore_running`: another restore is running; `backup_in_progress`: a backup is being written."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: "`confirmation_required`, or `passphrase_required` for an encrypted archive with nothing to open it."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: "`destination_unavailable`: the destination could not be reached."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/BackupsUnavailable"
+
+  /api/v1/restore-runs/{restoreID}:
+    get:
+      tags: [Backups]
+      summary: Restore progress
+      description: |
+        Reports a background restore. The unguessable run identifier is enough
+        to read this non-sensitive status, so polling survives replacement of
+        the sessions table and the maintenance the restore runs in.
+      operationId: getRestoreRun
+      security: []
+      parameters:
+        - name: restoreID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Current restore state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RestoreRun"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    UserID:
+      name: userID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    SessionID:
+      name: sessionID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ReportPDFPhotos:
+      name: photos
+      in: query
+      description: "`false` renders the words without the photographs."
+      schema:
+        type: boolean
+        default: true
+    ReportPDFLanguage:
+      name: lang
+      in: query
+      description: |
+        The language the document's own labels are written in. A read-only link
+        has no account behind it to take one from; anything but `ru` is written
+        in English.
+      schema:
+        type: string
+        enum: [en, ru]
+    ReportPDFContentLanguage:
+      name: content_lang
+      in: query
+      description: |
+        The language the trip's own words are written in, when the report is
+        translated into it. Omitted, it is the language of the labels; a
+        language the report lacks, and every field nobody translated, is
+        written in the original.
+      schema:
+        type: string
+        enum: [en, ru]
+    ReportPDFUnits:
+      name: units
+      in: query
+      description: |
+        What distances are written in. A read-only link has no account behind it
+        to take it from; anything but `mi` is written in kilometres.
+      schema:
+        type: string
+        enum: [km, mi]
+    ConfigID:
+      name: configID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    RunID:
+      name: runID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    MediaID:
+      name: mediaID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PreviewSize:
+      name: size
+      in: query
+      required: false
+      description: The width of the preview; one of the offered sizes.
+      schema:
+        type: integer
+        enum: [160, 320, 640, 1280, 1920]
+        default: 320
+    TripID:
+      name: tripID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DocumentID:
+      name: documentID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DayID:
+      name: dayID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ItemID:
+      name: itemID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    LegID:
+      name: legID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    StayID:
+      name: stayID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ExpenseID:
+      name: expenseID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TrackID:
+      name: trackID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    LinkID:
+      name: linkID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ShareToken:
+      name: X-Share-Token
+      in: header
+      required: true
+      description: The token of a share link, as read from the fragment of its address.
+      schema:
+        type: string
+    Lat:
+      name: lat
+      in: query
+      schema:
+        type: number
+        minimum: -90
+        maximum: 90
+    Lng:
+      name: lng
+      in: query
+      schema:
+        type: number
+        minimum: -180
+        maximum: 180
+    Lang:
+      name: lang
+      in: query
+      description: Language of the results; defaults to the reader's interface language.
+      schema:
+        type: string
+        examples: [ru]
+    Limit:
+      name: limit
+      in: query
+      description: Page size.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      description: The `next_cursor` of the previous page.
+      schema:
+        type: string
+
+  responses:
+    TrackFile:
+      description: The track file as it was uploaded.
+      headers:
+        Content-Disposition:
+          description: "`attachment` with the original file name."
+          schema:
+            type: string
+      content:
+        application/gpx+xml:
+          schema:
+            type: string
+            format: binary
+        application/vnd.google-earth.kml+xml:
+          schema:
+            type: string
+            format: binary
+    Places:
+      description: The places, best first.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [items]
+            properties:
+              items:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Place"
+    Document:
+      description: The document.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Document"
+    Budget:
+      description: The trip's budget as it now stands.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Budget"
+    DocumentChanged:
+      description: The whole document after the change.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Document"
+    DaysWouldBeRemoved:
+      description: |
+        `days_would_be_removed`: the change removes days holding content.
+        `details.days` lists them as `{document, position, date, title}`;
+        repeat the request with confirmation.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Error:
+      description: The request was refused; see `code`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InvalidRequest:
+      description: "`invalid_request`: the body is missing, too large or not the documented JSON."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: "`unauthorized`: no valid access token."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: "`forbidden` or `password_change_required`."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: "`not_found`."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ValidationFailed:
+      description: "`validation_failed`: `details.field` names the input, `details.reason` why."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ReportPDF:
+      description: The report as a PDF file.
+      content:
+        application/pdf:
+          schema:
+            type: string
+            format: binary
+    BackupsUnavailable:
+      description: |
+        "`backups_unavailable`": this instance started without a usable backup
+        directory, so nothing here can run until its configuration is fixed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyAttempts:
+      description: "`too_many_attempts`: wait `Retry-After` seconds."
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          examples: [validation_failed]
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+        request_id:
+          type: string
+
+    Health:
+      type: object
+      required: [status, build]
+      properties:
+        status:
+          type: string
+          const: ok
+        build:
+          $ref: "#/components/schemas/BuildInfo"
+
+    Readiness:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ready, unready]
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+
+    BuildInfo:
+      type: object
+      required: [version]
+      properties:
+        version:
+          type: string
+
+    ClientConfig:
+      type: object
+      required: [version, locales, routing_enabled, geocoding_enabled, map_tile_url, map_attribution]
+      properties:
+        version:
+          type: string
+        locales:
+          type: array
+          description: Interface languages this build ships.
+          items:
+            type: string
+        routing_enabled:
+          type: boolean
+          description: False when no routing provider is configured and road legs are estimates.
+        geocoding_enabled:
+          type: boolean
+          description: False when place search and reverse lookups are unavailable.
+        map_tile_url:
+          type: string
+          description: Raster tile URL template with `{z}`, `{x}` and `{y}`.
+          examples: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"]
+        map_attribution:
+          type: string
+          description: Attribution the map must show; may contain HTML links.
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      additionalProperties: false
+      properties:
+        refresh_token:
+          type: string
+
+    Session:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in, session_id, user]
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        token_type:
+          type: string
+          const: Bearer
+        expires_in:
+          type: integer
+          description: Access token lifetime in seconds.
+        session_id:
+          type: string
+          format: uuid
+        user:
+          $ref: "#/components/schemas/User"
+
+    User:
+      type: object
+      required: [id, email, display_name, is_admin, is_active, must_change_password, locale, theme,
+                 units, date_format, time_format, default_currency, has_avatar, avatar_updated_at,
+                 last_login_at, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+        is_admin:
+          type: boolean
+        is_active:
+          type: boolean
+        must_change_password:
+          type: boolean
+        locale:
+          type: string
+          description: Interface language; empty follows the browser.
+        theme:
+          type: string
+          enum: [light, dark, auto]
+        units:
+          type: string
+          enum: [km, mi]
+          description: |
+            How far this reader sees a distance in. Distances are stored and
+            carried in metres whatever it says; two people on one trip may read
+            the same trip in different units.
+        date_format:
+          type: string
+          enum: [dmy, mdy]
+          description: |
+            Whether this reader sees the day or the month first. Like the units,
+            it changes nothing that is stored.
+        time_format:
+          type: string
+          enum: [h24, h12]
+          description: Whether this reader sees 14:00 or 2:00 PM.
+        default_currency:
+          type: string
+          description: ISO 4217 code proposed for new trips.
+          pattern: "^[A-Z]{3}$"
+        has_avatar:
+          type: boolean
+          description: Whether the account wears a picture; the bytes are fetched separately.
+        avatar_updated_at:
+          type: [string, "null"]
+          format: date-time
+          description: When the picture last changed, which is what makes a client fetch it again.
+        last_login_at:
+          type: [string, "null"]
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    AdminUser:
+      allOf:
+        - $ref: "#/components/schemas/User"
+        - type: object
+          required: [is_self]
+          properties:
+            is_self:
+              type: boolean
+              description: The reader's own account.
+
+    UpdateMeRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        display_name:
+          type: string
+          maxLength: 120
+        locale:
+          type: string
+        theme:
+          type: string
+          enum: [light, dark, auto]
+        units:
+          type: string
+          enum: [km, mi]
+        date_format:
+          type: string
+          enum: [dmy, mdy]
+        time_format:
+          type: string
+          enum: [h24, h12]
+        default_currency:
+          type: string
+
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      additionalProperties: false
+      properties:
+        current_password:
+          type: string
+          format: password
+        new_password:
+          type: string
+          format: password
+          minLength: 8
+
+    SessionItem:
+      type: object
+      required: [id, user_agent, created_at, last_used_at, expires_at, current]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_agent:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        current:
+          type: boolean
+          description: The session making the request.
+
+    CreateUserRequest:
+      type: object
+      required: [email, display_name, password]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+          maxLength: 120
+        password:
+          type: string
+          format: password
+          minLength: 8
+          description: Temporary password.
+        is_admin:
+          type: boolean
+          default: false
+
+    UpdateUserRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        display_name:
+          type: string
+          maxLength: 120
+        is_admin:
+          type: boolean
+        is_active:
+          type: boolean
+
+    ResetPasswordRequest:
+      type: object
+      required: [password]
+      additionalProperties: false
+      properties:
+        password:
+          type: string
+          format: password
+          minLength: 8
+          description: Temporary password.
+
+    Status:
+      type: object
+      required: [version, schema_version, users, routing, geocoding]
+      properties:
+        version:
+          type: string
+        schema_version:
+          type: integer
+        users:
+          type: object
+          required: [total, active, admins]
+          properties:
+            total:
+              type: integer
+            active:
+              type: integer
+            admins:
+              type: integer
+              description: Active administrators.
+        routing:
+          $ref: "#/components/schemas/ProviderStatus"
+        geocoding:
+          $ref: "#/components/schemas/ProviderStatus"
+
+    BackupConfigInput:
+      type: object
+      properties:
+        destination_type:
+          type: string
+          enum: [local, sftp]
+          default: local
+        destination_params:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            What the destination needs and no credential ever: nothing for the
+            local disk; `host`, `user`, and optionally `port`, `path` and
+            `host_key` for SFTP. With no `host_key`, the key the server presents
+            on the first connection is recorded and every later connection is
+            held to it.
+        secrets:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            Credentials typed into the form: `password`, `private_key` and
+            `key_passphrase` for SFTP, `passphrase` for an encrypted archive. A
+            name left out keeps what is stored; an empty value removes it. The
+            values are sealed and never returned.
+        encrypted:
+          type: boolean
+          default: false
+          description: Locks each archive with age, using the stored passphrase.
+        schedule_cron:
+          type: string
+          maxLength: 200
+          description: |
+            A five-field cron expression, or a descriptor such as `@daily`. Empty
+            means the configuration runs only when somebody asks for it.
+        retain_count:
+          type: integer
+          minimum: 0
+          maximum: 365
+          description: |
+            How many of the newest archives to keep. Sent with neither this nor
+            `retain_days`, a configuration keeps five.
+        retain_days:
+          type: integer
+          minimum: 0
+          maximum: 3650
+          description: |
+            How many days an archive is kept. At most one of the two may be set;
+            both zero keeps every archive.
+        enabled:
+          type: boolean
+          default: true
+
+    BackupConfig:
+      type: object
+      required:
+        [id, destination_type, destination_params, stored_secrets, encrypted,
+         schedule_cron, retain_count, retain_days, enabled, next_run_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        destination_type:
+          type: string
+          enum: [local, sftp]
+        destination_params:
+          type: object
+          additionalProperties:
+            type: string
+        stored_secrets:
+          type: array
+          items:
+            type: string
+          description: |
+            The names of the credentials this configuration holds, so the
+            interface can show which are set. The values never leave the server.
+        encrypted:
+          type: boolean
+        schedule_cron:
+          type: string
+        retain_count:
+          type: integer
+        retain_days:
+          type: integer
+        enabled:
+          type: boolean
+        next_run_at:
+          type: [string, "null"]
+          format: date-time
+          description: When the schedule next comes due; null without one.
+
+    BackupProgress:
+      type: object
+      required: [stage, files_done, files_total, bytes_done, bytes_total]
+      properties:
+        stage:
+          type: string
+          enum: [connecting, reading, archiving, rotating]
+        files_done:
+          type: integer
+        files_total:
+          type: integer
+        bytes_done:
+          type: integer
+          format: int64
+        bytes_total:
+          type: integer
+          format: int64
+
+    BackupRun:
+      type: object
+      required:
+        [id, backup_config_id, started_at, finished_at, status, size_bytes,
+         artifact, archive_held, error_message, progress]
+      properties:
+        id:
+          type: string
+          format: uuid
+        backup_config_id:
+          type: string
+          format: uuid
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: [string, "null"]
+          format: date-time
+        status:
+          type: string
+          enum: [running, success, failed]
+        size_bytes:
+          type: [integer, "null"]
+          format: int64
+        artifact:
+          type: string
+          description: The archive this run wrote, empty when it wrote none.
+        archive_held:
+          type: boolean
+          description: |
+            Whether that archive is still at its destination. The name stays in
+            the history after retention removes the file, so the two are not the
+            same question.
+        error_message:
+          type: string
+        progress:
+          oneOf:
+            - $ref: "#/components/schemas/BackupProgress"
+            - type: "null"
+
+    Archive:
+      type: object
+      description: One archive held at a destination.
+      required: [name, size_bytes, written_at, encrypted]
+      properties:
+        name:
+          type: string
+          examples: ["tripvault_20260620T031500.000Z.tar.gz.age"]
+        size_bytes:
+          type: integer
+          format: int64
+        written_at:
+          type: string
+          format: date-time
+        encrypted:
+          type: boolean
+          description: Read from the name; the archive's own bytes decide when it is restored.
+
+    RestoreRun:
+      type: object
+      required:
+        [id, status, stage, schema_version, tables, trips, files,
+         error_code, error_message]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, running, success, failed]
+        stage:
+          type: string
+          enum: [validating, staging, cutover, complete]
+        schema_version:
+          type: integer
+          format: int64
+          description: The migration the archive was taken at.
+        tables:
+          type: integer
+        trips:
+          type: integer
+        files:
+          type: integer
+        error_code:
+          type: string
+        error_message:
+          type: string
+
+    TravelMode:
+      type: string
+      enum: [walk, car, bike, transit, flight, other]
+
+    Amount:
+      type: string
+      description: Non-negative decimal with at most two fractional digits, in the trip currency.
+      pattern: "^[0-9]{1,12}(\\.[0-9]{1,2})?$"
+      examples: ["1240.50"]
+
+    TripUser:
+      type: object
+      required: [id, display_name, email]
+      properties:
+        id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+        email:
+          type: string
+          format: email
+
+    Trip:
+      type: object
+      required: [id, kind, source_trip_id, title, summary, start_date, end_date, timezone, currency, travelers,
+                 budget_amount, status, day_count, role, owner, plan_id, report_id, languages, translations,
+                 created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [plan, report]
+          description: |
+            What the trip holds. A report is a trip of its own, with its own
+            people, links, pictures and budget.
+        source_trip_id:
+          type: [string, "null"]
+          format: uuid
+          description: |
+            The plan a report was copied from; null for a plan, for a report
+            written from scratch, once that plan is deleted, and for a reader who
+            cannot open that plan.
+        title:
+          type: string
+        summary:
+          type: string
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+        timezone:
+          type: string
+          description: IANA time zone name.
+        currency:
+          type: string
+          pattern: "^[A-Z]{3}$"
+        travelers:
+          type: integer
+        budget_amount:
+          oneOf:
+            - $ref: "#/components/schemas/Amount"
+            - type: "null"
+        status:
+          type: string
+          enum: [upcoming, ongoing, completed]
+          description: Derived from the dates and today in the trip's time zone.
+        day_count:
+          type: integer
+        role:
+          type: string
+          enum: [owner, editor, viewer]
+          description: The reader's role.
+        owner:
+          $ref: "#/components/schemas/TripUser"
+        plan_id:
+          type: [string, "null"]
+          format: uuid
+          description: The plan a plan holds; null for a report.
+        report_id:
+          type: [string, "null"]
+          format: uuid
+          description: The report a report holds; null for a plan.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+        cover_media_id:
+          type: [string, "null"]
+          format: uuid
+          description: The picture the trip is shown by, out of its own media.
+        languages:
+          $ref: "#/components/schemas/Languages"
+        translations:
+          type: object
+          description: |
+            A report's title and summary in its further languages: by
+            language, then by field. A field missing here is read in the
+            original.
+          additionalProperties:
+            type: object
+            properties:
+              title:
+                type: string
+              summary:
+                type: string
+    Languages:
+      type: array
+      description: |
+        The languages a report is written in: the original first, which its own
+        fields hold, then the ones it is translated into. Always empty for a
+        plan.
+      items:
+        type: string
+        enum: [en, ru]
+      uniqueItems: true
+    CreateTripRequest:
+      type: object
+      required: [kind, title, start_date, end_date]
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        summary:
+          type: string
+          maxLength: 2000
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+        timezone:
+          type: string
+          default: UTC
+        currency:
+          type: string
+          pattern: "^[A-Za-z]{3}$"
+        travelers:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 1
+        budget_amount:
+          oneOf:
+            - $ref: "#/components/schemas/Amount"
+            - type: "null"
+        kind:
+          type: string
+          enum: [plan, report]
+          description: A plan, or a report written from scratch.
+        languages:
+          allOf:
+            - $ref: "#/components/schemas/Languages"
+          description: |
+            A report's languages, the original first; omitted, a report is
+            written in its author's language. A plan names none.
+
+    UpdateTripRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        summary:
+          type: string
+          maxLength: 2000
+        start_date:
+          type: string
+          format: date
+        end_date:
+          type: string
+          format: date
+        timezone:
+          type: string
+        currency:
+          type: string
+        travelers:
+          type: integer
+          minimum: 1
+          maximum: 100
+        budget_amount:
+          oneOf:
+            - $ref: "#/components/schemas/Amount"
+            - type: "null"
+        languages:
+          allOf:
+            - $ref: "#/components/schemas/Languages"
+          minItems: 1
+          description: |
+            A report's languages, the original first. A language left out
+            loses its translations. Refused on a plan.
+        confirm:
+          type: boolean
+          default: false
+          description: Accept that the new period removes days holding content.
+
+    TripMember:
+      type: object
+      required: [user, role, created_at]
+      properties:
+        user:
+          $ref: "#/components/schemas/TripUser"
+        role:
+          type: string
+          enum: [owner, editor, viewer]
+        created_at:
+          type: string
+          format: date-time
+
+    AddTripMemberRequest:
+      type: object
+      required: [user_id, role]
+      additionalProperties: false
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [editor, viewer]
+
+    UpdateTripMemberRequest:
+      type: object
+      required: [role]
+      additionalProperties: false
+      properties:
+        role:
+          type: string
+          enum: [editor, viewer]
+
+    ClockTime:
+      type: string
+      description: Local time of day.
+      pattern: "^[0-2][0-9]:[0-5][0-9]$"
+      examples: ["09:00"]
+
+    NullableAmount:
+      oneOf:
+        - $ref: "#/components/schemas/Amount"
+        - type: "null"
+
+    PlaceCategory:
+      type: string
+      enum: [sight, nature, museum, food, shopping, activity, transport, other]
+
+    ActivityType:
+      type: string
+      description: What kind of activity an activity is; it decides its default length.
+      enum: [hike, walk, bike, run, canyoning, climbing, via_ferrata, kayak, swim, ski, tour, other]
+
+    CostCategory:
+      type: string
+      enum: [accommodation, transport, food, activities, shopping, other]
+
+    ItemStatus:
+      type: string
+      description: |
+        How a place of a report turned out. A plan keeps every place at
+        `planned`. A place of a report is `visited` unless marked `skipped`:
+        `planned` sent to a report is stored as `visited`, and a plan copied
+        into a report arrives with every place visited. `unplanned` marks one
+        added straight into the report.
+      enum: [planned, visited, skipped, unplanned]
+
+    StayKind:
+      type: string
+      enum: [hotel, apartment, hostel, camping, friends, other]
+
+    Schedule:
+      type: object
+      description: Minutes after the midnight the day starts on; may pass 1440.
+      required: [arrival_minutes, departure_minutes, late]
+      properties:
+        arrival_minutes:
+          type: integer
+        departure_minutes:
+          type: integer
+        late:
+          type: boolean
+          description: The desired arrival time cannot be met.
+
+    Item:
+      type: object
+      description: |
+        A place, an activity, or a stay mark, which shows its stay's name and
+        position. An activity lives in a day exactly like a place, with its
+        position being where it starts; it also names its type.
+      required: [id, day_id, position, kind, anchor, stay_id, name, category, activity_type, lat, lng, address, osm_ref,
+                 description_md, url, desired_time, visit_minutes, is_optional, booking_ref,
+                 planned_cost_amount, cost_per_person, cost_category, schedule,
+                 status, story_md, actual_time, actual_end_time, rating, actual_cost_amount, difficulty,
+                 source_item_id, track]
+      properties:
+        id:
+          type: string
+          format: uuid
+        day_id:
+          type: [string, "null"]
+          format: uuid
+        position:
+          type: integer
+        kind:
+          type: string
+          enum: [place, activity, stay_anchor]
+        anchor:
+          type: [string, "null"]
+          enum: [morning, evening, null]
+        stay_id:
+          type: [string, "null"]
+          format: uuid
+        name:
+          type: string
+        category:
+          $ref: "#/components/schemas/PlaceCategory"
+        activity_type:
+          description: Set on activities only.
+          oneOf:
+            - $ref: "#/components/schemas/ActivityType"
+            - type: "null"
+        lat:
+          type: [number, "null"]
+        lng:
+          type: [number, "null"]
+        address:
+          type: string
+        osm_ref:
+          type: string
+        description_md:
+          type: string
+        url:
+          type: string
+        desired_time:
+          oneOf:
+            - $ref: "#/components/schemas/ClockTime"
+            - type: "null"
+        visit_minutes:
+          type: integer
+        is_optional:
+          type: boolean
+        booking_ref:
+          type: string
+        planned_cost_amount:
+          $ref: "#/components/schemas/NullableAmount"
+        cost_per_person:
+          type: boolean
+        cost_category:
+          $ref: "#/components/schemas/CostCategory"
+        status:
+          $ref: "#/components/schemas/ItemStatus"
+        story_md:
+          type: string
+          description: What happened here. Report only.
+        actual_time:
+          oneOf:
+            - $ref: "#/components/schemas/ClockTime"
+            - type: "null"
+          description: When the place was really reached. Report only.
+        actual_end_time:
+          oneOf:
+            - $ref: "#/components/schemas/ClockTime"
+            - type: "null"
+          description: When the place was left or the activity finished. Report only.
+        rating:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 5
+          description: Report only.
+        actual_cost_amount:
+          allOf:
+            - $ref: "#/components/schemas/NullableAmount"
+          description: What was really spent. Report only.
+        difficulty:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 5
+          description: How hard an activity is, from 1 (very easy) to 5 (extreme). Always null on a place.
+        source_item_id:
+          type: [string, "null"]
+          format: uuid
+          description: The place of the plan this one was copied from.
+        schedule:
+          description: Set for elements of a day, null for unassigned places.
+          oneOf:
+            - $ref: "#/components/schemas/Schedule"
+            - type: "null"
+
+        media:
+          type: array
+          description: The place's pictures, in the order they were linked.
+          items:
+            $ref: "#/components/schemas/Media"
+        cover_media_id:
+          type: [string, "null"]
+          format: uuid
+          description: The picture the place is shown by, out of its own media.
+        track:
+          description: The line the place or activity was recorded along, or null.
+          oneOf:
+            - $ref: "#/components/schemas/Track"
+            - type: "null"
+    Track:
+      type: object
+      description: |
+        A recorded line of a place or an activity. The file it came from
+        is downloaded from `/tracks/{id}/file`.
+      required: [id, original_name, format, distance_m, point_count, ascent_m, descent_m, geometry,
+                 started_at, ended_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        original_name:
+          type: string
+          description: The name of the file the line was imported from.
+        format:
+          type: string
+          enum: [gpx, kml]
+        distance_m:
+          type: integer
+          description: How far it went, measured over every point of that file.
+        point_count:
+          type: integer
+          description: How many points the file held, before the line was thinned.
+        ascent_m:
+          type: [integer, "null"]
+          description: |
+            Height gained in metres, counting only changes of at least five
+            metres so the wandering of a GPS height is left out; null when the
+            file records no heights.
+        descent_m:
+          type: [integer, "null"]
+          description: Height lost in metres, measured the same way; null without heights.
+        geometry:
+          type: string
+          description: The thinned line, in the same encoded polyline format legs use.
+        started_at:
+          type: [string, "null"]
+          format: date-time
+          description: The earliest moment the file records; null when its points carry no time.
+        ended_at:
+          type: [string, "null"]
+          format: date-time
+          description: The latest moment the file records; null when its points carry no time.
+    Media:
+      type: object
+      required: [id, trip_id, original_name, mime, size, width, height, taken_at, lat, lng, is_private,
+                 is_favorite, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        trip_id:
+          type: string
+          format: uuid
+        original_name:
+          type: string
+          description: The name the file was uploaded under.
+        mime:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+        size:
+          type: integer
+          format: int64
+          description: The size of the stored file in bytes.
+        width:
+          type: integer
+          description: The width in pixels, as the picture is shown.
+        height:
+          type: integer
+        taken_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the camera took the picture, from its own metadata.
+        lat:
+          type: number
+          format: double
+          nullable: true
+        lng:
+          type: number
+          format: double
+          nullable: true
+        is_private:
+          type: boolean
+          description: Private files stay out of read-only links that were not given them.
+        is_favorite:
+          type: boolean
+          description: |
+            In the gallery of a day or a place, whether this is one of the pictures
+            the report shows there; in the trip's own list of files, whether the file
+            is a favourite anywhere in the report.
+        status:
+          type: string
+          enum: [ready, processing, failed]
+        created_at:
+          type: string
+          format: date-time
+    SetMediaLinksRequest:
+      type: object
+      required: [target_type, target_id, media_ids]
+      properties:
+        target_type:
+          type: string
+          enum: [trip, day, item]
+        target_id:
+          type: string
+          format: uuid
+        media_ids:
+          type: array
+          description: The files to show, in the order they should appear; an empty list clears the gallery.
+          items:
+            type: string
+            format: uuid
+        favorite_media_ids:
+          type: array
+          maxItems: 7
+          description: |
+            Which of the files the report shows for this day or place, out of the
+            gallery above. Leaving the field out keeps the ones already marked, so
+            a reorder need not repeat them; an empty list marks none. Only the days
+            and places of a report have favourites.
+          items:
+            type: string
+            format: uuid
+    SetMediaFavoritesRequest:
+      type: object
+      required: [media_ids, favorite]
+      properties:
+        media_ids:
+          type: array
+          description: The files to mark, wherever they hang in the report.
+          items:
+            type: string
+            format: uuid
+        favorite:
+          type: boolean
+          description: True to show them in the report, false to stop showing them.
+    Day:
+      type: object
+      required: [id, position, date, title, notes_md, start_time, default_mode, timezone, morning_anchor,
+                 evening_anchor, no_overnight, items, summary]
+      properties:
+        id:
+          type: string
+          format: uuid
+        position:
+          type: integer
+        date:
+          type: [string, "null"]
+          format: date
+        title:
+          type: string
+        notes_md:
+          type: string
+        start_time:
+          $ref: "#/components/schemas/ClockTime"
+        default_mode:
+          description: Null inherits the trip's.
+          oneOf:
+            - $ref: "#/components/schemas/TravelMode"
+            - type: "null"
+        timezone:
+          type: [string, "null"]
+          description: Null inherits the trip's.
+        morning_anchor:
+          type: boolean
+          description: Whether the stay of the previous night opens the day.
+        evening_anchor:
+          type: boolean
+          description: Whether the stay of the coming night closes the day.
+        no_overnight:
+          type: boolean
+          description: The coming night is spent without a stay.
+        items:
+          type: array
+          description: Morning mark, places, evening mark.
+          items:
+            $ref: "#/components/schemas/Item"
+        legs:
+          type: array
+          description: The leg from each element to the next, in order.
+          items:
+            $ref: "#/components/schemas/Leg"
+        summary:
+          type: object
+          required: [visit_minutes, travel_minutes, distance_m, by_mode, unknown_travel, pending_legs,
+                     estimated_legs, end_minutes, planned_cost]
+          properties:
+            visit_minutes:
+              type: integer
+            travel_minutes:
+              type: integer
+            distance_m:
+              type: integer
+            by_mode:
+              type: array
+              items:
+                type: object
+                required: [mode, distance_m, duration_s]
+                properties:
+                  mode:
+                    $ref: "#/components/schemas/TravelMode"
+                  distance_m:
+                    type: integer
+                  duration_s:
+                    type: integer
+            unknown_travel:
+              type: boolean
+              description: Some leg has no travel time, so the day ends later than shown.
+            pending_legs:
+              type: integer
+            estimated_legs:
+              type: integer
+              description: Legs of this day holding an estimate worth asking about again.
+            end_minutes:
+              type: integer
+            planned_cost:
+              allOf:
+                - $ref: "#/components/schemas/Amount"
+              description: What the day plans to spend, optional places included.
+            actual_cost:
+              allOf:
+                - $ref: "#/components/schemas/Amount"
+              description: What the day really cost; zero outside a report.
+
+        media:
+          type: array
+          description: The day's pictures, in the order they were linked.
+          items:
+            $ref: "#/components/schemas/Media"
+        cover_media_id:
+          type: [string, "null"]
+          format: uuid
+          description: The picture the day is shown by, out of its own media.
+    Stay:
+      type: object
+      required: [id, name, kind, address, lat, lng, check_in_date, check_in_time, check_out_date, check_out_time,
+                 booking_ref, url, contacts, notes_md, planned_cost_amount, actual_cost_amount, nights,
+                 price_per_night, source_stay_id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        kind:
+          $ref: "#/components/schemas/StayKind"
+        address:
+          type: string
+        lat:
+          type: [number, "null"]
+        lng:
+          type: [number, "null"]
+        check_in_date:
+          type: string
+          format: date
+        check_in_time:
+          oneOf:
+            - $ref: "#/components/schemas/ClockTime"
+            - type: "null"
+        check_out_date:
+          type: string
+          format: date
+        check_out_time:
+          oneOf:
+            - $ref: "#/components/schemas/ClockTime"
+            - type: "null"
+        booking_ref:
+          type: string
+        url:
+          type: string
+        contacts:
+          type: string
+        notes_md:
+          type: string
+        planned_cost_amount:
+          $ref: "#/components/schemas/NullableAmount"
+        actual_cost_amount:
+          allOf:
+            - $ref: "#/components/schemas/NullableAmount"
+          description: Report only.
+        nights:
+          type: integer
+        price_per_night:
+          $ref: "#/components/schemas/NullableAmount"
+        source_stay_id:
+          type: [string, "null"]
+          format: uuid
+
+    Document:
+      type: object
+      required: [id, trip_id, kind, source_document_id, intro_md, summary_md, days, unassigned, stays, expenses,
+                 nights, stay_summary, pending_legs, estimated_legs, totals, translations, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        trip_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [plan, report]
+        source_document_id:
+          type: [string, "null"]
+          format: uuid
+          description: The plan a report was copied from.
+        intro_md:
+          type: string
+          description: The words before the days.
+        summary_md:
+          type: string
+          description: The words after them.
+        days:
+          type: array
+          items:
+            $ref: "#/components/schemas/Day"
+        unassigned:
+          type: array
+          items:
+            $ref: "#/components/schemas/Item"
+        stays:
+          type: array
+          description: By check-in date.
+          items:
+            $ref: "#/components/schemas/Stay"
+        expenses:
+          type: array
+          description: Costs tied to no place, stay or leg, oldest first.
+          items:
+            $ref: "#/components/schemas/Expense"
+        nights:
+          type: array
+          description: The nights of a trip with dates, from its first day to the night before its last.
+          items:
+            type: object
+            required: [date, stay_ids, no_overnight, missing]
+            properties:
+              date:
+                type: string
+                format: date
+              stay_ids:
+                type: array
+                description: More than one is an overlap.
+                items:
+                  type: string
+                  format: uuid
+              no_overnight:
+                type: boolean
+              missing:
+                type: boolean
+                description: No stay and not marked as spent without one.
+        pending_legs:
+          type: integer
+          description: Legs waiting for a calculation; call `legs:calculate` while it is above zero.
+        estimated_legs:
+          type: integer
+          description: |
+            Legs holding an estimate the provider could be asked about again;
+            call `legs:retry` while it is above zero.
+        totals:
+          oneOf:
+            - $ref: "#/components/schemas/ReportTotals"
+            - type: "null"
+          description: A report's figures for its reading mode; null on a plan.
+        translations:
+          type: object
+          description: |
+            A report's words in its further languages: by language, then by
+            the identifier of the element translated (the document, a day, a
+            stay, a place or a leg), then by field. A field missing here is read
+            in the original. Empty on a plan.
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: object
+              additionalProperties:
+                type: string
+        stay_summary:
+          type: object
+          required: [nights, cost, average_per_night]
+          properties:
+            nights:
+              type: integer
+            cost:
+              $ref: "#/components/schemas/Amount"
+            average_per_night:
+              $ref: "#/components/schemas/NullableAmount"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ReportTotals:
+      type: object
+      description: |
+        The figures the reading mode of a report opens with, derived on every
+        read. `planned_cost` is the snapshot the report carries and
+        `actual_cost` what was really spent.
+      required: [days, nights, places, distance_m, by_mode, planned_cost, actual_cost, difference, rated,
+                 average_rating]
+      properties:
+        days:
+          type: integer
+        nights:
+          type: integer
+          description: Nights covered by a stay.
+        places:
+          type: object
+          required: [planned, visited, skipped, unplanned, total]
+          properties:
+            planned:
+              type: integer
+              description: Not marked one way or the other yet.
+            visited:
+              type: integer
+            skipped:
+              type: integer
+            unplanned:
+              type: integer
+            total:
+              type: integer
+        distance_m:
+          type: integer
+        by_mode:
+          type: array
+          items:
+            type: object
+            required: [mode, distance_m, duration_s]
+            properties:
+              mode:
+                $ref: "#/components/schemas/TravelMode"
+              distance_m:
+                type: integer
+              duration_s:
+                type: integer
+        planned_cost:
+          $ref: "#/components/schemas/Amount"
+        actual_cost:
+          $ref: "#/components/schemas/Amount"
+        difference:
+          type: string
+          description: Actual minus planned; negative when less was spent.
+          pattern: "^-?[0-9]{1,12}(\\.[0-9]{1,2})?$"
+        rated:
+          type: integer
+          description: Places carrying a rating.
+        average_rating:
+          type: [number, "null"]
+
+    DayRequest:
+      type: object
+      additionalProperties: false
+      description: Omitted fields keep their value.
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        notes_md:
+          type: string
+          maxLength: 20000
+        start_time:
+          $ref: "#/components/schemas/ClockTime"
+        default_mode:
+          oneOf:
+            - $ref: "#/components/schemas/TravelMode"
+            - type: "null"
+        timezone:
+          type: [string, "null"]
+        morning_anchor:
+          type: boolean
+        evening_anchor:
+          type: boolean
+        no_overnight:
+          type: boolean
+
+    CreateDayRequest:
+      allOf:
+        - $ref: "#/components/schemas/DayRequest"
+        - type: object
+          properties:
+            position:
+              type: integer
+              description: Insert before the day now at this position; omitted appends.
+
+    ReorderDaysRequest:
+      type: object
+      required: [day_ids]
+      additionalProperties: false
+      properties:
+        day_ids:
+          type: array
+          description: Every day of the document, once, in the new order.
+          items:
+            type: string
+            format: uuid
+
+    PlaceRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        Omitted fields keep their value; null clears coordinates, desired time
+        and cost. A new place needs a name; its visit time defaults to its
+        category's and its cost category follows the place category. `kind`
+        makes it an activity, whose visit time defaults to its type's; it may
+        be changed later, and a place forgets its activity type and difficulty.
+        In a report, storing a place puts the places of its day in the order
+        of their `actual_time`: the timed ones are sorted into the positions
+        the timed ones held, and a place without a time keeps its position.
+      properties:
+        kind:
+          type: string
+          enum: [place, activity]
+        activity_type:
+          $ref: "#/components/schemas/ActivityType"
+        name:
+          type: string
+          maxLength: 200
+        category:
+          $ref: "#/components/schemas/PlaceCategory"
+        lat:
+          type: [number, "null"]
+        lng:
+          type: [number, "null"]
+        address:
+          type: string
+        osm_ref:
+          type: string
+        description_md:
+          type: string
+          maxLength: 20000
+        url:
+          type: string
+          description: An http or https address, or empty.
+        desired_time:
+          oneOf:
+            - $ref: "#/components/schemas/ClockTime"
+            - type: "null"
+        visit_minutes:
+          type: integer
+          minimum: 0
+          maximum: 1440
+        is_optional:
+          type: boolean
+        booking_ref:
+          type: string
+        planned_cost_amount:
+          $ref: "#/components/schemas/NullableAmount"
+        cost_per_person:
+          type: boolean
+        cost_category:
+          $ref: "#/components/schemas/CostCategory"
+        status:
+          $ref: "#/components/schemas/ItemStatus"
+        story_md:
+          type: string
+          maxLength: 20000
+        actual_time:
+          oneOf:
+            - $ref: "#/components/schemas/ClockTime"
+            - type: "null"
+        rating:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 5
+        actual_cost_amount:
+          $ref: "#/components/schemas/NullableAmount"
+        actual_end_time:
+          oneOf:
+            - $ref: "#/components/schemas/ClockTime"
+            - type: "null"
+        difficulty:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 5
+          description: Activities only; a place drops it.
+
+    CreatePlaceRequest:
+      allOf:
+        - $ref: "#/components/schemas/PlaceRequest"
+        - type: object
+          required: [name]
+          properties:
+            position:
+              type: integer
+              description: Insert before the place now at this position; omitted appends.
+
+    PlaceTarget:
+      type: object
+      additionalProperties: false
+      properties:
+        to_day_id:
+          type: [string, "null"]
+          format: uuid
+          description: The target day; null is the unassigned list of a plan.
+        position:
+          type: integer
+          description: Position in the target list; omitted or out of range appends.
+
+    MovePlaceRequest:
+      allOf:
+        - $ref: "#/components/schemas/PlaceTarget"
+        - type: object
+          required: [item_id]
+          properties:
+            item_id:
+              type: string
+              format: uuid
+
+    StayRequest:
+      type: object
+      additionalProperties: false
+      description: Omitted fields keep their value. A new stay needs a name and both dates.
+      properties:
+        name:
+          type: string
+          maxLength: 200
+        kind:
+          $ref: "#/components/schemas/StayKind"
+        address:
+          type: string
+        lat:
+          type: [number, "null"]
+        lng:
+          type: [number, "null"]
+        check_in_date:
+          type: string
+          format: date
+        check_in_time:
+          oneOf:
+            - $ref: "#/components/schemas/ClockTime"
+            - type: "null"
+        check_out_date:
+          type: string
+          format: date
+          description: After the check-in date.
+        check_out_time:
+          oneOf:
+            - $ref: "#/components/schemas/ClockTime"
+            - type: "null"
+        booking_ref:
+          type: string
+        url:
+          type: string
+        contacts:
+          type: string
+        notes_md:
+          type: string
+        planned_cost_amount:
+          $ref: "#/components/schemas/NullableAmount"
+        actual_cost_amount:
+          allOf:
+            - $ref: "#/components/schemas/NullableAmount"
+          description: Report only.
+
+    ShareLink:
+      type: object
+      description: A link as its owner sees it afterwards, without its token.
+      required: [id, label, include_private_media, expires_at, last_used_at, use_count, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+          description: The owner's own note, such as “For my parents”.
+        include_private_media:
+          type: boolean
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+          description: When the link stops working; null never expires.
+        last_used_at:
+          type: [string, "null"]
+          format: date-time
+        use_count:
+          type: integer
+          description: How many times the link has been opened.
+        created_at:
+          type: string
+          format: date-time
+
+    CreatedShareLink:
+      allOf:
+        - $ref: "#/components/schemas/ShareLink"
+        - type: object
+          required: [token]
+          properties:
+            token:
+              type: string
+              description: |
+                32 random bytes in base64url. Shown only here, and never again.
+                The address to hand out is `<origin>/s#token=<token>`, built by
+                the client from its own origin.
+              examples: ["Yk9uZm9yZ2V0dGFibGVyYW5kb21ieXRlc2hlcmU"]
+
+    CreateShareLinkRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        Every field is optional; the default hides private media and never
+        expires. A link opens the trip's one document, its plan or its report.
+      properties:
+        label:
+          type: string
+          maxLength: 200
+        include_private_media:
+          type: boolean
+          default: false
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+          description: An RFC 3339 timestamp in the future; null or omitted never expires.
+
+    Shared:
+      type: object
+      description: What a share token opens.
+      required: [trip, label, kind, include_private_media]
+      properties:
+        trip:
+          type: object
+          description: |
+            The trip as the link shows it: nothing about the people with access
+            or the accounts behind them, and not the trip's own budget.
+          required: [title, summary, start_date, end_date, timezone, currency, travelers, status, day_count,
+                     owner_name, languages, translations]
+          properties:
+            title:
+              type: string
+            summary:
+              type: string
+            start_date:
+              type: string
+              format: date
+            end_date:
+              type: string
+              format: date
+            timezone:
+              type: string
+            currency:
+              type: string
+            travelers:
+              type: integer
+            status:
+              type: string
+              enum: [upcoming, ongoing, completed]
+            day_count:
+              type: integer
+            owner_name:
+              type: string
+            languages:
+              $ref: "#/components/schemas/Languages"
+            translations:
+              type: object
+              description: The report's title and summary in its further languages, by language, then by field.
+              additionalProperties:
+                type: object
+                additionalProperties:
+                  type: string
+        label:
+          type: string
+        kind:
+          type: string
+          enum: [plan, report]
+          description: What the trip holds, and so what the link opens.
+        include_private_media:
+          type: boolean
+
+    Expense:
+      type: object
+      description: |
+        A cost that belongs to no place, stay or leg. `day_id` is null for an
+        expense of the whole trip. `actual_amount` and `spent_on` stay empty in
+        a plan.
+      required: [id, day_id, category, planned_amount, actual_amount, spent_on, note]
+      properties:
+        id:
+          type: string
+          format: uuid
+        day_id:
+          type: [string, "null"]
+          format: uuid
+        category:
+          $ref: "#/components/schemas/CostCategory"
+        planned_amount:
+          $ref: "#/components/schemas/NullableAmount"
+        actual_amount:
+          $ref: "#/components/schemas/NullableAmount"
+        spent_on:
+          type: [string, "null"]
+          format: date
+        note:
+          type: string
+
+    ExpenseRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        Omitted fields keep their value. A null `day_id` moves the expense to
+        the trip as a whole. An expense needs at least one amount.
+      properties:
+        day_id:
+          type: [string, "null"]
+          format: uuid
+          description: A day of the same document.
+        category:
+          $ref: "#/components/schemas/CostCategory"
+        planned_amount:
+          $ref: "#/components/schemas/NullableAmount"
+        actual_amount:
+          $ref: "#/components/schemas/NullableAmount"
+        spent_on:
+          type: [string, "null"]
+          format: date
+        note:
+          type: string
+          maxLength: 500
+
+    Budget:
+      type: object
+      description: |
+        Every amount is in the trip's currency. `planned` is what the plan
+        commits to, the places marked optional included; only `unassigned`, the
+        places not on a day yet, is reported separately so it never inflates it.
+        `planned` is the sum of the days, `stays` and `untied`.
+
+        A report's budget carries the same planned amounts - the snapshot it was
+        copied with - and `actual` beside each of them. There the overall budget
+        is measured against `actual`, since that is what was spent.
+      required: [kind, document_id, currency, travelers, budget_amount, planned, unassigned, stays,
+                 untied, actual, per_person, remaining, used_percent, categories, days, entries]
+      properties:
+        kind:
+          type: string
+          enum: [plan, report]
+        document_id:
+          type: [string, "null"]
+          format: uuid
+          description: The document the figures come from.
+        currency:
+          type: string
+        travelers:
+          type: integer
+        budget_amount:
+          $ref: "#/components/schemas/NullableAmount"
+        planned:
+          $ref: "#/components/schemas/Amount"
+        unassigned:
+          allOf:
+            - $ref: "#/components/schemas/Amount"
+          description: The places that are not on a day yet.
+        stays:
+          allOf:
+            - $ref: "#/components/schemas/Amount"
+          description: The part of `planned` spent on accommodation.
+        untied:
+          allOf:
+            - $ref: "#/components/schemas/Amount"
+          description: The part of `planned` from expenses of the whole trip.
+        actual:
+          allOf:
+            - $ref: "#/components/schemas/Amount"
+          description: Everything a report records as spent; `0.00` in a plan.
+        per_person:
+          allOf:
+            - $ref: "#/components/schemas/Amount"
+          description: The spending over the travellers - `planned` in a plan, `actual` in a report.
+        remaining:
+          oneOf:
+            - type: string
+              description: The budget minus the spending; negative when overspent.
+              pattern: "^-?[0-9]{1,12}(\\.[0-9]{1,2})?$"
+            - type: "null"
+        used_percent:
+          type: [integer, "null"]
+          description: |
+            The share of the budget the spending takes up, for a bar; null
+            without a budget, and above 100 when it does not fit.
+        categories:
+          type: array
+          description: Every category, accommodation and transport first.
+          items:
+            type: object
+            required: [category, planned, actual]
+            properties:
+              category:
+                $ref: "#/components/schemas/CostCategory"
+              planned:
+                $ref: "#/components/schemas/Amount"
+              actual:
+                $ref: "#/components/schemas/Amount"
+        days:
+          type: array
+          description: The document's days, in order.
+          items:
+            type: object
+            required: [day_id, position, date, planned, actual]
+            properties:
+              day_id:
+                type: string
+                format: uuid
+              position:
+                type: integer
+              date:
+                type: [string, "null"]
+                format: date
+              planned:
+                $ref: "#/components/schemas/Amount"
+              actual:
+                $ref: "#/components/schemas/Amount"
+        entries:
+          type: array
+          description: |
+            The individual costs, day by day and unassigned places last, for the
+            expense list and its filters.
+          items:
+            type: object
+            required: [kind, id, label, category, day_id, amount, unit_amount, per_person, is_optional, unassigned,
+                       actual_amount]
+            properties:
+              kind:
+                type: string
+                enum: [place, stay, leg, expense]
+              id:
+                type: string
+                format: uuid
+                description: The place, stay, leg or expense carrying the cost.
+              label:
+                type: string
+              category:
+                $ref: "#/components/schemas/CostCategory"
+              day_id:
+                type: [string, "null"]
+                format: uuid
+              amount:
+                allOf:
+                  - $ref: "#/components/schemas/Amount"
+                description: What the cost comes to for the whole group.
+              unit_amount:
+                allOf:
+                  - $ref: "#/components/schemas/Amount"
+                description: The amount as it was typed.
+              per_person:
+                type: boolean
+              is_optional:
+                type: boolean
+                description: A place its day may skip; it counts towards `planned` all the same.
+              unassigned:
+                type: boolean
+                description: A place with no day; left out of every total but `unassigned`.
+              actual_amount:
+                allOf:
+                  - $ref: "#/components/schemas/NullableAmount"
+                description: |
+                  What was really spent for the whole group, in a report; null in
+                  a plan and where nothing was entered. A cost entered only as
+                  spent has an `amount` of `0.00`.
+
+    Leg:
+      type: object
+      description: |
+        The journey between two neighbouring elements of a day. A day that does
+        not open with a stay mark also has one in from the last element of the
+        nearest earlier day that has any, listed first among the day's legs; its
+        `from_item_id` is then an element of that earlier day.
+      required: [id, from_item_id, to_item_id, mode, distance_m, duration_s, calculated_distance_m,
+                 calculated_duration_s, manual_distance, manual_duration, geometry, source, error, calculated_at,
+                 planned_cost_amount, actual_cost_amount, note]
+      properties:
+        id:
+          type: string
+          format: uuid
+        from_item_id:
+          type: string
+          format: uuid
+        to_item_id:
+          type: string
+          format: uuid
+        mode:
+          $ref: "#/components/schemas/TravelMode"
+        distance_m:
+          type: [integer, "null"]
+          description: The distance the plan uses - typed if set, else calculated.
+        duration_s:
+          type: [integer, "null"]
+          description: The time the plan uses; null for an "other" leg nobody timed.
+        calculated_distance_m:
+          type: [integer, "null"]
+        calculated_duration_s:
+          type: [integer, "null"]
+        manual_distance:
+          type: boolean
+        manual_duration:
+          type: boolean
+        geometry:
+          type: string
+          description: Encoded polyline, precision 5; empty until calculated.
+        source:
+          type: string
+          enum: [pending, provider, straight_line, estimate, missing_coordinates]
+          description: |
+            `provider` follows roads (a `transit` leg follows the car route);
+            `straight_line` is the great circle of flights and other legs;
+            `estimate` is a scaled straight line when the provider could not
+            answer; `missing_coordinates` cannot be calculated.
+        error:
+          type: [string, "null"]
+          enum: [provider_disabled, rate_limited, daily_limit, no_route, provider_error, null]
+          description: Why an estimate was used.
+        calculated_at:
+          type: [string, "null"]
+          format: date-time
+        planned_cost_amount:
+          $ref: "#/components/schemas/NullableAmount"
+        actual_cost_amount:
+          allOf:
+            - $ref: "#/components/schemas/NullableAmount"
+          description: Report only.
+        note:
+          type: string
+
+    UpdateLegRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        mode:
+          $ref: "#/components/schemas/TravelMode"
+        distance_m:
+          type: [integer, "null"]
+          minimum: 0
+          description: Typed distance in metres; null returns to the calculated one.
+        duration_s:
+          type: [integer, "null"]
+          minimum: 0
+          description: Typed time in seconds; null returns to the calculated one.
+        planned_cost_amount:
+          $ref: "#/components/schemas/NullableAmount"
+        actual_cost_amount:
+          allOf:
+            - $ref: "#/components/schemas/NullableAmount"
+          description: Report only.
+        note:
+          type: string
+          maxLength: 500
+        reset_manual:
+          type: boolean
+          description: Drop both typed values.
+
+    ProviderStatus:
+      type: object
+      required: [provider, configured, last_success_at, last_error_at, requests_24h, errors_24h, daily_limit,
+                 cache_entries, cache_hits]
+      properties:
+        provider:
+          type: string
+        configured:
+          type: boolean
+          description: Whether an API key is set.
+        last_success_at:
+          type: [string, "null"]
+          format: date-time
+        last_error_at:
+          type: [string, "null"]
+          format: date-time
+        requests_24h:
+          type: integer
+        errors_24h:
+          type: integer
+        daily_limit:
+          type: integer
+          description: The service's own daily limit, kept below the provider's.
+        cache_entries:
+          type: integer
+        cache_hits:
+          type: integer
+
+    Place:
+      type: object
+      required: [name, label, lat, lng, layer, country, ref]
+      properties:
+        name:
+          type: string
+        label:
+          type: string
+          description: The name with its region, for a list of choices.
+        lat:
+          type: number
+        lng:
+          type: number
+        layer:
+          type: string
+          description: The kind of result, such as venue, address or locality.
+        country:
+          type: string
+        ref:
+          type: string
+          description: The result's identifier at its source; store it as a place's osm_ref.

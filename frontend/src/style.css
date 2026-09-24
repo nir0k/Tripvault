@@ -1,0 +1,276 @@
+@import "tailwindcss";
+
+/* The built-in themes are switched off and both palettes are defined in full
+   here: a built-in theme's selector outranks an override of the same name. */
+@plugin "daisyui" {
+  themes: false;
+}
+
+/* The palette follows the logo: warm orange for primary actions. Colours used
+   for text on the page background (error, success, info) are dark enough in the
+   light theme, and light enough in the dark one, for WCAG AA contrast. */
+@plugin "daisyui/theme" {
+  name: "light";
+  default: true;
+  color-scheme: light;
+  --color-base-100: oklch(100% 0 0);
+  --color-base-200: oklch(98% 0.003 60);
+  --color-base-300: oklch(94% 0.006 60);
+  --color-base-content: oklch(21% 0.006 285.885);
+  --color-primary: #c2410c;
+  --color-primary-content: #ffffff;
+  --color-secondary: #9f1239;
+  --color-secondary-content: #ffffff;
+  --color-accent: #b45309;
+  --color-accent-content: #ffffff;
+  --color-neutral: oklch(14% 0.005 285.823);
+  --color-neutral-content: oklch(92% 0.004 286.32);
+  --color-info: #0369a1;
+  --color-info-content: #ffffff;
+  --color-success: #15803d;
+  --color-success-content: #ffffff;
+  --color-warning: #fbbf24;
+  --color-warning-content: #451a03;
+  --color-error: #b91c1c;
+  --color-error-content: #ffffff;
+  --radius-selector: 0.5rem;
+  --radius-field: 0.375rem;
+  --radius-box: 0.75rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+}
+
+@plugin "daisyui/theme" {
+  name: "dark";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-base-100: oklch(25.33% 0.016 252.42);
+  --color-base-200: oklch(23.26% 0.014 253.1);
+  --color-base-300: oklch(21.15% 0.012 254.09);
+  --color-base-content: oklch(97.807% 0.029 256.847);
+  --color-primary: #fb923c;
+  --color-primary-content: #1c1917;
+  --color-secondary: #fb7185;
+  --color-secondary-content: #1c1917;
+  --color-accent: #fbbf24;
+  --color-accent-content: #1c1917;
+  --color-neutral: oklch(14% 0.005 285.823);
+  --color-neutral-content: oklch(92% 0.004 286.32);
+  --color-info: oklch(74% 0.16 232.661);
+  --color-info-content: oklch(29% 0.066 243.157);
+  --color-success: oklch(76% 0.177 163.223);
+  --color-success-content: oklch(37% 0.077 168.94);
+  --color-warning: oklch(82% 0.189 84.429);
+  --color-warning-content: oklch(41% 0.112 45.904);
+  --color-error: oklch(71% 0.194 13.428);
+  --color-error-content: oklch(27% 0.105 12.094);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.375rem;
+  --radius-box: 0.75rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+}
+
+/* Text people write in Markdown: Tailwind's reset removes the spacing, list
+   markers and link styling that make it readable, so they come back here. */
+/* Map pins: a round badge in the day's colour with a category glyph. */
+.map-pin {
+  position: relative;
+  display: flex;
+  height: 30px;
+  width: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #ffffff;
+  border-radius: 9999px;
+  background: var(--pin);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
+  color: #ffffff;
+}
+.map-pin svg {
+  height: 16px;
+  width: 16px;
+}
+/* The place's number in its day, a small badge on the pin's upper right. It
+   is dark whatever the day's colour, so it reads on every pin and every map. */
+.map-pin-number {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  display: flex;
+  height: 16px;
+  min-width: 16px;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid #ffffff;
+  border-radius: 9999px;
+  background: #1f2937;
+  padding: 0 3px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  color: #ffffff;
+}
+.map-pin-muted {
+  opacity: 0.55;
+}
+.map-distance {
+  border: none;
+  background: rgb(255 255 255 / 0.9);
+  box-shadow: none;
+  padding: 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #1f2937;
+}
+.map-distance::before {
+  display: none;
+}
+/* A marker's popup: a fixed width, so the picture that arrives after it opens
+   fills a box already there instead of moving the popup about. Leaflet draws
+   the popup white in either theme, so the colours are fixed too. */
+.map-popup {
+  width: 14rem;
+}
+.map-popup-picture {
+  height: 8rem;
+  overflow: hidden;
+  border-radius: 0.375rem;
+  background: #e5e7eb;
+}
+.map-popup-picture img {
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+}
+.leaflet-popup-content .map-popup p {
+  margin: 0.25rem 0;
+}
+.leaflet-popup-content .map-popup p.map-popup-text {
+  font-size: 12px;
+  line-height: 1.4;
+  color: #4b5563;
+}
+
+.markdown > * + * {
+  margin-top: 0.5em;
+}
+.markdown ul {
+  list-style: disc;
+  padding-left: 1.25rem;
+}
+.markdown ol {
+  list-style: decimal;
+  padding-left: 1.25rem;
+}
+.markdown a {
+  text-decoration: underline;
+}
+.markdown h1,
+.markdown h2,
+.markdown h3 {
+  font-weight: 600;
+}
+.markdown blockquote {
+  border-left: 3px solid var(--color-base-300);
+  padding-left: 0.75rem;
+}
+.markdown code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+}
+
+/*
+ * A quiet button that only shows its outline when pointed at.
+ *
+ * DaisyUI's btn-outline does the opposite: it draws the border all the time and
+ * fills the button on hover, so the border seems to vanish just as the pointer
+ * arrives. Here the button sits flat among the text and the outline appears as
+ * an answer to the pointer - and to the keyboard, so tabbing through a form
+ * shows the same thing a mouse does.
+ */
+.btn-hover-outline {
+  --btn-bg: transparent;
+  --btn-border: transparent;
+  --btn-shadow: 0 0 0 0 oklch(0% 0 0 / 0);
+  --btn-inset: 0 0 0 0 oklch(0% 0 0 / 0);
+  background-image: none;
+  color: var(--btn-color, var(--color-base-content));
+}
+.btn-hover-outline:hover,
+.btn-hover-outline:focus-visible {
+  --btn-bg: transparent;
+  --btn-border: var(--btn-color, var(--color-base-content));
+}
+
+/* The same quiet treatment for a select that sits in a toolbar rather than in a
+   form: no border at rest, one on hover. Its focus is the general rule's
+   business, like every other control's. */
+.select-hover-outline {
+  --input-color: transparent;
+}
+.select-hover-outline:hover {
+  --input-color: var(--color-base-content);
+}
+
+/*
+ * Focus without the white frame.
+ *
+ * daisyUI answers focus with a two-pixel outline in the text colour and a
+ * border to match, which reads as a white frame in the dark theme and sits on
+ * the screen the whole time a field is being filled in. These rules are outside
+ * every @layer, so they outrank daisyUI's own wherever they disagree. A field
+ * answers focus by colouring its border, with no ring at all: browsers count a
+ * text field as keyboard-focused even when it was clicked, so a ring there
+ * would follow every click. Controls that carry no caret - buttons, checkboxes,
+ * tabs - keep a ring, in the brand colour, for keyboard focus only.
+ */
+:where(.input, .select, .textarea, .file-input):focus,
+:where(.input, .select, .textarea, .file-input):focus-within,
+:where(.select:open) {
+  --input-color: var(--color-primary);
+  outline: none;
+  box-shadow: none;
+}
+:where(.btn, .checkbox, .radio, .toggle, .range, .tab, summary):focus-visible,
+:where(.btn, .toggle, .tab, summary):has(:focus-visible) {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* A card the page has just scrolled to, marked for a moment. */
+.reveal-flash {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+  transition: outline-color 0.3s;
+}
+
+/* The five levels of an activity's difficulty, from green to red. A level
+   is shown pale where it is only named - a badge, a choice not taken - and
+   solid where it is the one chosen. The pale forms mix the colour into the
+   page's own, so they read in either theme. */
+.difficulty-1 { --difficulty: #16a34a; --difficulty-content: #ffffff; }
+.difficulty-2 { --difficulty: #65a30d; --difficulty-content: #ffffff; }
+.difficulty-3 { --difficulty: #eab308; --difficulty-content: #1c1917; }
+.difficulty-4 { --difficulty: #ea580c; --difficulty-content: #ffffff; }
+.difficulty-5 { --difficulty: #dc2626; --difficulty-content: #ffffff; }
+.difficulty-soft {
+  border-color: color-mix(in oklab, var(--difficulty) 45%, transparent);
+  background: color-mix(in oklab, var(--difficulty) 14%, transparent);
+  color: color-mix(in oklab, var(--difficulty) 65%, var(--color-base-content));
+}
+.difficulty-soft:hover {
+  background: color-mix(in oklab, var(--difficulty) 24%, transparent);
+}
+.difficulty-solid,
+.difficulty-solid:hover {
+  border-color: var(--difficulty);
+  background: var(--difficulty);
+  color: var(--difficulty-content);
+}

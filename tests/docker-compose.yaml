@@ -1,0 +1,131 @@
+# Tripvault test stand.
+#
+# Started only with docker compose - there is no Makefile wrapper:
+#
+#   cd tests
+#   docker compose up -d     build the current source and start
+#   docker compose down      stop and destroy every byte of state
+#
+# Rules for this file:
+#   * Images are built from the working tree on every "up" (pull_policy:
+#     build), never pulled from the registry, so the stand runs the current
+#     source without extra flags. Unchanged layers come from the build cache.
+#   * No volumes of any kind - named, anonymous or bind mounts. State lives
+#     only inside the containers and disappears with them.
+#   * The only host-side file is ./.env, which is committed and holds throwaway
+#     placeholders. Every variable also has a default here.
+
+name: tripvault-stand
+
+x-build-args: &build-args
+  VERSION: ${TRIPVAULT_VERSION:-stand}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  tripvault-db:
+    image: postgres:16.15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tripvault}
+      POSTGRES_USER: ${POSTGRES_USER:-tripvault}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tripvault}
+    # The stand is disposable, so durability is traded for speed.
+    command: ["postgres", "-c", "fsync=off", "-c", "full_page_writes=off", "-c", "synchronous_commit=off"]
+    tmpfs:
+      # Mounted exactly on the image's declared VOLUME path: anything else
+      # makes Docker create an anonymous volume that outlives the container.
+      # uid/gid 70 is the postgres user of the Alpine image.
+      - /var/lib/postgresql/data:mode=0700,uid=70,gid=70,size=512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tripvault} -d ${POSTGRES_DB:-tripvault}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    logging: *logging
+
+  tripvault-backend:
+    build:
+      context: ../backend
+      args: *build-args
+    image: tripvault-backend:stand
+    pull_policy: build
+    restart: unless-stopped
+    depends_on:
+      tripvault-db:
+        condition: service_healthy
+    environment:
+      TRIPVAULT_ENV: development
+      TRIPVAULT_LOG_LEVEL: ${TRIPVAULT_LOG_LEVEL:-debug}
+      TRIPVAULT_DB_DSN: postgres://${POSTGRES_USER:-tripvault}:${POSTGRES_PASSWORD:-tripvault}@tripvault-db:5432/${POSTGRES_DB:-tripvault}?sslmode=disable
+      TRIPVAULT_AUTH_JWT_SECRET: ${TRIPVAULT_AUTH_JWT_SECRET:-stand-only-not-a-real-secret}
+      TRIPVAULT_AUTH_ACCESS_TOKEN_TTL: ${TRIPVAULT_AUTH_ACCESS_TOKEN_TTL:-15m}
+      TRIPVAULT_AUTH_REFRESH_TOKEN_TTL: ${TRIPVAULT_AUTH_REFRESH_TOKEN_TTL:-720h}
+      TRIPVAULT_DB_MAX_CONNS: ${TRIPVAULT_DB_MAX_CONNS:-10}
+      TRIPVAULT_ADMIN_EMAIL: ${TRIPVAULT_ADMIN_EMAIL:-admin@example.com}
+      TRIPVAULT_ADMIN_PASSWORD: ${TRIPVAULT_ADMIN_PASSWORD:-stand-admin-password}
+      TRIPVAULT_ADMIN_DISPLAY_NAME: ${TRIPVAULT_ADMIN_DISPLAY_NAME:-Administrator}
+      # Two example trips on an empty database, so there is something to look at
+      # the moment the stand comes up. Development only; the configuration
+      # refuses the flag in production.
+      TRIPVAULT_DEMO_DATA: ${TRIPVAULT_DEMO_DATA:-true}
+      # A stand keeps its photographs inside the container, so they die with
+      # it like everything else. The limits are the production defaults.
+      TRIPVAULT_MEDIA_MAX_SIZE_MB: ${TRIPVAULT_MEDIA_MAX_SIZE_MB:-25}
+      TRIPVAULT_MEDIA_TRIP_QUOTA_MB: ${TRIPVAULT_MEDIA_TRIP_QUOTA_MB:-2048}
+      TRIPVAULT_MEDIA_TRACK_MAX_SIZE_MB: ${TRIPVAULT_MEDIA_TRACK_MAX_SIZE_MB:-10}
+      # The tiles the browser draws maps with. The stand uses the same default
+      # as a real deployment, and the same variable changes it: a network that
+      # blocks one tile server needs another, not a patched compose file.
+      TRIPVAULT_MAP_TILE_URL: ${TRIPVAULT_MAP_TILE_URL:-}
+      TRIPVAULT_MAP_ATTRIBUTION: ${TRIPVAULT_MAP_ATTRIBUTION:-}
+      # Backups work on the stand, into the container's own filesystem, and go
+      # the way of everything else when it stops. The secrets key is made inside
+      # the container for the same reason: the stand keeps nothing.
+      TRIPVAULT_BACKUP_SCHEDULER_INTERVAL: ${TRIPVAULT_BACKUP_SCHEDULER_INTERVAL:-1m}
+      # Empty by default, so legs are estimates and place search is off. To try
+      # real routes, either pass a key from the shell
+      # (TRIPVAULT_ROUTING_API_KEY=... docker compose up -d) - never commit one
+      # to ./.env - or point the stand at a router of your own:
+      # TRIPVAULT_ROUTING_PROVIDER=osrm TRIPVAULT_ROUTING_BASE_URL=http://osrm:5000
+      TRIPVAULT_ROUTING_PROVIDER: ${TRIPVAULT_ROUTING_PROVIDER:-ors}
+      TRIPVAULT_ROUTING_BASE_URL: ${TRIPVAULT_ROUTING_BASE_URL:-}
+      TRIPVAULT_ROUTING_API_KEY: ${TRIPVAULT_ROUTING_API_KEY:-}
+      TRIPVAULT_ROUTING_REQUESTS_PER_MINUTE: ${TRIPVAULT_ROUTING_REQUESTS_PER_MINUTE:-40}
+      TRIPVAULT_ROUTING_DAILY_LIMIT: ${TRIPVAULT_ROUTING_DAILY_LIMIT:-9000}
+      TRIPVAULT_ROUTING_CACHE_TTL: ${TRIPVAULT_ROUTING_CACHE_TTL:-2160h}
+      TRIPVAULT_GEOCODING_PROVIDER: ${TRIPVAULT_GEOCODING_PROVIDER:-pelias}
+      TRIPVAULT_GEOCODING_BASE_URL: ${TRIPVAULT_GEOCODING_BASE_URL:-}
+      TRIPVAULT_GEOCODING_API_KEY: ${TRIPVAULT_GEOCODING_API_KEY:-}
+      TRIPVAULT_GEOCODING_REQUESTS_PER_MINUTE: ${TRIPVAULT_GEOCODING_REQUESTS_PER_MINUTE:-100}
+      TRIPVAULT_GEOCODING_DAILY_LIMIT: ${TRIPVAULT_GEOCODING_DAILY_LIMIT:-12000}
+      TRIPVAULT_GEOCODING_CACHE_TTL: ${TRIPVAULT_GEOCODING_CACHE_TTL:-720h}
+    ports:
+      - "127.0.0.1:${TRIPVAULT_API_PORT:-8070}:8080"
+    logging: *logging
+
+  tripvault-frontend:
+    build:
+      context: ../frontend
+      args: *build-args
+    image: tripvault-frontend:stand
+    pull_policy: build
+    restart: unless-stopped
+    depends_on:
+      tripvault-backend:
+        condition: service_healthy
+    environment:
+      TRIPVAULT_API_UPSTREAM: tripvault-backend:8080
+      # The origin of a tile server of your own, which the page is then allowed
+      # to load images from. Empty leaves the policy as it is: https only.
+      TRIPVAULT_MAP_TILE_ORIGIN: ${TRIPVAULT_MAP_TILE_ORIGIN:-}
+      # The proxy in front whose X-Forwarded-For names the real client.
+      TRIPVAULT_TRUSTED_PROXY: ${TRIPVAULT_TRUSTED_PROXY:-127.0.0.1/32}
+    ports:
+      - "127.0.0.1:${TRIPVAULT_WEB_PORT:-8071}:8080"
+    logging: *logging

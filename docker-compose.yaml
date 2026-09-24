@@ -1,0 +1,124 @@
+# Tripvault production deployment.
+#
+# Pulls published images and keeps every byte of data in named volumes that
+# survive restarts and upgrades. For a disposable stand built from source, see
+# tests/docker-compose.yaml.
+#
+#   cp .env.example .env    # then fill in the required values
+#   docker compose up -d
+#
+# Upgrading:
+#   docker compose pull && docker compose up -d
+#
+# "docker compose down" keeps the volumes; only "down --volumes" destroys them.
+
+name: tripvault
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  tripvault-db:
+    image: postgres:16.15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tripvault}
+      POSTGRES_USER: ${POSTGRES_USER:-tripvault}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required, see .env.example}
+    volumes:
+      - tripvault-pgdata:/var/lib/postgresql/data
+    # No ports: the database is reachable only from the other containers.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tripvault} -d ${POSTGRES_DB:-tripvault}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    logging: *logging
+
+  tripvault-backend:
+    image: ghcr.io/nir0k/tripvault-backend:${TRIPVAULT_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      tripvault-db:
+        condition: service_healthy
+    environment:
+      TRIPVAULT_ENV: production
+      TRIPVAULT_LOG_LEVEL: ${TRIPVAULT_LOG_LEVEL:-info}
+      TRIPVAULT_DB_DSN: postgres://${POSTGRES_USER:-tripvault}:${POSTGRES_PASSWORD}@tripvault-db:5432/${POSTGRES_DB:-tripvault}?sslmode=disable
+      TRIPVAULT_AUTH_JWT_SECRET: ${TRIPVAULT_AUTH_JWT_SECRET:?TRIPVAULT_AUTH_JWT_SECRET is required, see .env.example}
+      TRIPVAULT_AUTH_ACCESS_TOKEN_TTL: ${TRIPVAULT_AUTH_ACCESS_TOKEN_TTL:-15m}
+      TRIPVAULT_AUTH_REFRESH_TOKEN_TTL: ${TRIPVAULT_AUTH_REFRESH_TOKEN_TTL:-720h}
+      TRIPVAULT_DB_MAX_CONNS: ${TRIPVAULT_DB_MAX_CONNS:-10}
+      TRIPVAULT_ADMIN_EMAIL: ${TRIPVAULT_ADMIN_EMAIL:-}
+      TRIPVAULT_ADMIN_PASSWORD: ${TRIPVAULT_ADMIN_PASSWORD:-}
+      TRIPVAULT_ADMIN_DISPLAY_NAME: ${TRIPVAULT_ADMIN_DISPLAY_NAME:-Administrator}
+      # Which service calculates road routes and finds places, and how it is
+      # reached. Empty addresses mean the hosted services; a service of your own
+      # needs its address and usually no key.
+      TRIPVAULT_ROUTING_PROVIDER: ${TRIPVAULT_ROUTING_PROVIDER:-ors}
+      TRIPVAULT_ROUTING_BASE_URL: ${TRIPVAULT_ROUTING_BASE_URL:-}
+      TRIPVAULT_ROUTING_API_KEY: ${TRIPVAULT_ROUTING_API_KEY:-}
+      TRIPVAULT_ROUTING_REQUESTS_PER_MINUTE: ${TRIPVAULT_ROUTING_REQUESTS_PER_MINUTE:-40}
+      TRIPVAULT_ROUTING_DAILY_LIMIT: ${TRIPVAULT_ROUTING_DAILY_LIMIT:-9000}
+      TRIPVAULT_ROUTING_CACHE_TTL: ${TRIPVAULT_ROUTING_CACHE_TTL:-2160h}
+      TRIPVAULT_GEOCODING_PROVIDER: ${TRIPVAULT_GEOCODING_PROVIDER:-pelias}
+      TRIPVAULT_GEOCODING_BASE_URL: ${TRIPVAULT_GEOCODING_BASE_URL:-}
+      TRIPVAULT_GEOCODING_API_KEY: ${TRIPVAULT_GEOCODING_API_KEY:-}
+      TRIPVAULT_GEOCODING_REQUESTS_PER_MINUTE: ${TRIPVAULT_GEOCODING_REQUESTS_PER_MINUTE:-100}
+      TRIPVAULT_GEOCODING_DAILY_LIMIT: ${TRIPVAULT_GEOCODING_DAILY_LIMIT:-12000}
+      TRIPVAULT_GEOCODING_CACHE_TTL: ${TRIPVAULT_GEOCODING_CACHE_TTL:-720h}
+      # Empty values fall back to the OpenStreetMap tiles.
+      TRIPVAULT_MAP_TILE_URL: ${TRIPVAULT_MAP_TILE_URL:-}
+      TRIPVAULT_MAP_ATTRIBUTION: ${TRIPVAULT_MAP_ATTRIBUTION:-}
+      TRIPVAULT_MEDIA_MAX_SIZE_MB: ${TRIPVAULT_MEDIA_MAX_SIZE_MB:-25}
+      TRIPVAULT_MEDIA_TRIP_QUOTA_MB: ${TRIPVAULT_MEDIA_TRIP_QUOTA_MB:-2048}
+      TRIPVAULT_MEDIA_TRACK_MAX_SIZE_MB: ${TRIPVAULT_MEDIA_TRACK_MAX_SIZE_MB:-10}
+      # How often the schedule of the backups configured in the interface is
+      # checked. They are written to the tripvault-backups volume or over SFTP,
+      # and a restore reads them back from there.
+      TRIPVAULT_BACKUP_SCHEDULER_INTERVAL: ${TRIPVAULT_BACKUP_SCHEDULER_INTERVAL:-1m}
+      # Seals the credentials entered in the backup settings. Left empty, a key
+      # is made in the config volume on the first start and read from there
+      # afterwards.
+      TRIPVAULT_SECRETS_KEY: ${TRIPVAULT_SECRETS_KEY:-}
+    volumes:
+      # The uploaded files; the path is where the image expects them.
+      - tripvault-media:/app/media
+      # The archives written to this server's own disk. A copy kept only here
+      # dies with the disk that holds the database, so configure a second backup
+      # to another machine over SFTP as well.
+      - tripvault-backups:/app/backups
+      # The key that opens the stored backup credentials. Losing it means
+      # entering the SFTP password and the archive passphrase again.
+      - tripvault-config:/app/config
+    # No ports: the API is reached through the frontend container.
+    logging: *logging
+
+  tripvault-frontend:
+    image: ghcr.io/nir0k/tripvault-frontend:${TRIPVAULT_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      tripvault-backend:
+        condition: service_healthy
+    environment:
+      TRIPVAULT_API_UPSTREAM: tripvault-backend:8080
+      # The origin of a tile server of your own, which the page is then allowed
+      # to load images from. Empty leaves the policy as it is: https only.
+      TRIPVAULT_MAP_TILE_ORIGIN: ${TRIPVAULT_MAP_TILE_ORIGIN:-}
+      # The reverse proxy or tunnel in front, whose X-Forwarded-For names the
+      # real client. Without it every visitor shares the proxy's address.
+      TRIPVAULT_TRUSTED_PROXY: ${TRIPVAULT_TRUSTED_PROXY:-127.0.0.1/32}
+    ports:
+      # Bound to localhost: publish it through a reverse proxy or a tunnel.
+      - "${TRIPVAULT_BIND_ADDRESS:-127.0.0.1}:${TRIPVAULT_HTTP_PORT:-8080}:8080"
+    logging: *logging
+
+volumes:
+  tripvault-pgdata:
+  tripvault-media:
+  tripvault-backups:
+  tripvault-config:

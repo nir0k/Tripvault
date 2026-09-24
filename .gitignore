@@ -1,0 +1,26 @@
+# Test binaries and coverage output.
+*.test
+*.out
+coverage.*
+
+# The real .env is never committed. The test stand's is the exception: it holds
+# only throwaway placeholders and is tracked on purpose.
+.env
+!tests/.env
+
+# Editors and operating systems.
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+tmp/
+
+# Local agent state and instructions.
+.claude/
+CLAUDE.md
+AGENTS.md
+
+# Build artefacts and dependencies.
+bin/
+frontend/dist/
+frontend/node_modules/
