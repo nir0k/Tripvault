@@ -149,6 +149,6 @@ func (v *Valhalla) Route(ctx context.Context, profile string, from, to domain.Po
 	return Route{
 		DistanceM: int(math.Round(trip.Summary.Length * 1000)),
 		DurationS: int(math.Round(trip.Summary.Time)),
-		Geometry:  EncodePolyline(DecodePolyline(trip.Legs[0].Shape, valhallaPrecision)),
+		Geometry:  domain.EncodePolyline(domain.DecodePolyline(trip.Legs[0].Shape, valhallaPrecision)),
 	}, nil
 }

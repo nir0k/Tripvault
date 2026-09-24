@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/nir0k/tripvault/backend/internal/domain"
-	"github.com/nir0k/tripvault/backend/internal/routing"
 	"github.com/nir0k/tripvault/backend/internal/staticmap"
 )
 
@@ -149,7 +148,7 @@ func dayLayer(content domain.DocumentContent, day domain.Day, index int, numbere
 		if leg == nil {
 			continue
 		}
-		if points := legPoints(*leg, everything, stays); len(points) >= 2 {
+		if points := legPoints(*leg, everything, stays, content.Tracks); len(points) >= 2 {
 			layer.lines = append(layer.lines, mapLine{points: points, color: color, dashed: leg.Source != domain.LegProvider})
 		}
 	}
@@ -157,7 +156,7 @@ func dayLayer(content domain.DocumentContent, day domain.Day, index int, numbere
 	number := 0
 	for _, item := range items {
 		if track := domain.TrackOfItem(content.Tracks, item.ID); track != nil {
-			if points := routing.DecodePolyline(track.Geometry, 5); len(points) >= 2 {
+			if points := domain.DecodePolyline(track.Geometry, 5); len(points) >= 2 {
 				layer.lines = append(layer.lines, mapLine{points: points, color: color})
 			}
 		}
@@ -180,17 +179,19 @@ func dayLayer(content domain.DocumentContent, day domain.Day, index int, numbere
 }
 
 // legPoints finds a journey's line: the route it was calculated along, or the
-// straight line between its ends.
-func legPoints(leg domain.Leg, items map[uuid.UUID]domain.Item, stays map[uuid.UUID]domain.Stay) []domain.Point {
+// straight line between its ends, which are where a recording ended or began
+// rather than a pin when there is one.
+func legPoints(leg domain.Leg, items map[uuid.UUID]domain.Item, stays map[uuid.UUID]domain.Stay,
+	tracks []domain.Track) []domain.Point {
 	if leg.Geometry != "" {
-		return routing.DecodePolyline(leg.Geometry, 5)
+		return domain.DecodePolyline(leg.Geometry, 5)
 	}
 	from, fromKnown := items[leg.FromItemID]
 	to, toKnown := items[leg.ToItemID]
 	if !fromKnown || !toKnown {
 		return nil
 	}
-	start, end := domain.ItemPoint(from, stays), domain.ItemPoint(to, stays)
+	start, end := domain.LegEnds(from, to, stays, tracks)
 	if start == nil || end == nil {
 		return nil
 	}

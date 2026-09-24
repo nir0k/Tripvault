@@ -43,8 +43,7 @@ func (s *Server) calculateLegs(ctx context.Context, documentID uuid.UUID, force 
 			continue
 		}
 		done++
-		from := domain.ItemPoint(items[leg.FromItemID], stays)
-		to := domain.ItemPoint(items[leg.ToItemID], stays)
+		from, to := domain.LegEnds(items[leg.FromItemID], items[leg.ToItemID], stays, content.Tracks)
 		if forced && from != nil && to != nil {
 			if err := s.routing.Forget(ctx, leg.Mode, *from, *to); err != nil {
 				return err

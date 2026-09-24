@@ -29,7 +29,7 @@ func TestGeometry(t *testing.T) {
 	}
 	// The reference example of the polyline format.
 	line := []domain.Point{{Lat: 38.5, Lng: -120.2}, {Lat: 40.7, Lng: -120.95}, {Lat: 43.252, Lng: -126.453}}
-	if got := EncodePolyline(line); got != "_p~iF~ps|U_ulLnnqC_mqNvxq`@" {
+	if got := domain.EncodePolyline(line); got != "_p~iF~ps|U_ulLnnqC_mqNvxq`@" {
 		t.Errorf("polyline: %s", got)
 	}
 }

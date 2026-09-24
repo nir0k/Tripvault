@@ -177,6 +177,41 @@ func ItemPoint(item Item, stays map[uuid.UUID]Stay) *Point {
 	return &Point{Lat: *lat, Lng: *lng}
 }
 
+// LegEnds - finds where a journey between two elements of a day starts and
+// ends. An element with a recording is left where its recording ended and
+// reached where it began, not at its pin: a hike that ends where the next one
+// starts needs no road between them, while a road from the start of the first
+// hike to the start of the second would retrace the whole walk. An element
+// without a recording is left and reached at its own position.
+//
+// Arguments:
+//   - from, to: the elements the journey connects.
+//   - stays: the document's stays by identifier.
+//   - tracks: the document's tracks.
+//
+// Returns:
+//   - the start and the end, each nil when unknown.
+func LegEnds(from, to Item, stays map[uuid.UUID]Stay, tracks []Track) (*Point, *Point) {
+	start, end := ItemPoint(from, stays), ItemPoint(to, stays)
+	if line := trackLine(tracks, from.ID); len(line) > 0 {
+		start = &line[len(line)-1]
+	}
+	if line := trackLine(tracks, to.ID); len(line) > 0 {
+		end = &line[0]
+	}
+	return start, end
+}
+
+// trackLine reads the recorded line of an element, or nothing when it has no
+// track or the stored line cannot be read.
+func trackLine(tracks []Track, itemID uuid.UUID) []Point {
+	track := TrackOfItem(tracks, itemID)
+	if track == nil {
+		return nil
+	}
+	return DecodePolyline(track.Geometry, 5)
+}
+
 // LegInput - describes what a leg's calculation depends on: the mode and both
 // points, rounded as the route cache rounds them.
 //
@@ -246,7 +281,8 @@ func ReconcileLegs(content DocumentContent, existing []Leg, newID func() uuid.UU
 	// need keeps or creates the leg between two elements, owned by a day.
 	need := func(day Day, from, to Item) {
 		points := func(mode TravelMode) string {
-			return LegInput(mode, ItemPoint(from, stays), ItemPoint(to, stays))
+			start, end := LegEnds(from, to, stays, content.Tracks)
+			return LegInput(mode, start, end)
 		}
 		if leg, ok := byPair[pair{from.ID, to.ID}]; ok && leg.DayID == day.ID {
 			kept[leg.ID] = true

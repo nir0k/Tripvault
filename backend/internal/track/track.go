@@ -117,7 +117,7 @@ func Parse(data []byte) (Track, error) {
 	}
 	parsed := Track{
 		Format:     read.format,
-		Geometry:   routing.EncodePolyline(thin(points, DrawnPoints)),
+		Geometry:   domain.EncodePolyline(thin(points, DrawnPoints)),
 		DistanceM:  int(math.Round(distance)),
 		PointCount: len(points),
 		Start:      points[0],

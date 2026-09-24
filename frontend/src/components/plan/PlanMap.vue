@@ -182,17 +182,20 @@ function popupFor(item: PlanItem, dayIndex: number | null, marker: L.Marker): HT
 }
 
 // legPoints finds a leg's line: its stored geometry, else the straight line
-// between its ends when both have positions.
+// between its ends when both have positions. An element with a recording is
+// left where the recording ended and reached where it began, as the backend
+// routes it.
 function legPoints(leg: Leg, items: Map<string, PlanItem>): LatLng[] {
   if (leg.geometry) {
     return decodePolyline(leg.geometry)
   }
   const from = items.get(leg.from_item_id)
   const to = items.get(leg.to_item_id)
-  if (from?.lat == null || from.lng == null || to?.lat == null || to.lng == null) {
-    return []
-  }
-  return [[from.lat, from.lng], [to.lat, to.lng]]
+  const start = from?.track ? decodePolyline(from.track.geometry).at(-1) : undefined
+  const end = to?.track ? decodePolyline(to.track.geometry)[0] : undefined
+  const first = start ?? (from?.lat != null && from.lng != null ? [from.lat, from.lng] as LatLng : undefined)
+  const last = end ?? (to?.lat != null && to.lng != null ? [to.lat, to.lng] as LatLng : undefined)
+  return first && last ? [first, last] : []
 }
 
 // draw replaces everything on the map with the current document. Every day is

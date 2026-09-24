@@ -182,7 +182,7 @@ func TestPolylineRoundTrip(t *testing.T) {
 	line := []domain.Point{{Lat: 38.5, Lng: -120.2}, {Lat: 40.7, Lng: -120.95}, {Lat: 43.252, Lng: -126.453}}
 
 	for _, precision := range []int{5, 6} {
-		decoded := DecodePolyline(encodeWithPrecision(line, precision), precision)
+		decoded := domain.DecodePolyline(encodeWithPrecision(line, precision), precision)
 		if len(decoded) != len(line) {
 			t.Fatalf("precision %d: %d points, want %d", precision, len(decoded), len(line))
 		}
@@ -193,11 +193,11 @@ func TestPolylineRoundTrip(t *testing.T) {
 		}
 	}
 
-	if points := DecodePolyline("", 5); len(points) != 0 {
+	if points := domain.DecodePolyline("", 5); len(points) != 0 {
 		t.Errorf("an empty line decoded to %d points", len(points))
 	}
 	// Half a number at the end: what is readable is kept, the rest is dropped.
-	if points := DecodePolyline("_p~iF~ps|U_ulL", 5); len(points) != 1 {
+	if points := domain.DecodePolyline("_p~iF~ps|U_ulL", 5); len(points) != 1 {
 		t.Errorf("a truncated line decoded to %d points, want 1", len(points))
 	}
 }
@@ -206,11 +206,11 @@ func TestPolylineRoundTrip(t *testing.T) {
 // would, which is how the six-decimal case is produced for these tests.
 func encodeWithPrecision(points []domain.Point, precision int) string {
 	if precision == 5 {
-		return EncodePolyline(points)
+		return domain.EncodePolyline(points)
 	}
 	scaled := make([]domain.Point, 0, len(points))
 	for _, point := range points {
 		scaled = append(scaled, domain.Point{Lat: point.Lat * 10, Lng: point.Lng * 10})
 	}
-	return EncodePolyline(scaled)
+	return domain.EncodePolyline(scaled)
 }

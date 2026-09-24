@@ -34,10 +34,11 @@ func scanTrack(row pgx.Row) (domain.Track, error) {
 }
 
 // SaveTrack - stores the recorded line of a place or an activity, replacing
-// the one it had.
+// the one it had. The journeys to and from the place leave and reach its
+// recording's ends, so a new line sends them back to be calculated.
 //
 // Arguments:
-//   - ctx: context bounding the statement.
+//   - ctx: context bounding the transaction.
 //   - track: the parsed track with its ID, document and place set.
 //   - file: the uploaded file, stored compressed for downloading.
 //
@@ -49,21 +50,33 @@ func (r *DocumentRepository) SaveTrack(ctx context.Context, track domain.Track, 
 	if err != nil {
 		return domain.Track{}, err
 	}
-	return oneRow(scanTrack, r.pool.QueryRow(ctx,
-		`INSERT INTO tracks AS t (id, document_id, item_id, original_name, format, geometry, distance_m,
-		                          point_count, ascent_m, descent_m, file_gz, started_at, ended_at)
-		 SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
-		 WHERE EXISTS (SELECT 1 FROM items WHERE id = $3 AND document_id = $2 AND kind <> 'stay_anchor')
-		 ON CONFLICT (item_id) DO UPDATE
-		   SET original_name = excluded.original_name, format = excluded.format, geometry = excluded.geometry,
-		       distance_m = excluded.distance_m, point_count = excluded.point_count,
-		       ascent_m = excluded.ascent_m, descent_m = excluded.descent_m, file_gz = excluded.file_gz,
-		       started_at = excluded.started_at, ended_at = excluded.ended_at,
-		       created_at = now()
-		 RETURNING `+trackColumns,
-		track.ID, track.DocumentID, track.ItemID, track.OriginalName, track.Format, track.Geometry,
-		track.DistanceM, track.PointCount, track.AscentM, track.DescentM, compressed,
-		track.StartedAt, track.EndedAt), "save track")
+	var saved domain.Track
+	err = pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+		document, _, err := lockDocument(ctx, tx, track.DocumentID)
+		if err != nil {
+			return err
+		}
+		saved, err = oneRow(scanTrack, tx.QueryRow(ctx,
+			`INSERT INTO tracks AS t (id, document_id, item_id, original_name, format, geometry, distance_m,
+			                          point_count, ascent_m, descent_m, file_gz, started_at, ended_at)
+			 SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+			 WHERE EXISTS (SELECT 1 FROM items WHERE id = $3 AND document_id = $2 AND kind <> 'stay_anchor')
+			 ON CONFLICT (item_id) DO UPDATE
+			   SET original_name = excluded.original_name, format = excluded.format, geometry = excluded.geometry,
+			       distance_m = excluded.distance_m, point_count = excluded.point_count,
+			       ascent_m = excluded.ascent_m, descent_m = excluded.descent_m, file_gz = excluded.file_gz,
+			       started_at = excluded.started_at, ended_at = excluded.ended_at,
+			       created_at = now()
+			 RETURNING `+trackColumns,
+			track.ID, track.DocumentID, track.ItemID, track.OriginalName, track.Format, track.Geometry,
+			track.DistanceM, track.PointCount, track.AscentM, track.DescentM, compressed,
+			track.StartedAt, track.EndedAt), "save track")
+		if err != nil {
+			return err
+		}
+		return syncLegs(ctx, tx, document.TripID)
+	})
+	return saved, err
 }
 
 // Track - reads one recorded line without its file.
@@ -104,23 +117,35 @@ func (r *DocumentRepository) TrackFile(ctx context.Context, id uuid.UUID) (domai
 	return file, err
 }
 
-// DeleteTrack - removes the recorded line of a place or an activity.
+// DeleteTrack - removes the recorded line of a place or an activity. Its
+// journeys go back to leaving and reaching the place's own position.
 //
 // Arguments:
-//   - ctx: context bounding the statement.
+//   - ctx: context bounding the transaction.
 //   - itemID: the place or activity.
 //
 // Returns:
 //   - domain.ErrNotFound when it had no track.
 func (r *DocumentRepository) DeleteTrack(ctx context.Context, itemID uuid.UUID) error {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM tracks WHERE item_id = $1`, itemID)
-	if err != nil {
-		return fmt.Errorf("delete track: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return domain.ErrNotFound
-	}
-	return nil
+	return pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+		var documentID uuid.UUID
+		err := tx.QueryRow(ctx, `SELECT document_id FROM tracks WHERE item_id = $1`, itemID).Scan(&documentID)
+		if _, err := one(documentID, err, "find track"); err != nil {
+			return err
+		}
+		document, _, err := lockDocument(ctx, tx, documentID)
+		if err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx, `DELETE FROM tracks WHERE item_id = $1`, itemID)
+		if err != nil {
+			return fmt.Errorf("delete track: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return domain.ErrNotFound
+		}
+		return syncLegs(ctx, tx, document.TripID)
+	})
 }
 
 // compress gzips a track file. A recording is text that repeats itself on

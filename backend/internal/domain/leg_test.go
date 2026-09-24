@@ -79,6 +79,41 @@ func TestItemPoint(t *testing.T) {
 	}
 }
 
+// TestLegEndsFollowTracks checks a journey leaves a recorded place where its
+// recording ended and reaches one where it began, which is what keeps two hikes
+// that meet from being joined by a road retracing the first; and that adding or
+// removing a recording sends the journey back to be calculated.
+func TestLegEndsFollowTracks(t *testing.T) {
+	dayID := uuid.New()
+	pinLat, pinLng := 64.0, -19.0
+	first := Item{ID: uuid.New(), Kind: ItemActivity, DayID: &dayID, Position: 0, Lat: &pinLat, Lng: &pinLng}
+	second := Item{ID: uuid.New(), Kind: ItemActivity, DayID: &dayID, Position: 1, Lat: &pinLat, Lng: &pinLng}
+	tracks := []Track{
+		{ItemID: first.ID, Geometry: EncodePolyline([]Point{{63.99, -19.06}, {63.92, -19.15}, {63.8577, -19.22738}})},
+		{ItemID: second.ID, Geometry: EncodePolyline([]Point{{63.85705, -19.22705}, {63.7662, -19.37383}})},
+	}
+
+	start, end := LegEnds(first, second, nil, tracks)
+	if start == nil || *start != (Point{63.8577, -19.22738}) || end == nil || *end != (Point{63.85705, -19.22705}) {
+		t.Errorf("ends with tracks: %v %v", start, end)
+	}
+	start, end = LegEnds(first, second, nil, nil)
+	if start == nil || *start != (Point{pinLat, pinLng}) || end == nil || *end != (Point{pinLat, pinLng}) {
+		t.Errorf("ends without tracks: %v %v", start, end)
+	}
+
+	content := DocumentContent{Days: []Day{{ID: dayID}}, Items: []Item{first, second}}
+	plan := ReconcileLegs(content, nil, uuid.New)
+	if len(plan.Create) != 1 || plan.Create[0].Input != "car|64.00000,-19.00000|64.00000,-19.00000" {
+		t.Fatalf("without tracks: %+v", plan.Create)
+	}
+	content.Tracks = tracks
+	plan = ReconcileLegs(content, plan.Create, uuid.New)
+	if len(plan.Reset) != 1 || plan.Reset[0].Input != "car|63.85770,-19.22738|63.85705,-19.22705" {
+		t.Errorf("with tracks: %+v", plan)
+	}
+}
+
 // TestRetryableEstimate checks which legs are worth asking the provider about a
 // second time: the ones whose reason can pass, and no others.
 func TestRetryableEstimate(t *testing.T) {
