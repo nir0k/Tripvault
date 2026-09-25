@@ -115,10 +115,10 @@ func TestThumbnailFitsTheRequestedWidth(t *testing.T) {
 	}
 }
 
-// TestPreviewsRenderEveryWidthFromOneDecode checks a camera-sized JPEG comes
-// back at every offered width with its proportions kept, and that averaging a
+// TestPreviewsRenderEveryWidth checks a camera-sized JPEG comes
+// back at every offered width with its proportions kept, and that scaling a
 // flat picture down leaves its colour where it was.
-func TestPreviewsRenderEveryWidthFromOneDecode(t *testing.T) {
+func TestPreviewsRenderEveryWidth(t *testing.T) {
 	picture := image.NewRGBA(image.Rect(0, 0, 3001, 2001))
 	fill := color.RGBA{R: 200, G: 90, B: 40, A: 255}
 	for y := range 2001 {
@@ -141,7 +141,9 @@ func TestPreviewsRenderEveryWidthFromOneDecode(t *testing.T) {
 			t.Fatalf("decode the %d preview: %v", size, err)
 		}
 		bounds := preview.Bounds()
-		if bounds.Dx() != size || bounds.Dy() != 2001*size/3001 {
+		// The height is rounded, so it may land a pixel either side of the
+		// exact proportion.
+		if height := 2001 * size / 3001; bounds.Dx() != size || bounds.Dy() < height || bounds.Dy() > height+1 {
 			t.Errorf("the %d preview is %dx%d", size, bounds.Dx(), bounds.Dy())
 		}
 		r, g, b, _ := preview.At(bounds.Dx()/2, bounds.Dy()/2).RGBA()
@@ -157,41 +159,6 @@ func TestPreviewsRenderEveryWidthFromOneDecode(t *testing.T) {
 
 	if _, err := Previews([]byte("not a picture")); err != ErrNoThumbnail {
 		t.Errorf("a file that is not a picture gave %v, want ErrNoThumbnail", err)
-	}
-}
-
-// TestOrientMatchesTheEXIFMeaning checks every orientation against the plain
-// definition of where a pixel goes, on a picture whose sides differ so a turn
-// the wrong way cannot pass.
-func TestOrientMatchesTheEXIFMeaning(t *testing.T) {
-	const width, height = 5, 3
-	source := image.NewRGBA(image.Rect(0, 0, width, height))
-	for y := range height {
-		for x := range width {
-			source.SetRGBA(x, y, color.RGBA{R: uint8(x), G: uint8(y), A: 255})
-		}
-	}
-	// where says at which point of the turned picture the pixel (x, y) lands.
-	where := map[int]func(x, y int) (int, int){
-		1: func(x, y int) (int, int) { return x, y },
-		2: func(x, y int) (int, int) { return width - 1 - x, y },
-		3: func(x, y int) (int, int) { return width - 1 - x, height - 1 - y },
-		4: func(x, y int) (int, int) { return x, height - 1 - y },
-		5: func(x, y int) (int, int) { return y, x },
-		6: func(x, y int) (int, int) { return height - 1 - y, x },
-		7: func(x, y int) (int, int) { return height - 1 - y, width - 1 - x },
-		8: func(x, y int) (int, int) { return y, width - 1 - x },
-	}
-	for orientation, move := range where {
-		turned := orient(source, orientation)
-		for y := range height {
-			for x := range width {
-				tx, ty := move(x, y)
-				if got := turned.At(tx, ty); got != source.At(x, y) {
-					t.Errorf("orientation %d moved (%d,%d) elsewhere: %v at (%d,%d)", orientation, x, y, got, tx, ty)
-				}
-			}
-		}
 	}
 }
 

@@ -36,9 +36,12 @@ tag_args = -t $(1):$(VERSION) $(if $(LATEST_TAG),-t $(1):$(LATEST_TAG),)
 
 build: build-backend build-frontend
 
+# Previews are rendered by libvips through cgo, so building or testing the
+# backend on this machine needs its headers: vips-devel on Fedora, libvips-dev
+# on Debian. The images bring their own and need nothing installed here.
 build-backend:
 	mkdir -p bin
-	cd backend && CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" \
+	cd backend && CGO_ENABLED=1 go build -trimpath -ldflags="$(LDFLAGS)" \
 		-o ../bin/tripvault-backend ./cmd/tripvault-backend
 
 build-frontend: deps-frontend

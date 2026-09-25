@@ -208,6 +208,10 @@ func serve() error {
 	if err != nil {
 		return fmt.Errorf("open media store: %w", err)
 	}
+	if err := media.StartRenderer(logger); err != nil {
+		return fmt.Errorf("start the preview renderer: %w", err)
+	}
+	logger.Info("preview renderer ready", slog.String("libvips", media.RendererLibraryVersion()))
 	restoreWorkDir, err := prepareRestoreWorkDir(cfg.Media.Path)
 	if err != nil {
 		return err

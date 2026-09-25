@@ -321,8 +321,9 @@ func (s *Server) decodePreviews(ctx context.Context, item domain.Media) (map[int
 	return media.Previews(data)
 }
 
-// keepPreviews stores rendered previews. Failing to keep one costs only a
-// render next time, so it is logged rather than returned.
+// keepPreviews stores rendered previews and removes those an older renderer
+// made of the same file. Failing to keep one costs only a render next time, so
+// it is logged rather than returned.
 //
 // The file may be deleted while its previews are being rendered, and a preview
 // stored after that deletion would keep a copy of a removed photograph on the
@@ -338,6 +339,9 @@ func (s *Server) keepPreviews(ctx context.Context, item domain.Media, previews m
 	original, err := s.mediaFiles.Open(ctx, item.StorageKey)
 	if err == nil {
 		_ = original.Close()
+		if err := media.DeleteLegacyPreviews(ctx, s.mediaFiles, item.StorageKey); err != nil {
+			s.logger.Warn("delete previews of an older renderer failed", "error", err, "media_id", item.ID.String())
+		}
 		return
 	}
 	if err := media.DeleteWithPreviews(ctx, s.mediaFiles, item.StorageKey); err != nil {

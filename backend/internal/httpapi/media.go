@@ -703,7 +703,10 @@ func (s *Server) writeMediaThumbnail(w http.ResponseWriter, r *http.Request, ite
 		size = value
 	}
 
-	tag := `"` + hex.EncodeToString(item.Checksum) + "-" + strconv.Itoa(size) + `"`
+	// The renderer's version is part of the tag, so a browser holding a
+	// preview an older renderer made fetches the new one.
+	tag := `"` + hex.EncodeToString(item.Checksum) + "-" + strconv.Itoa(size) +
+		"-v" + strconv.Itoa(media.RendererVersion) + `"`
 	if match := r.Header.Get("If-None-Match"); match == tag {
 		w.WriteHeader(http.StatusNotModified)
 		return

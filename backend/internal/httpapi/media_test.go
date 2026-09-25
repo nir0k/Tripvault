@@ -530,6 +530,9 @@ func TestPreviewIsKeptAndGoesWithItsFile(t *testing.T) {
 	id := uuid.MustParse(stored.ID)
 	key := media.PreviewKey(catalogue.items[id].StorageKey, 320)
 	base := "/api/v1/media/" + stored.ID + "/thumbnail?size=320"
+	// A preview the first renderer made, named without a version.
+	legacy := ".previews/" + catalogue.items[id].StorageKey + "@320.jpg"
+	files.files[legacy] = []byte("blurry preview")
 
 	if recorder := send(s, http.MethodGet, base, "good", ""); recorder.Code != http.StatusOK {
 		t.Fatalf("render a preview: %d %s", recorder.Code, recorder.Body.String())
@@ -537,8 +540,11 @@ func TestPreviewIsKeptAndGoesWithItsFile(t *testing.T) {
 	if _, ok := files.files[key]; !ok {
 		t.Fatal("the rendered preview was not kept in the store")
 	}
-	// The original was decoded for one width, and every other width was
-	// rendered from that one decode.
+	if _, ok := files.files[legacy]; ok {
+		t.Error("the preview of the older renderer stayed beside the new one")
+	}
+	// A preview asked for at one width renders the others with it, so the
+	// original is read from the store once.
 	if !files.hasPreviews(catalogue.items[id].StorageKey) {
 		t.Error("a preview asked for at one width did not keep the others")
 	}

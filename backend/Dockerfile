@@ -3,11 +3,38 @@
 # Build stage, pinned to the build host's platform: the Go toolchain runs
 # natively and cross-compiles to the target architecture, so an arm64 image
 # builds on an amd64 host without QEMU.
+#
+# Previews are rendered by libvips through cgo, so the C part is cross-compiled
+# too: clang targets the architecture of the image, and the headers and
+# libraries it builds against are Alpine's own packages for that architecture,
+# unpacked into a root of their own. apk only unpacks them - --no-scripts keeps
+# it from running anything built for the target - so nothing is emulated.
 FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine AS build
 
 ARG VERSION=dev
 ARG TARGETOS
 ARG TARGETARCH
+# The Alpine branch the libraries come from. It must be the branch of the
+# runtime image below, whose C library they are linked against.
+ARG ALPINE_BRANCH=v3.24
+
+RUN apk add --no-cache clang lld pkgconf alpine-keys
+
+# /sysroot holds what the build compiles and links against, /out/libroot what
+# the running service loads. The target's package architecture is written down
+# for the build step.
+RUN case "${TARGETARCH}" in \
+      amd64) arch=x86_64 ;; \
+      arm64) arch=aarch64 ;; \
+      *) echo "unsupported architecture ${TARGETARCH}" >&2; exit 1 ;; \
+    esac && \
+    echo "${arch}" > /apk-arch && \
+    mkdir -p /sysroot /out/libroot && \
+    repos="--repository https://dl-cdn.alpinelinux.org/alpine/${ALPINE_BRANCH}/main --repository https://dl-cdn.alpinelinux.org/alpine/${ALPINE_BRANCH}/community" && \
+    apk add --root /sysroot --arch "${arch}" --initdb --no-scripts --no-cache \
+      --keys-dir "/usr/share/apk/keys/${arch}" ${repos} vips-dev musl-dev gcc && \
+    apk add --root /out/libroot --arch "${arch}" --initdb --no-scripts --no-cache \
+      --keys-dir "/usr/share/apk/keys/${arch}" ${repos} vips
 
 WORKDIR /src
 
@@ -19,10 +46,17 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 COPY . .
 
+# A position-independent executable is what Alpine's toolchain links by
+# default, and lld is the linker that knows every target clang does.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath \
+    arch="$(cat /apk-arch)" && \
+    CC="clang --target=${arch}-alpine-linux-musl --sysroot=/sysroot" \
+    CGO_LDFLAGS="-fuse-ld=lld" \
+    PKG_CONFIG_SYSROOT_DIR=/sysroot \
+    PKG_CONFIG_LIBDIR=/sysroot/usr/lib/pkgconfig:/sysroot/usr/share/pkgconfig \
+    CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -buildmode=pie -trimpath \
       -ldflags="-s -w -X github.com/nir0k/tripvault/backend/internal/telemetry.Version=${VERSION}" \
       -o /out/tripvault-backend ./cmd/tripvault-backend
 
@@ -36,7 +70,8 @@ RUN mkdir -p /out/rootfs/app/media /out/rootfs/app/backups /out/rootfs/app/confi
 # Runtime stage: COPY and metadata only, without a single RUN, so nothing built
 # for the target architecture executes while the image is assembled. The CA
 # bundle comes from the build stage, the time zone database is embedded in the
-# binary, and the health check uses the base image's busybox wget.
+# binary, libvips and the libraries it needs come from the root unpacked for
+# this architecture, and the health check uses the base image's busybox wget.
 FROM alpine:3.24.1 AS runtime
 
 ARG VERSION=dev
@@ -47,6 +82,7 @@ LABEL org.opencontainers.image.title="tripvault-backend" \
       org.opencontainers.image.version="${VERSION}"
 
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=build /out/libroot/usr/lib/ /usr/lib/
 COPY --from=build /out/tripvault-backend /usr/local/bin/tripvault-backend
 COPY --from=build --chown=10001:10001 /out/rootfs/app /app
 

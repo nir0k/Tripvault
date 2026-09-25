@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"image/color"
-	"image/draw"
-	"image/jpeg"
-	_ "image/png" // registers the PNG decoder
-	"slices"
+	_ "image/jpeg" // registers the JPEG decoder
+	_ "image/png"  // registers the PNG decoder
+	"log/slog"
+	"sync"
+	"sync/atomic"
 
-	xdraw "golang.org/x/image/draw"
+	"github.com/davidbyttow/govips/v2/vips"
 	_ "golang.org/x/image/webp" // registers the WebP decoder
 )
 
@@ -25,6 +25,12 @@ var ErrNoThumbnail = errors.New("no preview can be made of this file")
 // asking for one more pixel every time a layout changes. The widest one is for
 // a photograph opened across a large or dense screen.
 var Sizes = []int{160, 320, 640, 1280, 1920}
+
+// RendererVersion names the way previews are rendered. It is part of every
+// preview's storage key and of its ETag, so a change of renderer makes the
+// kept previews missing - the walk at start-up renders them again - and every
+// browser fetches the new ones instead of keeping the old.
+const RendererVersion = 2
 
 // maxPixels bounds the pictures that are decoded. A small file can declare an
 // enormous canvas, and decoding it would hold gigabytes; a hundred megapixels
@@ -94,9 +100,9 @@ func Thumbnail(data []byte, width int) ([]byte, error) {
 
 // Previews - renders a picture at every width in Sizes.
 //
-// Decoding the original is most of the cost of a preview, so it is decoded once
-// and every width is scaled from the one above it rather than from the
-// original. The previews follow the rules of Thumbnail.
+// Every width is rendered from the original, each decoded at no more of its
+// size than that width needs, so no preview is scaled from another one that
+// has already lost detail. The previews follow the rules of Thumbnail.
 //
 // Arguments:
 //   - data: the file's bytes.
@@ -108,10 +114,74 @@ func Previews(data []byte) (map[int][]byte, error) {
 	return render(data, Sizes)
 }
 
-// render decodes a picture once and writes a JPEG of it at each width, the
-// widest first, so that each narrower one is scaled from the one before it.
-// Sizes mostly halve from one to the next, and a half is exactly what shrink
-// makes, so most of them never reach the slower filter.
+// renderer holds the one start of libvips a process makes and the logger its
+// messages go to.
+var renderer struct {
+	once   sync.Once
+	err    error
+	logger atomic.Pointer[slog.Logger]
+}
+
+// StartRenderer - starts libvips, which renders every preview.
+//
+// It is called once at start-up so that a build without a working libvips
+// fails there rather than at the first upload; rendering starts it on its own
+// when nothing did, which is what the tests rely on. libvips runs each
+// operation on one thread and keeps no cache: the service decides how many
+// pictures are rendered at once, and a cache of decoded pictures would hold
+// memory a small server does not have.
+//
+// Arguments:
+//   - logger: receives the warnings and errors libvips reports.
+//
+// Returns:
+//   - an error when libvips cannot be started.
+func StartRenderer(logger *slog.Logger) error {
+	renderer.logger.Store(logger)
+	return startRenderer()
+}
+
+// RendererLibraryVersion - names the libvips the service was built against.
+//
+// Returns:
+//   - the version, such as "8.18.2".
+func RendererLibraryVersion() string {
+	return vips.Version
+}
+
+// startRenderer starts libvips the first time it is called.
+func startRenderer() error {
+	renderer.once.Do(func() {
+		vips.LoggingSettings(logRenderer, vips.LogLevelWarning)
+		renderer.err = vips.Startup(&vips.Config{ConcurrencyLevel: 1})
+	})
+	return renderer.err
+}
+
+// logRenderer passes a message of libvips on to the service's log.
+func logRenderer(domain string, level vips.LogLevel, message string) {
+	logger := renderer.logger.Load()
+	if logger == nil {
+		logger = slog.Default()
+	}
+	switch level {
+	case vips.LogLevelError, vips.LogLevelCritical:
+		logger.Error("libvips reported an error", "domain", domain, "message", message)
+	case vips.LogLevelWarning:
+		logger.Warn("libvips reported a warning", "domain", domain, "message", message)
+	default:
+		logger.Debug("libvips reported", "domain", domain, "message", message)
+	}
+}
+
+// render writes a JPEG of a picture at each width.
+//
+// libvips does the work: it decodes a JPEG straight at a half, a quarter or an
+// eighth of its size when that is still wider than needed - which is what makes
+// the narrow widths nearly free - turns the picture upright, converts an
+// embedded colour profile to sRGB and scales with a sharp filter. The
+// preview keeps none of the original's metadata, so neither the place a
+// photograph was taken nor the camera leaves with it.
 //
 // Arguments:
 //   - data: the file's bytes.
@@ -121,6 +191,8 @@ func Previews(data []byte) (map[int][]byte, error) {
 //   - a JPEG for every requested width, keyed by that width.
 //   - ErrNoThumbnail when the file cannot be decoded, or another error.
 func render(data []byte, widths []int) (map[int][]byte, error) {
+	// The canvas is checked before libvips sees the file: a small file can
+	// declare an enormous one.
 	config, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil, ErrNoThumbnail
@@ -128,206 +200,47 @@ func render(data []byte, widths []int) (map[int][]byte, error) {
 	if config.Width <= 0 || config.Height <= 0 || config.Width*config.Height > maxPixels {
 		return nil, ErrNoThumbnail
 	}
-	source, _, err := image.Decode(bytes.NewReader(data))
-	if err != nil {
-		return nil, ErrNoThumbnail
+	if err := startRenderer(); err != nil {
+		return nil, fmt.Errorf("start libvips: %w", err)
 	}
-	orientation := ReadMetadata(data).Orientation
 
-	ordered := slices.Clone(widths)
-	slices.Sort(ordered)
-	slices.Reverse(ordered)
-
-	bounds := source.Bounds()
-	current := source
-	previews := make(map[int][]byte, len(ordered))
-	for _, width := range ordered {
-		target := max(min(width, bounds.Dx()), 1)
-		height := max(bounds.Dy()*target/max(bounds.Dx(), 1), 1)
-		scaled := scale(shrink(current, target), target, height)
-		current = scaled
-
-		var out bytes.Buffer
-		if err := jpeg.Encode(&out, orient(scaled, orientation), &jpeg.Options{Quality: thumbnailQuality}); err != nil {
-			return nil, fmt.Errorf("encode preview: %w", err)
+	previews := make(map[int][]byte, len(widths))
+	for _, width := range widths {
+		preview, err := renderWidth(data, width)
+		if err != nil {
+			return nil, err
 		}
-		previews[width] = out.Bytes()
+		previews[width] = preview
 	}
 	return previews, nil
 }
 
-// scale resizes a picture to the given size. It is only ever asked to shrink by
-// less than half - shrink has done the rest - and over so short a step a
-// bilinear filter loses nothing a sharper and far slower one would keep. A
-// picture already of that size is only brought into the pixel layout the rest
-// of the rendering works on.
-func scale(source image.Image, width, height int) *image.RGBA {
-	bounds := source.Bounds()
-	if bounds.Dx() == width && bounds.Dy() == height {
-		return toRGBA(source)
-	}
-	scaled := image.NewRGBA(image.Rect(0, 0, width, height))
-	xdraw.ApproxBiLinear.Scale(scaled, scaled.Bounds(), source, bounds, draw.Src, nil)
-	return scaled
-}
-
-// toRGBA returns a picture as RGBA pixels starting at the origin, converting it
-// when it is stored any other way.
-func toRGBA(source image.Image) *image.RGBA {
-	if rgba, ok := source.(*image.RGBA); ok && rgba.Rect.Min == (image.Point{}) {
-		return rgba
-	}
-	bounds := source.Bounds()
-	rgba := image.NewRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
-	draw.Draw(rgba, rgba.Bounds(), source, bounds.Min, draw.Src)
-	return rgba
-}
-
-// shrink brings a picture close to the width it is about to be scaled to by
-// averaging whole blocks of its pixels.
-//
-// The filter that makes the previews reads more of the source the further it
-// scales down, and from a camera's frame to a gallery tile that is most of the
-// time a preview takes. Averaging is the cheapest way to shrink without
-// aliasing, so it takes the picture to no less than the width asked for and
-// leaves the last, small step to the filter. A picture less than twice that
-// width is returned as it is.
+// renderWidth writes one preview of a picture. A picture libvips opens is read
+// once, front to back, so each width is its own reading of the original rather
+// than a second scaling of a picture already read.
 //
 // Arguments:
-//   - source: the picture to shrink.
-//   - width: the width it is about to be scaled to.
+//   - data: the file's bytes.
+//   - width: the width of the preview.
 //
 // Returns:
-//   - the averaged picture, or the source itself when it is small enough.
-func shrink(source image.Image, width int) image.Image {
-	bounds := source.Bounds()
-	factor := bounds.Dx() / max(width, 1)
-	if factor < 2 {
-		return source
+//   - the JPEG of the preview.
+//   - ErrNoThumbnail when libvips cannot read the file, or another error.
+func renderWidth(data []byte, width int) ([]byte, error) {
+	// The height a preview may reach is left open, so the width alone decides
+	// its size; SizeDown keeps a narrow picture at its own size.
+	picture, err := vips.NewThumbnailWithSizeFromBuffer(data, width, maxPixels, vips.InterestingNone, vips.SizeDown)
+	if err != nil {
+		return nil, ErrNoThumbnail
 	}
-	outWidth := bounds.Dx() / factor
-	outHeight := max((bounds.Dy()*outWidth+bounds.Dx()/2)/bounds.Dx(), 1)
-	columns := blockEdges(bounds.Min.X, bounds.Dx(), outWidth)
-	rows := blockEdges(bounds.Min.Y, bounds.Dy(), outHeight)
-
-	if frame, ok := source.(*image.YCbCr); ok {
-		return averageYCbCr(frame, columns, rows)
+	defer picture.Close()
+	preview, _, err := picture.ExportJpeg(&vips.JpegExportParams{
+		Quality:        thumbnailQuality,
+		StripMetadata:  true,
+		OptimizeCoding: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode preview: %w", err)
 	}
-	return averageRGBA(toRGBA(source), blockEdges(0, bounds.Dx(), outWidth), blockEdges(0, bounds.Dy(), outHeight))
-}
-
-// blockEdges splits a run of pixels into count blocks as even as integers
-// allow, so no pixel at the edge is left out.
-//
-// Arguments:
-//   - start: the first pixel of the run.
-//   - length: the number of pixels in the run.
-//   - count: the number of blocks.
-//
-// Returns:
-//   - count+1 edges; block i spans [edges[i], edges[i+1]).
-func blockEdges(start, length, count int) []int {
-	edges := make([]int, count+1)
-	for i := range edges {
-		edges[i] = start + i*length/count
-	}
-	return edges
-}
-
-// averageYCbCr averages blocks of a decoded JPEG straight from its planes, so
-// the full frame is never converted to RGB, and converts each average instead.
-func averageYCbCr(frame *image.YCbCr, columns, rows []int) *image.RGBA {
-	out := image.NewRGBA(image.Rect(0, 0, len(columns)-1, len(rows)-1))
-	for j := range len(rows) - 1 {
-		for i := range len(columns) - 1 {
-			var sumY, sumCb, sumCr, count int
-			for y := rows[j]; y < rows[j+1]; y++ {
-				yi := frame.YOffset(columns[i], y)
-				for x := columns[i]; x < columns[i+1]; x++ {
-					ci := frame.COffset(x, y)
-					sumY += int(frame.Y[yi])
-					sumCb += int(frame.Cb[ci])
-					sumCr += int(frame.Cr[ci])
-					yi++
-					count++
-				}
-			}
-			r, g, b := color.YCbCrToRGB(uint8(sumY/count), uint8(sumCb/count), uint8(sumCr/count))
-			o := out.PixOffset(i, j)
-			out.Pix[o], out.Pix[o+1], out.Pix[o+2], out.Pix[o+3] = r, g, b, 0xff
-		}
-	}
-	return out
-}
-
-// averageRGBA averages blocks of an RGBA picture whose pixels start at the
-// origin.
-func averageRGBA(source *image.RGBA, columns, rows []int) *image.RGBA {
-	out := image.NewRGBA(image.Rect(0, 0, len(columns)-1, len(rows)-1))
-	for j := range len(rows) - 1 {
-		for i := range len(columns) - 1 {
-			var sum [4]int
-			count := 0
-			for y := rows[j]; y < rows[j+1]; y++ {
-				p := source.PixOffset(columns[i], y)
-				for x := columns[i]; x < columns[i+1]; x++ {
-					sum[0] += int(source.Pix[p])
-					sum[1] += int(source.Pix[p+1])
-					sum[2] += int(source.Pix[p+2])
-					sum[3] += int(source.Pix[p+3])
-					p += 4
-					count++
-				}
-			}
-			o := out.PixOffset(i, j)
-			for c := range 4 {
-				out.Pix[o+c] = uint8(sum[c] / count)
-			}
-		}
-	}
-	return out
-}
-
-// orient turns a picture the way an EXIF orientation value says. Values below 2
-// and above 8 mean "as stored", and so does anything unknown. The pixels are
-// moved as whole four-byte words, because going through colours one pixel at a
-// time costs more than the scaling before it.
-func orient(source *image.RGBA, orientation int) image.Image {
-	if orientation < 2 || orientation > 8 {
-		return source
-	}
-	width, height := source.Rect.Dx(), source.Rect.Dy()
-	// The four values from 5 up turn the picture a quarter, so the preview
-	// swaps its sides.
-	outWidth, outHeight := width, height
-	if orientation >= 5 {
-		outWidth, outHeight = height, width
-	}
-	out := image.NewRGBA(image.Rect(0, 0, outWidth, outHeight))
-	for y := range height {
-		from := source.PixOffset(source.Rect.Min.X, source.Rect.Min.Y+y)
-		for x := range width {
-			var tx, ty int
-			switch orientation {
-			case 2:
-				tx, ty = width-1-x, y
-			case 3:
-				tx, ty = width-1-x, height-1-y
-			case 4:
-				tx, ty = x, height-1-y
-			case 5:
-				tx, ty = y, x
-			case 6:
-				tx, ty = height-1-y, x
-			case 7:
-				tx, ty = height-1-y, width-1-x
-			case 8:
-				tx, ty = y, width-1-x
-			}
-			to := ty*out.Stride + tx*4
-			copy(out.Pix[to:to+4], source.Pix[from:from+4])
-			from += 4
-		}
-	}
-	return out
+	return preview, nil
 }
