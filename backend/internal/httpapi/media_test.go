@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"image"
 	"image/color"
@@ -40,7 +41,19 @@ func newFakeMedia() *fakeMedia {
 	}
 }
 
+// Create stores a file, refusing one whose sums match a file of the same trip
+// as the repository does.
 func (f *fakeMedia) Create(_ context.Context, item domain.Media, _ int64) error {
+	for _, stored := range f.items {
+		if stored.TripID != item.TripID {
+			continue
+		}
+		for _, sum := range [][]byte{item.Checksum, item.SourceChecksum} {
+			if sum != nil && (bytes.Equal(sum, stored.Checksum) || bytes.Equal(sum, stored.SourceChecksum)) {
+				return domain.ErrMediaDuplicate
+			}
+		}
+	}
 	f.items[item.ID] = item
 	return nil
 }
@@ -287,11 +300,24 @@ func picture(t *testing.T, width, height int) []byte {
 // upload sends one file as a browser does, with the optional private flag.
 func upload(t *testing.T, s *Server, tripID string, name string, data []byte, private bool) *httptest.ResponseRecorder {
 	t.Helper()
+	return uploadFrom(t, s, tripID, name, data, private, "")
+}
+
+// uploadFrom sends one file the way a browser that shrank it does, naming the
+// SHA-256 of the original in hex; an empty source sends no sum.
+func uploadFrom(t *testing.T, s *Server, tripID string, name string, data []byte, private bool,
+	source string) *httptest.ResponseRecorder {
+	t.Helper()
 	body := &bytes.Buffer{}
 	form := multipart.NewWriter(body)
 	if private {
 		if err := form.WriteField("private", "true"); err != nil {
 			t.Fatalf("write the private field: %v", err)
+		}
+	}
+	if source != "" {
+		if err := form.WriteField("source_checksum", source); err != nil {
+			t.Fatalf("write the source checksum: %v", err)
 		}
 	}
 	part, err := form.CreateFormFile("file", name)
@@ -394,6 +420,42 @@ func TestUploadRefusesWhatItCannotServe(t *testing.T) {
 	}
 }
 
+// TestUploadRefusesADuplicate checks a trip stores a picture once: the same
+// bytes again, or another shrinking of the same original, are refused, while
+// another trip may hold the picture too.
+func TestUploadRefusesADuplicate(t *testing.T) {
+	s, trips, catalogue, _ := newMediaServer(domain.RoleEditor)
+	tripID := trips.trip.ID.String()
+	original := strings.Repeat("ab", sha256.Size)
+	if recorder := uploadFrom(t, s, tripID, "a.png", picture(t, 10, 10), false, original); recorder.Code != http.StatusCreated {
+		t.Fatalf("the first upload: %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	for name, recorder := range map[string]*httptest.ResponseRecorder{
+		"the same bytes":    upload(t, s, tripID, "copy.png", picture(t, 10, 10), false),
+		"the same original": uploadFrom(t, s, tripID, "smaller.png", picture(t, 8, 8), false, original),
+	} {
+		if recorder.Code != http.StatusConflict || errorCode(t, recorder) != "duplicate_media" {
+			t.Errorf("%s: %d %s", name, recorder.Code, recorder.Body.String())
+		}
+	}
+	if len(catalogue.items) != 1 {
+		t.Errorf("%d files are catalogued, want only the first", len(catalogue.items))
+	}
+
+	// A sum that is not one is refused before anything is read.
+	if recorder := uploadFrom(t, s, tripID, "b.png", picture(t, 12, 12), false, "nope"); recorder.Code != http.StatusBadRequest {
+		t.Errorf("a malformed sum: %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	// Another trip is another gallery.
+	other := domain.Media{ID: uuid.New(), TripID: uuid.New(), Checksum: []byte("elsewhere")}
+	catalogue.items[other.ID] = other
+	if recorder := upload(t, s, tripID, "c.png", picture(t, 14, 14), false); recorder.Code != http.StatusCreated {
+		t.Errorf("a new picture: %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 // TestMediaRolesAreEnforced checks reading a trip is enough to see its files
 // and that changing them needs the right to edit.
 func TestMediaRolesAreEnforced(t *testing.T) {
@@ -448,7 +510,8 @@ func TestSharedMediaHidesPrivateFiles(t *testing.T) {
 		data := picture(t, 20, 20)
 
 		open := uploadedIDs(t, upload(t, s, trips.trip.ID.String(), "open.png", data, false))[0]
-		hidden := uploadedIDs(t, upload(t, s, trips.trip.ID.String(), "hidden.png", data, true))[0]
+		// Another picture: the same bytes twice would be refused as a copy.
+		hidden := uploadedIDs(t, upload(t, s, trips.trip.ID.String(), "hidden.png", picture(t, 21, 21), true))[0]
 		if !hidden.IsPrivate {
 			t.Fatal("the private flag of the upload was not stored")
 		}
@@ -626,7 +689,8 @@ func TestUploadQueueKeepsEveryUpload(t *testing.T) {
 
 	const uploads = 300
 	for i := range uploads {
-		recorder := upload(t, s, trips.trip.ID.String(), "photo.png", picture(t, 8+i%5, 8), false)
+		// Each upload is another picture: a trip refuses the same one twice.
+		recorder := upload(t, s, trips.trip.ID.String(), "photo.png", picture(t, 8+i%20, 8+i/20), false)
 		if recorder.Code != http.StatusCreated {
 			t.Fatalf("upload %d: %d %s", i, recorder.Code, recorder.Body.String())
 		}
@@ -833,9 +897,8 @@ func TestFavoritesNeedEditingRights(t *testing.T) {
 // reader cannot fetch would only render as a broken picture.
 func TestSharedGalleryHidesPrivateFiles(t *testing.T) {
 	s, trips, catalogue, _ := newMediaServer(domain.RoleOwner)
-	data := picture(t, 20, 20)
-	open := uploadedIDs(t, upload(t, s, trips.trip.ID.String(), "open.png", data, false))[0]
-	hidden := uploadedIDs(t, upload(t, s, trips.trip.ID.String(), "hidden.png", data, true))[0]
+	open := uploadedIDs(t, upload(t, s, trips.trip.ID.String(), "open.png", picture(t, 20, 20), false))[0]
+	hidden := uploadedIDs(t, upload(t, s, trips.trip.ID.String(), "hidden.png", picture(t, 21, 21), true))[0]
 
 	dayID := uuid.New()
 	catalogue.targets[dayID] = trips.trip.ID
@@ -869,9 +932,8 @@ func TestSharedGalleryHidesPrivateFiles(t *testing.T) {
 // nothing can reach them afterwards.
 func TestDeletingATripTakesItsFilesWithIt(t *testing.T) {
 	s, trips, _, files := newMediaServer(domain.RoleOwner)
-	data := picture(t, 16, 16)
-	upload(t, s, trips.trip.ID.String(), "one.png", data, false)
-	upload(t, s, trips.trip.ID.String(), "two.png", data, true)
+	upload(t, s, trips.trip.ID.String(), "one.png", picture(t, 16, 16), false)
+	upload(t, s, trips.trip.ID.String(), "two.png", picture(t, 17, 17), true)
 	if len(files.files) != 2 {
 		t.Fatalf("the store holds %d files before the deletion, want 2", len(files.files))
 	}

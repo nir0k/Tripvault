@@ -290,6 +290,7 @@
     "geocoding_unavailable": "Place search did not answer. Try again later.",
     "file_too_large": "The file is larger than this server accepts.",
     "media_quota": "The trip has no space left for more files.",
+    "duplicate_media": "This photograph is already in the gallery of this trip.",
     "unsupported_file": "Only JPEG, PNG and WebP pictures are accepted.",
     "no_preview": "No preview can be made of this kind of file.",
     "unsupported_track": "Only GPX and KML tracks are accepted.",

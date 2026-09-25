@@ -5,7 +5,7 @@ import { uploadMedia } from '@/api/media'
 import type { Media } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import { errorMessage } from '@/utils/errors'
-import { shrinkPicture } from '@/utils/picture'
+import { fileChecksum, shrinkPicture } from '@/utils/picture'
 
 // Adding photographs to a day or a place: pick them, or drop them on the panel.
 // Each file goes up in a request of its own, so each has a bar of its own, and
@@ -78,9 +78,13 @@ async function send(files: File[]): Promise<void> {
       continue
     }
     try {
+      // The sum is taken of the chosen file, before shrinking, so a copy of it
+      // is refused however it was shrunk the time before.
+      const sourceChecksum = await fileChecksum(file)
       const prepared = shrink.value ? await shrinkPicture(file) : file
       stored.push(await uploadMedia(props.tripId, prepared, {
         private: isPrivate.value,
+        sourceChecksum: sourceChecksum ?? undefined,
         onProgress: (share) => {
           upload.share = share
         },

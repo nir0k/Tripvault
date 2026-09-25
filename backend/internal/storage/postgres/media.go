@@ -56,6 +56,7 @@ func scanMedia(row pgx.Row) (domain.Media, error) {
 //
 // Returns:
 //   - domain.ErrNotFound when the trip does not exist.
+//   - domain.ErrMediaDuplicate when the trip already holds the picture.
 //   - domain.ErrMediaQuota when the file does not fit the trip's allowance.
 func (r *MediaRepository) Create(ctx context.Context, media domain.Media, quota int64) error {
 	return pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
@@ -66,6 +67,20 @@ func (r *MediaRepository) Create(ctx context.Context, media domain.Media, quota 
 			Scan(&locked); err != nil {
 			_, err = one(locked, err, "lock trip")
 			return err
+		}
+		// The same picture twice is refused under the same lock, so two
+		// uploads of it at once cannot both get in. Either sum of the new
+		// file matching either sum of a stored one makes it a copy.
+		var duplicate bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM media
+			                WHERE trip_id = $1
+			                  AND (checksum = $2 OR source_checksum = $2 OR checksum = $3 OR source_checksum = $3))`,
+			media.TripID, media.Checksum, media.SourceChecksum).Scan(&duplicate); err != nil {
+			return fmt.Errorf("look for a duplicate: %w", err)
+		}
+		if duplicate {
+			return domain.ErrMediaDuplicate
 		}
 		if quota > 0 {
 			var used int64
@@ -79,11 +94,11 @@ func (r *MediaRepository) Create(ctx context.Context, media domain.Media, quota 
 		}
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO media (id, trip_id, storage_key, original_name, mime, size, checksum, width, height,
-			                    taken_at, lat, lng, is_private, status, uploaded_by)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, nullif($8, 0), nullif($9, 0), $10, $11, $12, $13, $14, $15)`,
+			                    taken_at, lat, lng, is_private, status, uploaded_by, source_checksum)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, nullif($8, 0), nullif($9, 0), $10, $11, $12, $13, $14, $15, $16)`,
 			media.ID, media.TripID, media.StorageKey, media.OriginalName, media.MIME, media.Size, media.Checksum,
 			media.Width, media.Height, media.TakenAt, media.Lat, media.Lng, media.IsPrivate, media.Status,
-			media.UploadedBy); err != nil {
+			media.UploadedBy, media.SourceChecksum); err != nil {
 			return fmt.Errorf("create media: %w", err)
 		}
 		return nil

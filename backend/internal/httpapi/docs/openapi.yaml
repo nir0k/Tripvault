@@ -1105,7 +1105,13 @@ paths:
         `true` before them marks everything that follows as private. What a file
         is is decided from its own bytes, never from the declared type: only
         JPEG, PNG and WebP are stored. A file above the configured size answers
-        `413`, and a trip that has used up its allowance answers `409`.
+        `413`, and a trip that has used up its allowance answers `409` with
+        `media_quota`.
+
+        A trip holds a picture once. A `source_checksum` part before a file
+        names the SHA-256, in hex, of the original the browser shrank it from;
+        it applies to that one file. A file whose own sum or source sum matches
+        either sum of a file of the trip answers `409` with `duplicate_media`.
       operationId: uploadMedia
       parameters:
         - $ref: "#/components/parameters/TripID"
@@ -1124,6 +1130,10 @@ paths:
                     format: binary
                 private:
                   type: boolean
+                source_checksum:
+                  type: string
+                  pattern: "^[0-9a-fA-F]{64}$"
+                  description: SHA-256 of the original the next file was shrunk from.
       responses:
         "201":
           description: The stored files.

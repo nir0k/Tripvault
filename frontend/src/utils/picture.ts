@@ -65,3 +65,30 @@ function renameToJPEG(name: string): string {
   const dot = name.lastIndexOf('.')
   return (dot > 0 ? name.slice(0, dot) : name) + '.jpg'
 }
+
+/**
+ * fileChecksum - reads the SHA-256 of a file, in hex.
+ *
+ * The server stores a picture once per trip and knows a copy by this sum of
+ * the original as well as by the sum of what was sent, which shrinking makes
+ * different each time the setting changes. The browser offers the digest only
+ * over HTTPS and on localhost; elsewhere there is none, and the server compares
+ * the bytes it received alone.
+ *
+ * Arguments:
+ *   - file: the file as it was chosen.
+ *
+ * Returns:
+ *   - the sum in lower-case hex, or null when the browser cannot compute it.
+ */
+export async function fileChecksum(file: File): Promise<string | null> {
+  if (!globalThis.crypto?.subtle) {
+    return null
+  }
+  try {
+    const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+  } catch {
+    return null
+  }
+}

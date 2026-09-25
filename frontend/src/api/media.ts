@@ -39,7 +39,7 @@ export function mediaThumbnailPath(base: string, id: string, size: MediaSize): s
   return `${mediaFilePath(base, id)}/thumbnail?size=${size}`
 }
 
-/** listMedia returns every file of a trip, newest first. */
+/** listMedia returns every file of a trip in the order they were taken. */
 export async function listMedia(tripId: string): Promise<Media[]> {
   return (await http.get<ListResponse<Media>>(`/api/v1/trips/${encodeURIComponent(tripId)}/media`)).data.items
 }
@@ -47,6 +47,11 @@ export async function listMedia(tripId: string): Promise<Media[]> {
 /** UploadOptions carry the privacy of an upload and follow its progress. */
 export interface UploadOptions {
   private?: boolean
+  /**
+   * sourceChecksum is the SHA-256, in hex, of the original a shrunk file was
+   * made from, so the server knows a copy of it whatever bytes shrinking gave.
+   */
+  sourceChecksum?: string
   /** onProgress reports the share of the file that has been sent, 0 to 1. */
   onProgress?: (share: number) => void
   signal?: AbortSignal
@@ -63,6 +68,9 @@ export async function uploadMedia(tripId: string, file: File, options: UploadOpt
   const form = new FormData()
   if (options.private) {
     form.append('private', 'true')
+  }
+  if (options.sourceChecksum) {
+    form.append('source_checksum', options.sourceChecksum)
   }
   form.append('file', file, file.name)
 

@@ -265,6 +265,9 @@ func (s *Server) handleUploadMedia(w http.ResponseWriter, r *http.Request) {
 
 	stored := make([]mediaResponse, 0, 1)
 	private := false
+	// source is the sum of the original the next file was shrunk from, as the
+	// browser reports it; it belongs to that one file alone.
+	var source []byte
 	for {
 		part, err := reader.NextPart()
 		if errors.Is(err, io.EOF) {
@@ -282,12 +285,28 @@ func (s *Server) handleUploadMedia(w http.ResponseWriter, r *http.Request) {
 			_ = part.Close()
 			continue
 		}
+		// A "source_checksum" field before a file carries the SHA-256 of the
+		// photograph the browser was given, in hex, so a copy of it is known
+		// even when it was shrunk to other bytes.
+		if part.FormName() == "source_checksum" {
+			value, _ := io.ReadAll(io.LimitReader(part, 128))
+			_ = part.Close()
+			decoded, err := hex.DecodeString(string(value))
+			if err != nil || len(decoded) != sha256.Size {
+				s.writeError(w, r, http.StatusBadRequest, "invalid_request",
+					"source_checksum must be a SHA-256 sum in hex")
+				return
+			}
+			source = decoded
+			continue
+		}
 		if part.FormName() != "file" {
 			_ = part.Close()
 			continue
 		}
 
-		item, err := s.storePart(r, trip.ID, part, private, used)
+		item, err := s.storePart(r, trip.ID, part, private, source, used)
+		source = nil
 		_ = part.Close()
 		if err != nil {
 			s.writeMediaError(w, r, err)
@@ -310,9 +329,11 @@ func (s *Server) handleUploadMedia(w http.ResponseWriter, r *http.Request) {
 //
 // The bytes are read into memory first because everything decided about a file
 // - its type, its size, its checksum and what its EXIF says - is decided from
-// the bytes themselves, and the size limit keeps that bounded.
+// the bytes themselves, and the size limit keeps that bounded. source is the
+// sum of the original the browser shrank the file from, or nil; a picture the
+// trip already holds under either sum is refused when it is catalogued.
 func (s *Server) storePart(r *http.Request, tripID uuid.UUID, part *multipart.Part, private bool,
-	used int64) (domain.Media, error) {
+	source []byte, used int64) (domain.Media, error) {
 	// One byte over the limit is read on purpose, so a file exactly at the
 	// limit is accepted and the first byte above it is noticed.
 	data, err := io.ReadAll(io.LimitReader(part, s.mediaMaxBytes+1))
@@ -353,21 +374,22 @@ func (s *Server) storePart(r *http.Request, tripID uuid.UUID, part *multipart.Pa
 	id := uuid.Must(uuid.NewV7())
 	uploader := principalFrom(r.Context()).user.ID
 	item, err := domain.Media{
-		ID:           id,
-		TripID:       tripID,
-		StorageKey:   storageKey(tripID, id, extension),
-		OriginalName: part.FileName(),
-		MIME:         mime,
-		Size:         int64(len(data)),
-		Checksum:     checksum[:],
-		Width:        width,
-		Height:       height,
-		TakenAt:      meta.TakenAt,
-		Lat:          meta.Lat,
-		Lng:          meta.Lng,
-		IsPrivate:    private,
-		Status:       domain.MediaReady,
-		UploadedBy:   &uploader,
+		ID:             id,
+		TripID:         tripID,
+		StorageKey:     storageKey(tripID, id, extension),
+		OriginalName:   part.FileName(),
+		MIME:           mime,
+		Size:           int64(len(data)),
+		Checksum:       checksum[:],
+		SourceChecksum: source,
+		Width:          width,
+		Height:         height,
+		TakenAt:        meta.TakenAt,
+		Lat:            meta.Lat,
+		Lng:            meta.Lng,
+		IsPrivate:      private,
+		Status:         domain.MediaReady,
+		UploadedBy:     &uploader,
 	}.Normalize()
 	if err != nil {
 		return domain.Media{}, err
@@ -781,6 +803,9 @@ func (s *Server) writeMediaError(w http.ResponseWriter, r *http.Request, err err
 	case errors.Is(err, domain.ErrMediaQuota):
 		s.writeError(w, r, http.StatusConflict, "media_quota",
 			"The trip has no space left for more files")
+	case errors.Is(err, domain.ErrMediaDuplicate):
+		s.writeError(w, r, http.StatusConflict, "duplicate_media",
+			"The trip already holds this picture")
 	case errors.Is(err, domain.ErrMediaUnsupported):
 		s.writeError(w, r, http.StatusUnsupportedMediaType, "unsupported_file",
 			"Only JPEG, PNG and WebP pictures are accepted")

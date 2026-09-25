@@ -21,6 +21,9 @@ var (
 	ErrMediaQuota = errors.New("the trip has no space left for more files")
 	// ErrMediaUnsupported reports a kind of file this service does not store.
 	ErrMediaUnsupported = errors.New("this kind of file is not accepted")
+	// ErrMediaDuplicate reports a picture the trip already holds: the same
+	// bytes, or the same original the browser shrank before sending.
+	ErrMediaDuplicate = errors.New("the trip already holds this picture")
 )
 
 // MediaStatus says whether a file is ready to be served. Everything the current
@@ -83,8 +86,12 @@ type Media struct {
 	Size         int64
 	// Checksum is the SHA-256 of the bytes.
 	Checksum []byte
-	Width    int
-	Height   int
+	// SourceChecksum is the SHA-256 of the file the browser was given, before
+	// it shrank it; nil when the browser could not say. Two uploads of one
+	// photograph shrunk differently share it where their bytes differ.
+	SourceChecksum []byte
+	Width          int
+	Height         int
 	// TakenAt, Lat and Lng come from the picture's own metadata and are empty
 	// when it carries none.
 	TakenAt *time.Time

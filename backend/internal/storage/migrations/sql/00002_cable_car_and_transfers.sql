@@ -62,11 +62,23 @@ DROP INDEX translations_target_key;
 CREATE UNIQUE INDEX translations_target_key
     ON translations ((COALESCE(document_id, day_id, stay_id, item_id, leg_id, transfer_id, trip_id)), field, lang);
 
+-- A picture is stored once per trip. The sum of the bytes alone does not
+-- say it: the browser may shrink a photograph before sending it, and two
+-- uploads of one photograph shrunk differently share only the sum of the file
+-- the browser was given. The index serves the lookup made on every upload.
+ALTER TABLE media ADD COLUMN source_checksum bytea;
+CREATE INDEX media_trip_id_checksum_idx ON media (trip_id, checksum);
+CREATE INDEX media_trip_id_source_checksum_idx ON media (trip_id, source_checksum);
+
 -- Only an activity carries a track. A place is somewhere seen, and the
 -- journeys to and from it are its legs, so the lines places were given go.
 DELETE FROM tracks t USING items i WHERE t.item_id = i.id AND i.kind <> 'activity';
 
 -- +goose Down
+
+DROP INDEX media_trip_id_source_checksum_idx;
+DROP INDEX media_trip_id_checksum_idx;
+ALTER TABLE media DROP COLUMN source_checksum;
 
 -- The tracks of places removed on the way up are not brought back: the rows
 -- are gone, and a place holding none is valid in the older schema too.
