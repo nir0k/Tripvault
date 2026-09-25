@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import AmountInput from '@/components/AmountInput.vue'
 import CurrencySelect from '@/components/CurrencySelect.vue'
 
 /** TripFormModel is a trip as its form edits it: every value as typed. */
@@ -55,7 +56,7 @@ const { t } = useI18n()
     </div>
     <label v-if="!extended" class="floating-label">
       <span>{{ t('tripForm.budget') }}</span>
-      <input v-model="model.budget" type="text" inputmode="decimal" class="input w-full" :placeholder="t('tripForm.budget')" />
+      <AmountInput v-model="model.budget" class="input w-full" :placeholder="t('tripForm.budget')" />
     </label>
   </div>
 </template>

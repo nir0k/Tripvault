@@ -1,5 +1,6 @@
 import type { DateFormat, TimeFormat, Units } from '@/api/types'
 import { activeDateFormat, activeTimeFormat } from '@/utils/display'
+import { resolveAmount } from '@/utils/amount'
 
 // Dates and times are written the way the reader asked for. Like the units, the
 // choice changes nothing that is carried - a date travels as YYYY-MM-DD and a
@@ -74,11 +75,12 @@ export function formatMoney(amount: string | null, currency: string, locale: str
 }
 
 /**
- * normalizeAmount turns a typed amount into the API's decimal string: spaces
- * dropped and a decimal comma accepted. Empty input means no amount.
+ * normalizeAmount turns a typed amount into the API's decimal string: a
+ * formula computed, spaces dropped and a decimal comma accepted. Empty input
+ * means no amount.
  */
 export function normalizeAmount(value: string): string | null {
-  const cleaned = value.replace(/\s/g, '').replace(',', '.')
+  const cleaned = resolveAmount(value).replace(/\s/g, '').replace(',', '.')
   return cleaned === '' ? null : cleaned
 }
 

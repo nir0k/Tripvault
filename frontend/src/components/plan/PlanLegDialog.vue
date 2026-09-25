@@ -3,6 +3,7 @@ import { computed, reactive, ref, useTemplateRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { LegChanges } from '@/api/documents'
 import { TRAVEL_MODES, type Leg, type TravelMode } from '@/api/types'
+import AmountInput from '@/components/AmountInput.vue'
 import { fromMetres, normalizeAmount, toMetres } from '@/utils/format'
 import { activeUnits } from '@/utils/units'
 
@@ -124,11 +125,11 @@ defineExpose({ open, close, fail })
       </div>
       <label class="floating-label">
         <span>{{ t('leg.cost') }}</span>
-        <input v-model="form.cost" type="text" inputmode="decimal" class="input w-full" :placeholder="t('leg.cost')" />
+        <AmountInput v-model="form.cost" class="input w-full" :placeholder="t('leg.cost')" />
       </label>
       <label v-if="report" class="floating-label">
         <span>{{ t('report.actualCost') }}</span>
-        <input v-model="form.actual" type="text" inputmode="decimal" class="input w-full" :placeholder="t('report.actualCost')" />
+        <AmountInput v-model="form.actual" class="input w-full" :placeholder="t('report.actualCost')" />
       </label>
       <label class="floating-label">
         <span>{{ t('leg.note') }}</span>

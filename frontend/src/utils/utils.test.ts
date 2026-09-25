@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError } from '@/api/client'
 import type { Media, TripDocument } from '@/api/types'
+import { evaluateFormula, invalidAmount, resolveAmount } from '@/utils/amount'
 import { errorMessage } from '@/utils/errors'
 import { addDays, describeUserAgent, formatClock, formatDayDate, formatDistance, formatDateRange, formatMoney, fromMetres, normalizeAmount, splitDuration, toMetres } from '@/utils/format'
 import { markdownExcerpt, renderMarkdown } from '@/utils/markdown'
@@ -78,6 +79,35 @@ describe('trip formatting', () => {
   it('accepts a decimal comma and spaces in typed amounts', () => {
     expect(normalizeAmount('1 240,5')).toBe('1240.5')
     expect(normalizeAmount('  ')).toBeNull()
+  })
+
+  it('computes an amount typed as a formula', () => {
+    expect(normalizeAmount('=120*3+45')).toBe('405')
+    expect(normalizeAmount('= (10 + 2,5) * 2 / 3')).toBe('8.33')
+  })
+})
+
+describe('amount formulas', () => {
+  it('follows operator precedence and parentheses', () => {
+    expect(evaluateFormula('=2+3*4')).toBe(14)
+    expect(evaluateFormula('=(2+3)*4')).toBe(20)
+    expect(evaluateFormula('=10-4-3')).toBe(3)
+    expect(evaluateFormula('=100/4/5')).toBe(5)
+    expect(evaluateFormula('=-(3-5)*.5')).toBe(1)
+  })
+
+  it('refuses what is not an expression', () => {
+    for (const bad of ['=', '=1+', '=(1+2', '=1+2)', '=2*x', '=1/0', '=1..2', '=1 2e3']) {
+      expect(evaluateFormula(bad), bad).toBeNull()
+    }
+  })
+
+  it('leaves plain amounts alone and flags formulas that give no amount', () => {
+    expect(resolveAmount('12,50')).toBe('12,50')
+    expect(invalidAmount('12,50')).toBe(false)
+    expect(invalidAmount('=5-10')).toBe(true)
+    expect(invalidAmount('=5*')).toBe(true)
+    expect(invalidAmount('=5*2')).toBe(false)
   })
 })
 

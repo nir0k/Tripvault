@@ -3,6 +3,7 @@ import { computed, reactive, ref, useTemplateRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ExpenseFields } from '@/api/documents'
 import type { BudgetDayRow, CostCategory, Expense } from '@/api/types'
+import AmountInput from '@/components/AmountInput.vue'
 import IconSelect from '@/components/IconSelect.vue'
 import { formatDayDate, normalizeAmount } from '@/utils/format'
 import { costCategoryOptions } from '@/utils/plan'
@@ -88,10 +89,8 @@ defineExpose({ open, close, fail })
       <div class="grid gap-3 sm:grid-cols-2">
         <label class="floating-label">
           <span>{{ t('budget.amount') }}</span>
-          <input
+          <AmountInput
             v-model="form.amount"
-            type="text"
-            inputmode="decimal"
             required
             class="input w-full"
             :placeholder="t('budget.amount')"

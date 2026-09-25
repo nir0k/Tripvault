@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, useTemplateRef } from 'vue'
 import { useI18n } from 'vue-i18n'
+import AmountInput from '@/components/AmountInput.vue'
 import { normalizeAmount } from '@/utils/format'
 
 // The form for the trip's overall budget. An empty amount clears it, which is
@@ -48,10 +49,8 @@ defineExpose({ open, close, fail })
 
       <label class="floating-label">
         <span>{{ t('trip.budget') }}</span>
-        <input
+        <AmountInput
           v-model="draft"
-          type="text"
-          inputmode="decimal"
           class="input w-full"
           :placeholder="t('trip.budget')"
         />

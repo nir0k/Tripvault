@@ -594,6 +594,10 @@
     "tour": "Guided tour",
     "other": "Other activity"
   },
+  "amount": {
+    "formulaHint": "An amount, or a formula such as =120*3+45",
+    "invalidFormula": "The formula cannot be computed. Use numbers, + - * / and parentheses."
+  },
   "budget": {
     "totals": "Budget totals",
     "planned": "Planned",

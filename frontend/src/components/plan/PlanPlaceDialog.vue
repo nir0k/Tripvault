@@ -3,6 +3,7 @@ import { computed, nextTick, reactive, ref, useTemplateRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { PlaceFields } from '@/api/documents'
 import type { ActivityType, CostCategory, PlaceCategory, PlanItem } from '@/api/types'
+import AmountInput from '@/components/AmountInput.vue'
 import IconSelect from '@/components/IconSelect.vue'
 import PlaceKindFields from '@/components/plan/PlaceKindFields.vue'
 import LocationField, { type LocationModel } from '@/components/LocationField.vue'
@@ -178,7 +179,7 @@ defineExpose({ open, close, fail })
       <div class="grid gap-3 sm:grid-cols-2">
         <label class="floating-label">
           <span>{{ t('place.cost') }}</span>
-          <input v-model="form.cost" type="text" inputmode="decimal" class="input w-full" :placeholder="t('place.cost')" />
+          <AmountInput v-model="form.cost" class="input w-full" :placeholder="t('place.cost')" />
         </label>
         <label class="flex flex-col gap-1">
           <span class="label">{{ t('place.costCategory') }}</span>

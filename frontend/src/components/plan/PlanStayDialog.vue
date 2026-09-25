@@ -3,6 +3,7 @@ import { computed, reactive, ref, useTemplateRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { StayFields } from '@/api/documents'
 import { STAY_KINDS, type Stay, type StayKind } from '@/api/types'
+import AmountInput from '@/components/AmountInput.vue'
 import LocationField, { type LocationModel } from '@/components/LocationField.vue'
 import { normalizeAmount } from '@/utils/format'
 
@@ -147,7 +148,7 @@ defineExpose({ open, close, fail })
       <div class="grid gap-3 sm:grid-cols-2">
         <label class="floating-label">
           <span>{{ t('stay.cost') }}</span>
-          <input v-model="form.cost" type="text" inputmode="decimal" class="input w-full" :placeholder="t('stay.cost')" />
+          <AmountInput v-model="form.cost" class="input w-full" :placeholder="t('stay.cost')" />
         </label>
         <label class="floating-label">
           <span>{{ t('stay.bookingRef') }}</span>
