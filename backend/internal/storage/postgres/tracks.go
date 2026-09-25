@@ -14,7 +14,7 @@ import (
 	"github.com/nir0k/tripvault/backend/internal/domain"
 )
 
-// The recorded lines of a report's places and activities. Each of them holds at
+// The lines of the activities of a plan or a report. Each of them holds at
 // most one, so an import replaces whatever was there: that is what the unique
 // key is for, and what makes importing the same file twice harmless.
 //
@@ -33,7 +33,7 @@ func scanTrack(row pgx.Row) (domain.Track, error) {
 	return t, err
 }
 
-// SaveTrack - stores the recorded line of a place or an activity, replacing
+// SaveTrack - stores the line of an activity, replacing
 // the one it had. The journeys to and from the place leave and reach its
 // recording's ends, so a new line sends them back to be calculated.
 //
@@ -117,7 +117,7 @@ func (r *DocumentRepository) TrackFile(ctx context.Context, id uuid.UUID) (domai
 	return file, err
 }
 
-// DeleteTrack - removes the recorded line of a place or an activity. Its
+// DeleteTrack - removes the line of an activity. Its
 // journeys go back to leaving and reaching the place's own position.
 //
 // Arguments:

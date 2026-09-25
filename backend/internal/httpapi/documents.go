@@ -157,9 +157,9 @@ type dayResponse struct {
 	CoverMediaID *string         `json:"cover_media_id"`
 }
 
-// trackResponse is a recorded line of a place or an activity: the line
-// itself and what was measured from it. The file it came from is downloaded
-// separately, by the track's identifier.
+// trackResponse is the line of an activity: the line itself and what was
+// measured from it. The file it came from is downloaded separately, by the
+// track's identifier.
 type trackResponse struct {
 	ID           string `json:"id"`
 	OriginalName string `json:"original_name"`

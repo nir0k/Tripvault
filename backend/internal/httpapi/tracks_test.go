@@ -132,8 +132,8 @@ func TestItemTrackIsDownloadedAsUploaded(t *testing.T) {
 	}
 }
 
-// TestImportTrackRefusesWhatItCannotRead covers a file that is not a track and
-// a reader who may only look.
+// TestImportTrackRefusesWhatItCannotRead covers a file that is not a track, a
+// place rather than an activity, and a reader who may only look.
 func TestImportTrackRefusesWhatItCannotRead(t *testing.T) {
 	s, docs := newReportServerWithTracks(t)
 	recorder := importTrack(t, s, docs.place.ID.String(), "notes.txt", []byte("hello"))
@@ -145,6 +145,16 @@ func TestImportTrackRefusesWhatItCannotRead(t *testing.T) {
 		t.Errorf("a track of one point: %d %s", recorder.Code, recorder.Body.String())
 	}
 
+	// A place is somewhere seen; only an activity carries a line.
+	s, docs = newReportServerWithTracks(t)
+	docs.place.Kind, docs.place.ActivityType = domain.ItemPlace, ""
+	recorder = importTrack(t, s, docs.place.ID.String(), "day1.gpx",
+		gpx([][2]float64{{63.5, -19.5}, {63.51, -19.51}}))
+	if recorder.Code != http.StatusUnprocessableEntity || errorCode(t, recorder) != "validation_failed" ||
+		docs.track != nil {
+		t.Errorf("a place: %d %s", recorder.Code, recorder.Body.String())
+	}
+
 	// A viewer may read the report and nothing else.
 	viewer, docs := newViewerReportServer(t)
 	if recorder := importTrack(t, viewer, docs.place.ID.String(), "day1.gpx",
@@ -154,11 +164,14 @@ func TestImportTrackRefusesWhatItCannotRead(t *testing.T) {
 }
 
 // newReportServerWithTracks builds a report an editor may change, with the
-// track limit the deployment defaults to.
+// track limit the deployment defaults to. Its place is an activity, the only
+// element that takes a track.
 func newReportServerWithTracks(t *testing.T) (*Server, *fakeDocuments) {
 	t.Helper()
 	s, docs := newReportServer(domain.RoleOwner)
 	s.trackMaxBytes = 10 * 1024 * 1024
+	docs.place.Kind = domain.ItemActivity
+	docs.place.ActivityType = domain.ActivityHike
 	return s, docs
 }
 

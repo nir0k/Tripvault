@@ -181,10 +181,12 @@ function rate(stars: number): void {
       @save="(story) => emit('story', story)"
     />
 
+    <!-- Only an activity carries a line; a place is somewhere seen. -->
     <ReportTrackLine
+      v-if="item.kind === 'activity'"
       :track="item.track"
       :editing="structural"
-      :hint="t(item.kind === 'activity' ? 'track.activityHint' : 'track.placeHint')"
+      :hint="t('track.activityHint')"
       @import="(file) => emit('importTrack', file)"
       @remove="emit('removeTrack')"
     />

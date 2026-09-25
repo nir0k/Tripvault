@@ -6,11 +6,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// A track is the line of a place or an activity - a hike, a walk around a lake.
+// A track is the line of an activity - a hike, a walk, a descent of a canyon.
 // In a report it is what was really travelled, imported from a watch or a
 // phone; in a plan it is the route meant to be taken, drawn in an outdoor app,
 // and a report copied from the plan starts with it until a recording replaces
-// it. Each place or activity holds at most one. A day has
+// it. Each activity holds at most one, and a place none: a place is somewhere
+// seen, and an activity turned into a place loses its line. A day has
 // none of its own: the journeys between its places are its legs, which are
 // drawn and counted whether or not a part of the day was recorded.
 //
@@ -19,7 +20,7 @@ import (
 // is kept beside it, compressed, so it can be downloaded as it was recorded;
 // it is read only by the download and never with the document.
 
-// Track is a recorded line of a place or an activity.
+// Track is the line of an activity.
 type Track struct {
 	ID         uuid.UUID
 	DocumentID uuid.UUID
@@ -75,12 +76,11 @@ type TrackFile struct {
 	Data []byte
 }
 
-// TrackOfItem - finds the track of a place or an activity among a document's
-// tracks.
+// TrackOfItem - finds the track of an activity among a document's tracks.
 //
 // Arguments:
 //   - tracks: the document's tracks.
-//   - itemID: the place or activity in question.
+//   - itemID: the activity in question.
 //
 // Returns:
 //   - its track, or nil when it has none.

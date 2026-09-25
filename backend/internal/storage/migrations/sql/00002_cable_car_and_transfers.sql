@@ -62,7 +62,14 @@ DROP INDEX translations_target_key;
 CREATE UNIQUE INDEX translations_target_key
     ON translations ((COALESCE(document_id, day_id, stay_id, item_id, leg_id, transfer_id, trip_id)), field, lang);
 
+-- Only an activity carries a track. A place is somewhere seen, and the
+-- journeys to and from it are its legs, so the lines places were given go.
+DELETE FROM tracks t USING items i WHERE t.item_id = i.id AND i.kind <> 'activity';
+
 -- +goose Down
+
+-- The tracks of places removed on the way up are not brought back: the rows
+-- are gone, and a place holding none is valid in the older schema too.
 
 DROP INDEX translations_target_key;
 DELETE FROM translations WHERE transfer_id IS NOT NULL;

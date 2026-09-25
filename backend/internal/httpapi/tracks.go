@@ -16,18 +16,24 @@ import (
 	"github.com/nir0k/tripvault/backend/internal/track"
 )
 
-// Importing the line of a place or an activity - a hike, a walk around a lake.
+// Importing the line of an activity - a hike, a walk, a descent of a canyon.
 // In a report it is the recording of what was really travelled; in a plan it is
 // the route somebody intends to take, drawn in an outdoor app, and a report
-// copied from the plan starts with it until a recording replaces it. A day has
-// no line of its own; its journeys are its legs.
+// copied from the plan starts with it until a recording replaces it. A place
+// has none - it is somewhere seen, not something done - and neither has a day:
+// the journeys to and between them are their legs.
 
-// handleImportItemTrack reads a GPX or KML file and makes it the line of a
-// place or an activity. The length, the climb and a thinned line are read from
+// handleImportItemTrack reads a GPX or KML file and makes it the line of an
+// activity. The length, the climb and a thinned line are read from
 // the file, and the file itself is kept for downloading.
 func (s *Server) handleImportItemTrack(w http.ResponseWriter, r *http.Request) {
 	item, document, ok := s.placeFor(w, r)
 	if !ok {
+		return
+	}
+	if item.Kind != domain.ItemActivity {
+		s.writeDomainError(w, r, "import track",
+			domain.NewValidationError("track", "activity_only", "only an activity carries a track"))
 		return
 	}
 	s.extendUploadDeadlines(w, r)
@@ -71,13 +77,14 @@ func (s *Server) handleImportItemTrack(w http.ResponseWriter, r *http.Request) {
 	s.writeDocument(w, r, http.StatusOK, document.ID)
 }
 
-// fillFromTrack gives a place or an activity what its line knows and it does
-// not: the position the line begins at and, in a report, the times the
-// recording started and ended, read in the trip's time zone. A plan has no
-// actual times, and a route planned in advance carries none worth keeping. What somebody entered is never
-// overwritten - the watch may have been started late, or away from the car
-// park the place is marked at. Storing the place also puts the day back in the
-// order of its times, and a new position sends its legs to be calculated.
+// fillFromTrack gives an activity what its line knows and it does not: the
+// position the line begins at and, in a report, the times the recording
+// started and ended, read in the trip's time zone. A plan has no actual times,
+// and a route planned in advance carries none worth keeping. What somebody
+// entered is never overwritten - the watch may have been started late, or away
+// from the car park the activity is marked at. Storing the activity also puts
+// the day back in the order of its times, and a new position sends its legs to
+// be calculated.
 //
 // Arguments:
 //   - item: the place or activity as it was before the import.
@@ -125,7 +132,7 @@ func (s *Server) fillFromTrack(w http.ResponseWriter, r *http.Request, item doma
 	return true
 }
 
-// handleDeleteItemTrack removes the recorded line of a place or an activity.
+// handleDeleteItemTrack removes the line of an activity.
 func (s *Server) handleDeleteItemTrack(w http.ResponseWriter, r *http.Request) {
 	item, document, ok := s.placeFor(w, r)
 	if !ok {

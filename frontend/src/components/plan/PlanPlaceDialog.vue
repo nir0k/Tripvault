@@ -162,7 +162,10 @@ function submit(): void {
   if (form.costCategory) {
     fields.cost_category = form.costCategory
   }
-  emit('save', fields, editing.value, track.value, dropTrack.value)
+  // Only an activity carries a route; the server drops the one of an activity
+  // turned into a place.
+  const activity = form.kind === 'activity'
+  emit('save', fields, editing.value, activity ? track.value : null, activity && dropTrack.value)
 }
 
 defineExpose({ open, close, fail })
@@ -202,7 +205,7 @@ defineExpose({ open, close, fail })
         </label>
       </div>
 
-      <fieldset v-if="tracks" class="fieldset rounded-box border border-base-300 p-3">
+      <fieldset v-if="tracks && form.kind === 'activity'" class="fieldset rounded-box border border-base-300 p-3">
         <legend class="fieldset-legend">{{ t('track.route') }}</legend>
         <div class="flex flex-wrap items-center gap-2">
           <button type="button" class="btn btn-sm btn-hover-outline" @click="trackField?.click()">

@@ -1031,6 +1031,13 @@ func (r *DocumentRepository) UpdatePlace(ctx context.Context, place domain.Item)
 		if tag.RowsAffected() == 0 {
 			return domain.ErrNotFound
 		}
+		// Only an activity carries a track, so an activity turned into a place
+		// loses it; the legs are drawn from the marker again by syncTrip below.
+		if place.Kind != domain.ItemActivity {
+			if _, err := tx.Exec(ctx, `DELETE FROM tracks WHERE item_id = $1`, place.ID); err != nil {
+				return fmt.Errorf("drop track of a place: %w", err)
+			}
+		}
 		if err := orderByTime(ctx, tx, document, place.DayID); err != nil {
 			return err
 		}

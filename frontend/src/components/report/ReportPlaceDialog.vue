@@ -109,9 +109,12 @@ function forgetTrack(): void {
   }
 }
 
+// Only an activity carries a recording; a place is somewhere seen.
+const trackable = computed(() => form.kind === 'activity')
+
 // Whether the times left empty will be read from a recording: one chosen here,
-// or the one the place already has.
-const timesFromTrack = computed(() => track.value !== null || editing.value?.track != null)
+// or the one the activity already has.
+const timesFromTrack = computed(() => trackable.value && (track.value !== null || editing.value?.track != null))
 
 // submit collects the fields and hands them to the page. A place created here
 // was never in the plan, so it is marked as such.
@@ -130,7 +133,7 @@ function submit(): void {
     actual_cost_amount: normalizeAmount(form.actualCost),
     cost_per_person: form.perPerson,
     ...(editing.value ? {} : { status: 'unplanned' as const }),
-  }, editing.value, track.value)
+  }, editing.value, trackable.value ? track.value : null)
 }
 
 defineExpose({ open, close, fail })
@@ -171,8 +174,8 @@ defineExpose({ open, close, fail })
       <!-- The recording and the times belong together: the times left empty
            are read from it. -->
       <fieldset class="fieldset space-y-2 rounded-box border border-base-300 p-3">
-        <legend class="fieldset-legend">{{ t('report.trackAndTime') }}</legend>
-        <div class="flex flex-wrap items-center gap-2">
+        <legend class="fieldset-legend">{{ trackable ? t('report.trackAndTime') : t('report.time') }}</legend>
+        <div v-if="trackable" class="flex flex-wrap items-center gap-2">
           <button type="button" class="btn btn-sm btn-hover-outline" @click="trackField?.click()">
             <AppIcon name="upload" />
             {{ track || editing?.track ? t('track.replace') : t('track.choose') }}
@@ -185,9 +188,9 @@ defineExpose({ open, close, fail })
           </span>
           <span v-else-if="editing?.track" class="truncate text-sm text-base-content/70">{{ editing.track.original_name }}</span>
         </div>
-        <input ref="trackField" type="file" accept=".gpx,.kml,application/gpx+xml" class="hidden" @change="onTrackPicked" />
+        <input v-if="trackable" ref="trackField" type="file" accept=".gpx,.kml,application/gpx+xml" class="hidden" @change="onTrackPicked" />
 
-        <div class="grid gap-3 pt-4 sm:grid-cols-2">
+        <div class="grid gap-3 sm:grid-cols-2" :class="{ 'pt-4': trackable }">
           <label class="floating-label">
             <span>{{ t('report.actualTime') }}</span>
             <TimeInput v-model="form.actualTime" class="input w-full" :label="t('report.actualTime')" />
