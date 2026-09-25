@@ -140,9 +140,9 @@ export interface PageResponse<T> {
   next_cursor: string | null
 }
 
-export type TravelMode = 'walk' | 'car' | 'bike' | 'transit' | 'flight' | 'other'
+export type TravelMode = 'walk' | 'car' | 'bike' | 'transit' | 'flight' | 'cable_car' | 'other'
 
-export const TRAVEL_MODES: readonly TravelMode[] = ['walk', 'car', 'bike', 'transit', 'flight', 'other']
+export const TRAVEL_MODES: readonly TravelMode[] = ['walk', 'car', 'bike', 'transit', 'flight', 'cable_car', 'other']
 
 export type TripRole = 'owner' | 'editor' | 'viewer'
 

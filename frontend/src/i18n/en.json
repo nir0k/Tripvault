@@ -333,6 +333,7 @@
     "bike": "Bicycle",
     "transit": "Public transport",
     "flight": "Flight",
+    "cable_car": "Cable car",
     "other": "Other"
   },
   "trip": {

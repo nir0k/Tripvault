@@ -116,7 +116,7 @@ var english = labels{
 	},
 	modes: map[string]string{
 		"walk": "On foot", "car": "By car", "bike": "By bicycle",
-		"transit": "By public transport", "flight": "By air", "other": "Other",
+		"transit": "By public transport", "flight": "By air", "cable_car": "By cable car", "other": "Other",
 	},
 	activities: map[string]string{
 		"hike": "Hike", "walk": "Walk", "bike": "Bike ride", "run": "Run",
@@ -189,7 +189,7 @@ var russian = labels{
 	},
 	modes: map[string]string{
 		"walk": "Пешком", "car": "На машине", "bike": "На велосипеде",
-		"transit": "Общественным транспортом", "flight": "Самолётом", "other": "Иначе",
+		"transit": "Общественным транспортом", "flight": "Самолётом", "cable_car": "Канатной дорогой", "other": "Иначе",
 	},
 	activities: map[string]string{
 		"hike": "Поход", "walk": "Прогулка", "bike": "Велопрогулка", "run": "Пробежка",

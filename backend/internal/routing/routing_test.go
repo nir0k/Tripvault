@@ -34,11 +34,23 @@ func TestGeometry(t *testing.T) {
 	}
 }
 
-// TestStraightLinesAndEstimates checks flights, "other" legs and estimates.
+// TestStraightLinesAndEstimates checks flights, cable cars, "other" legs and
+// estimates.
 func TestStraightLinesAndEstimates(t *testing.T) {
 	flight := StraightLine(domain.ModeFlight, reykjavik, vik)
 	if flight.Source != domain.LegStraightLine || flight.DurationS == nil || *flight.DurationS < 30*60 {
 		t.Errorf("flight: %+v", flight)
+	}
+	// A three-kilometre gondola: twelve minutes along the cable and five at
+	// the stations.
+	top := domain.Point{Lat: reykjavik.Lat + 3.0/111.195, Lng: reykjavik.Lng}
+	gondola := StraightLine(domain.ModeCableCar, reykjavik, top)
+	if gondola.Source != domain.LegStraightLine || gondola.DurationS == nil ||
+		math.Abs(float64(*gondola.DurationS)-17*60) > 5 {
+		t.Errorf("cable car: %+v", gondola)
+	}
+	if _, routed := Profile(domain.ModeCableCar); routed {
+		t.Error("a cable car is routed on roads")
 	}
 	if other := StraightLine(domain.ModeOther, reykjavik, vik); other.DurationS != nil {
 		t.Errorf("an other leg got a time: %+v", other)

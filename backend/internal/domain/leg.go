@@ -17,7 +17,8 @@ const (
 	LegPending LegSource = "pending"
 	// LegProvider follows roads, as the routing provider returned.
 	LegProvider LegSource = "provider"
-	// LegStraightLine is the great-circle line flights and "other" legs use.
+	// LegStraightLine is the great-circle line flights, cable cars and "other"
+	// legs use.
 	LegStraightLine LegSource = "straight_line"
 	// LegEstimate is a straight line scaled up, used when the provider could
 	// not answer; the leg's error says why.

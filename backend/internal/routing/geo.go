@@ -1,5 +1,5 @@
 // Package routing calculates legs: road routes from a provider, great-circle
-// lines for flights, and estimates when the provider cannot answer. Only the
+// lines for flights and cable cars, and estimates when the provider cannot answer. Only the
 // backend talks to the provider; its key never reaches a browser.
 package routing
 
@@ -78,6 +78,13 @@ const (
 	flightOverheadSecond = 30 * 60
 )
 
+// Cable car estimate: the speed of a gondola along its cable plus the wait at
+// the station and the boarding.
+const (
+	cableCarSpeedKmH       = 15
+	cableCarOverheadSecond = 5 * 60
+)
+
 // Result is a calculated leg, ready to be stored.
 type Result = domain.LegCalculation
 
@@ -93,13 +100,14 @@ func straightResult(from, to domain.Point, distance float64, duration *int, sour
 	}
 }
 
-// StraightLine - calculates a flight or an "other" leg on the great circle.
+// StraightLine - calculates a flight, a cable car or an "other" leg on the
+// great circle.
 //
-// A flight gets an estimated time until somebody types the scheduled one; an
-// "other" leg - a ferry, a taxi - gets none.
+// A flight and a cable car get an estimated time until somebody types the real
+// one; an "other" leg - a ferry, a taxi - gets none.
 //
 // Arguments:
-//   - mode: flight or other.
+//   - mode: flight, cable_car or other.
 //   - from, to: the points.
 //
 // Returns:
@@ -107,8 +115,12 @@ func straightResult(from, to domain.Point, distance float64, duration *int, sour
 func StraightLine(mode domain.TravelMode, from, to domain.Point) Result {
 	distance := Haversine(from, to)
 	var duration *int
-	if mode == domain.ModeFlight {
+	switch mode {
+	case domain.ModeFlight:
 		seconds := int(math.Round(distance/1000/flightSpeedKmH*3600)) + flightOverheadSecond
+		duration = &seconds
+	case domain.ModeCableCar:
+		seconds := int(math.Round(distance/1000/cableCarSpeedKmH*3600)) + cableCarOverheadSecond
 		duration = &seconds
 	}
 	return straightResult(from, to, distance, duration, domain.LegStraightLine, "")

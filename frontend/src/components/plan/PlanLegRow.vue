@@ -33,8 +33,9 @@ const duration = computed(() =>
 )
 const cost = computed(() => formatMoney(props.leg.planned_cost_amount, props.currency, locale.value))
 
-// A flight's time is an estimate until somebody types the scheduled one.
-const flightEstimate = computed(() => props.leg.mode === 'flight' && !props.leg.manual_duration && props.leg.duration_s !== null)
+// A flight's or a cable car's time is an estimate until somebody types the real one.
+const flightEstimate = computed(() => (props.leg.mode === 'flight' || props.leg.mode === 'cable_car')
+  && !props.leg.manual_duration && props.leg.duration_s !== null)
 const manual = computed(() => props.leg.manual_distance || props.leg.manual_duration)
 // Without a provider a retry cannot help, and the page already explains why.
 const retryable = computed(() => props.leg.source === 'estimate' && props.leg.error !== 'provider_disabled')

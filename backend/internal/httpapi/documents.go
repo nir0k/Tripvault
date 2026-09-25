@@ -110,7 +110,7 @@ type daySummaryResponse struct {
 
 // travelModes is the order modes are listed in.
 var travelModes = []domain.TravelMode{domain.ModeWalk, domain.ModeCar, domain.ModeBike, domain.ModeTransit,
-	domain.ModeFlight, domain.ModeOther}
+	domain.ModeFlight, domain.ModeCableCar, domain.ModeOther}
 
 // newLegResponse maps a leg onto the wire.
 func newLegResponse(leg domain.Leg) legResponse {

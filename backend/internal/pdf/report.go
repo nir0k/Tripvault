@@ -197,7 +197,7 @@ func writeTripMap(doc *document, text labels, report Report) error {
 // of the same trip do not shuffle their rows between renders.
 var travelModeOrder = []domain.TravelMode{
 	domain.ModeWalk, domain.ModeCar, domain.ModeBike,
-	domain.ModeTransit, domain.ModeFlight, domain.ModeOther,
+	domain.ModeTransit, domain.ModeFlight, domain.ModeCableCar, domain.ModeOther,
 }
 
 // writeDay writes one day: what it was called, what was recorded, where it went

@@ -134,7 +134,7 @@ func (s *Service) Forget(ctx context.Context, mode domain.TravelMode, from, to d
 
 // Calculate - works out a leg's distance, time and line.
 //
-// Flights and "other" legs follow the straight line. Road legs come from the
+// Flights, cable cars and "other" legs follow the straight line. Road legs come from the
 // cache, else from the provider; when there is no provider, a limit is reached,
 // no road route exists or the provider fails, the leg becomes an estimate with
 // the reason, which the interface shows next to a retry button.

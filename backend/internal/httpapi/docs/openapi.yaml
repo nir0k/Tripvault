@@ -3638,7 +3638,11 @@ components:
 
     TravelMode:
       type: string
-      enum: [walk, car, bike, transit, flight, other]
+      enum: [walk, car, bike, transit, flight, cable_car, other]
+      description: |
+        `walk`, `car`, `bike` and `transit` are routed on roads; `flight`,
+        `cable_car` and `other` follow the straight line, and a flight or a
+        cable car gets an estimated time until one is typed.
 
     Amount:
       type: string
@@ -5053,7 +5057,8 @@ components:
           enum: [pending, provider, straight_line, estimate, missing_coordinates]
           description: |
             `provider` follows roads (a `transit` leg follows the car route);
-            `straight_line` is the great circle of flights and other legs;
+            `straight_line` is the great circle of flights, cable cars and
+            other legs;
             `estimate` is a scaled straight line when the provider could not
             answer; `missing_coordinates` cannot be calculated.
         error:

@@ -18,7 +18,10 @@ const (
 	ModeBike    TravelMode = "bike"
 	ModeTransit TravelMode = "transit"
 	ModeFlight  TravelMode = "flight"
-	ModeOther   TravelMode = "other"
+	// ModeCableCar is a cable car, a gondola or a chairlift: it hangs on a
+	// straight cable, so it is drawn as a line rather than routed on roads.
+	ModeCableCar TravelMode = "cable_car"
+	ModeOther    TravelMode = "other"
 )
 
 // ValidateTravelMode - checks that a travel mode is one the service knows.
@@ -31,10 +34,10 @@ const (
 //   - a *ValidationError when the value is unknown.
 func ValidateTravelMode(field string, mode TravelMode) error {
 	switch mode {
-	case ModeWalk, ModeCar, ModeBike, ModeTransit, ModeFlight, ModeOther:
+	case ModeWalk, ModeCar, ModeBike, ModeTransit, ModeFlight, ModeCableCar, ModeOther:
 		return nil
 	default:
-		return NewValidationError(field, "unsupported", "must be walk, car, bike, transit, flight or other")
+		return NewValidationError(field, "unsupported", "must be walk, car, bike, transit, flight, cable_car or other")
 	}
 }
 
