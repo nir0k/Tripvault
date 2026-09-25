@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import type { Night, Stay, TripDocument } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import MarkdownText from '@/components/MarkdownText.vue'
-import { formatDayDate, formatMoney } from '@/utils/format'
+import { formatDayDate, formatMoney, formatTimeOfDay } from '@/utils/format'
 import { stayColor } from '@/utils/plan'
 
 // The stays of the document: the strip of nights, the list by check-in and the
@@ -49,7 +49,7 @@ function nightLabel(night: Night): string {
 // checkText shows a check-in or check-out date with its time.
 function checkText(date: string, time: string | null): string {
   const day = formatDayDate(date, locale.value, true)
-  return time ? `${day}, ${time}` : day
+  return time ? `${day}, ${formatTimeOfDay(time)}` : day
 }
 </script>
 

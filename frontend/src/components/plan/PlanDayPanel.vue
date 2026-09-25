@@ -10,6 +10,7 @@ import PlanItemCard from '@/components/plan/PlanItemCard.vue'
 import PlanLegRow from '@/components/plan/PlanLegRow.vue'
 import PlanPlaceList from '@/components/plan/PlanPlaceList.vue'
 import TransferRow from '@/components/plan/TransferRow.vue'
+import TimeInput from '@/components/TimeInput.vue'
 import { formatClock, formatDayDate, formatDistance, formatMoney } from '@/utils/format'
 import { activeUnits } from '@/utils/units'
 import { formatDuration, isVisit, travelModeOptions } from '@/utils/plan'
@@ -151,7 +152,7 @@ function setMode(value: string): void {
         <p class="flex-1 text-sm font-medium text-base-content/70">{{ heading }}</p>
         <label v-if="!collapsed" class="flex items-center gap-2 text-sm">
           <span class="text-base-content/70">{{ t('plan.startTime') }}</span>
-          <input v-model="startTime" type="time" class="input input-sm w-28" :disabled="!canEdit" @change="saveStartTime" />
+          <TimeInput v-model="startTime" class="input input-sm w-28" :disabled="!canEdit" @change="saveStartTime" />
         </label>
         <div v-if="canEdit" class="dropdown dropdown-end">
           <div tabindex="0" role="button" class="btn btn-ghost btn-sm btn-square" :aria-label="t('plan.dayActions')">

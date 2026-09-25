@@ -5,6 +5,7 @@ import type { TransferFields } from '@/api/documents'
 import { TRANSFER_KINDS, type Transfer, type TransferKind } from '@/api/types'
 import AmountInput from '@/components/AmountInput.vue'
 import LocationField, { type LocationModel } from '@/components/LocationField.vue'
+import TimeInput from '@/components/TimeInput.vue'
 import { normalizeAmount } from '@/utils/format'
 
 // The form for a new or an existing transfer: a flight, a train, a ferry, a
@@ -150,7 +151,7 @@ defineExpose({ open, close, fail })
         </label>
         <label class="floating-label">
           <span>{{ t('transfer.departureTime') }}</span>
-          <input v-model="form.departureTime" type="time" class="input w-full" />
+          <TimeInput v-model="form.departureTime" class="input w-full" :label="t('transfer.departureTime')" />
         </label>
         <label class="floating-label">
           <span>{{ t('transfer.arrivalDate') }}</span>
@@ -158,7 +159,7 @@ defineExpose({ open, close, fail })
         </label>
         <label class="floating-label">
           <span>{{ t('transfer.arrivalTime') }}</span>
-          <input v-model="form.arrivalTime" type="time" class="input w-full" />
+          <TimeInput v-model="form.arrivalTime" class="input w-full" :label="t('transfer.arrivalTime')" />
         </label>
       </div>
       <p class="text-xs text-base-content/60">{{ t('transfer.arrivalDateHint') }}</p>

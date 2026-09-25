@@ -5,6 +5,7 @@ import type { StayFields } from '@/api/documents'
 import { STAY_KINDS, type Stay, type StayKind } from '@/api/types'
 import AmountInput from '@/components/AmountInput.vue'
 import LocationField, { type LocationModel } from '@/components/LocationField.vue'
+import TimeInput from '@/components/TimeInput.vue'
 import { normalizeAmount } from '@/utils/format'
 
 // The form for a new or an existing stay.
@@ -131,7 +132,7 @@ defineExpose({ open, close, fail })
         </label>
         <label class="floating-label">
           <span>{{ t('stay.checkInTime') }}</span>
-          <input v-model="form.checkInTime" type="time" class="input w-full" />
+          <TimeInput v-model="form.checkInTime" class="input w-full" :label="t('stay.checkInTime')" />
         </label>
         <label class="floating-label">
           <span>{{ t('stay.checkOut') }}</span>
@@ -139,7 +140,7 @@ defineExpose({ open, close, fail })
         </label>
         <label class="floating-label">
           <span>{{ t('stay.checkOutTime') }}</span>
-          <input v-model="form.checkOutTime" type="time" class="input w-full" />
+          <TimeInput v-model="form.checkOutTime" class="input w-full" :label="t('stay.checkOutTime')" />
         </label>
       </div>
 

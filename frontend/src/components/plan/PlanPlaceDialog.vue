@@ -8,6 +8,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import IconSelect from '@/components/IconSelect.vue'
 import PlaceKindFields from '@/components/plan/PlaceKindFields.vue'
 import LocationField, { type LocationModel } from '@/components/LocationField.vue'
+import TimeInput from '@/components/TimeInput.vue'
 import { normalizeAmount } from '@/utils/format'
 import { costCategoryOptions } from '@/utils/plan'
 
@@ -193,7 +194,7 @@ defineExpose({ open, close, fail })
         </label>
         <label class="floating-label">
           <span>{{ t('place.desiredTime') }}</span>
-          <input v-model="form.desiredTime" type="time" class="input w-full" />
+          <TimeInput v-model="form.desiredTime" class="input w-full" :label="t('place.desiredTime')" />
         </label>
         <label class="label cursor-pointer justify-start gap-2">
           <input v-model="form.isOptional" type="checkbox" class="checkbox" />

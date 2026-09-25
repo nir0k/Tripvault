@@ -125,6 +125,35 @@ export function formatTimeOfDay(value: string | null | undefined,
   return formatClock(Number(match[1]) * 60 + Number(match[2]), clock).time
 }
 
+/**
+ * parseTimeOfDay reads a time of day typed in either clock - "14:30", "1430",
+ * "9.05", "2:30 pm", "2pm", "12 AM" - into the "HH:MM" the API carries. It
+ * returns null for text that is not a time of day; empty text is not a time
+ * either, and the caller decides what an empty field means.
+ */
+export function parseTimeOfDay(text: string): string | null {
+  const match = /^(\d{1,2})(?:[:.\s]?(\d{2}))?\s*([ap])?\.?\s*m?\.?$/i.exec(text.trim())
+  if (!match) {
+    return null
+  }
+  let hour = Number(match[1])
+  const minute = Number(match[2] ?? 0)
+  const half = match[3]?.toLowerCase()
+  if (minute > 59) {
+    return null
+  }
+  if (half) {
+    // A twelve-hour clock runs from 12 to 11: 12 AM is midnight, 12 PM noon.
+    if (hour < 1 || hour > 12) {
+      return null
+    }
+    hour = (hour % 12) + (half === 'p' ? 12 : 0)
+  } else if (hour > 23) {
+    return null
+  }
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+}
+
 /** splitDuration breaks minutes into whole hours and the remaining minutes. */
 export function splitDuration(minutes: number): { hours: number; minutes: number } {
   return { hours: Math.floor(minutes / 60), minutes: minutes % 60 }

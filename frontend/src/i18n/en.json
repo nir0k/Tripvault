@@ -596,6 +596,11 @@
     "tour": "Guided tour",
     "other": "Other activity"
   },
+  "time": {
+    "placeholder24": "HH:MM",
+    "placeholder12": "h:mm AM",
+    "invalid": "Type a time of day, such as {example}."
+  },
   "amount": {
     "formulaHint": "An amount, or a formula such as =120*3+45",
     "invalidFormula": "The formula cannot be computed. Use numbers, + - * / and parentheses."

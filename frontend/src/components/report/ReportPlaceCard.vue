@@ -8,7 +8,7 @@ import MediaUploader from '@/components/media/MediaUploader.vue'
 import EditableMarkdown from '@/components/report/EditableMarkdown.vue'
 import ReportTrackLine from '@/components/report/ReportTrackLine.vue'
 import { useReportText } from '@/composables/useContentLanguage'
-import { formatMoney } from '@/utils/format'
+import { formatMoney, formatTimeOfDay } from '@/utils/format'
 import { itemIcon, itemKindLabel } from '@/utils/plan'
 
 // One place of a report: how it turned out, what it cost and what happened
@@ -56,7 +56,8 @@ const translating = computed(() => props.editing && text.value.translating)
 const planned = computed(() => amountOf(props.item.planned_cost_amount))
 // period is when the place was reached and, when it is known, when it was left.
 const period = computed(() => {
-  const { actual_time: from, actual_end_time: to } = props.item
+  const from = formatTimeOfDay(props.item.actual_time)
+  const to = formatTimeOfDay(props.item.actual_end_time)
   if (!from) {
     return to ? `– ${to}` : ''
   }

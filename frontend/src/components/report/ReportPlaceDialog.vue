@@ -7,6 +7,7 @@ import AmountInput from '@/components/AmountInput.vue'
 import AppIcon from '@/components/AppIcon.vue'
 import LocationField, { type LocationModel } from '@/components/LocationField.vue'
 import PlaceKindFields from '@/components/plan/PlaceKindFields.vue'
+import TimeInput from '@/components/TimeInput.vue'
 import { normalizeAmount } from '@/utils/format'
 
 // The form for a place of a report. It edits what the report knows - when the
@@ -189,11 +190,11 @@ defineExpose({ open, close, fail })
         <div class="grid gap-3 pt-4 sm:grid-cols-2">
           <label class="floating-label">
             <span>{{ t('report.actualTime') }}</span>
-            <input v-model="form.actualTime" type="time" class="input w-full" />
+            <TimeInput v-model="form.actualTime" class="input w-full" :label="t('report.actualTime')" />
           </label>
           <label class="floating-label">
             <span>{{ t('report.actualEndTime') }}</span>
-            <input v-model="form.actualEndTime" type="time" class="input w-full" />
+            <TimeInput v-model="form.actualEndTime" class="input w-full" :label="t('report.actualEndTime')" />
           </label>
         </div>
         <p v-if="timesFromTrack" class="text-xs text-base-content/60">{{ t('report.timesFromTrack') }}</p>

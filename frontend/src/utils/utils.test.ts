@@ -3,7 +3,7 @@ import { ApiError } from '@/api/client'
 import type { Media, TripDocument } from '@/api/types'
 import { evaluateFormula, invalidAmount, resolveAmount } from '@/utils/amount'
 import { errorMessage } from '@/utils/errors'
-import { addDays, describeUserAgent, formatClock, formatDayDate, formatDistance, formatDateRange, formatMoney, fromMetres, normalizeAmount, splitDuration, toMetres } from '@/utils/format'
+import { addDays, describeUserAgent, formatClock, formatDayDate, formatDistance, formatDateRange, formatMoney, formatTimeOfDay, fromMetres, normalizeAmount, parseTimeOfDay, splitDuration, toMetres } from '@/utils/format'
 import { markdownExcerpt, renderMarkdown } from '@/utils/markdown'
 import { distanceBetween, mediaHint, takenDate } from '@/utils/mediaHints'
 import { mediaLinkUpdates } from '@/utils/mediaLinks'
@@ -84,6 +84,33 @@ describe('trip formatting', () => {
   it('computes an amount typed as a formula', () => {
     expect(normalizeAmount('=120*3+45')).toBe('405')
     expect(normalizeAmount('= (10 + 2,5) * 2 / 3')).toBe('8.33')
+  })
+})
+
+describe('times of day', () => {
+  it('reads a time typed in either clock', () => {
+    expect(parseTimeOfDay('14:30')).toBe('14:30')
+    expect(parseTimeOfDay('9:05')).toBe('09:05')
+    expect(parseTimeOfDay('1430')).toBe('14:30')
+    expect(parseTimeOfDay('9.05')).toBe('09:05')
+    expect(parseTimeOfDay('7')).toBe('07:00')
+    expect(parseTimeOfDay('2:30 pm')).toBe('14:30')
+    expect(parseTimeOfDay('2PM')).toBe('14:00')
+    expect(parseTimeOfDay('12:15 AM')).toBe('00:15')
+    expect(parseTimeOfDay('12 p.m.')).toBe('12:00')
+  })
+
+  it('refuses what is not a time of day', () => {
+    for (const bad of ['', '24:00', '9:60', '13 pm', '0 am', 'noon', '9:5']) {
+      expect(parseTimeOfDay(bad), bad).toBeNull()
+    }
+  })
+
+  it('shows a stored time in the reader\'s clock', () => {
+    expect(formatTimeOfDay('14:30', 'h24')).toBe('14:30')
+    expect(formatTimeOfDay('14:30', 'h12')).toBe('2:30 PM')
+    expect(formatTimeOfDay('00:05', 'h12')).toBe('12:05 AM')
+    expect(formatTimeOfDay(null, 'h12')).toBe('')
   })
 })
 

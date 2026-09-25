@@ -9,7 +9,7 @@ import { mediaThumbnailPath } from '@/api/media'
 import type { Leg, PlanItem, TripDocument } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import { OUTLINE } from '@/components/icons'
-import { formatClock, formatDistance } from '@/utils/format'
+import { formatClock, formatDistance, formatTimeOfDay } from '@/utils/format'
 import { markdownExcerpt } from '@/utils/markdown'
 import { dayColor, isVisit, itemIcon, itemKindLabel } from '@/utils/plan'
 import { activeUnits } from '@/utils/units'
@@ -148,7 +148,8 @@ function popupFor(item: PlanItem, dayIndex: number | null, marker: L.Marker): HT
   }
   // A report knows when the place was really reached; a plan, when it should be.
   if (item.actual_time) {
-    parts.push(item.actual_end_time ? `${item.actual_time}–${item.actual_end_time}` : item.actual_time)
+    const from = formatTimeOfDay(item.actual_time)
+    parts.push(item.actual_end_time ? `${from}–${formatTimeOfDay(item.actual_end_time)}` : from)
   } else if (item.schedule) {
     parts.push(formatClock(item.anchor === 'morning' ? item.schedule.departure_minutes : item.schedule.arrival_minutes).time)
   }

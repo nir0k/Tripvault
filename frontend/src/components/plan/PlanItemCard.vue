@@ -5,7 +5,7 @@ import type { PlanItem } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import MarkdownText from '@/components/MarkdownText.vue'
 import ReportTrackLine from '@/components/report/ReportTrackLine.vue'
-import { formatClock, formatMoney } from '@/utils/format'
+import { formatClock, formatMoney, formatTimeOfDay } from '@/utils/format'
 import { formatDuration, itemIcon, itemKindLabel } from '@/utils/plan'
 
 // A card for one element of a day or of the unassigned list. Places carry the
@@ -116,7 +116,7 @@ const host = computed(() => {
           {{ itemKindLabel(item, t) }}
         </span>
         <span v-if="item.visit_minutes > 0">· {{ formatDuration(item.visit_minutes, t) }}</span>
-        <span v-if="item.desired_time">· {{ t('place.desiredAt', { time: item.desired_time }) }}</span>
+        <span v-if="item.desired_time">· {{ t('place.desiredAt', { time: formatTimeOfDay(item.desired_time) }) }}</span>
         <span v-if="cost">· {{ cost }}</span>
       </p>
       <p v-if="item.address" class="truncate text-sm text-base-content/60">{{ item.address }}</p>
@@ -133,7 +133,7 @@ const host = computed(() => {
         >{{ host }}</a>
       </p>
       <p v-if="item.schedule?.late" class="mt-1">
-        <span class="badge badge-warning badge-sm h-auto py-0.5">{{ t('place.late', { time: item.desired_time }) }}</span>
+        <span class="badge badge-warning badge-sm h-auto py-0.5">{{ t('place.late', { time: formatTimeOfDay(item.desired_time) }) }}</span>
       </p>
       <MarkdownText v-if="item.description_md" :source="item.description_md" class="mt-1" />
       <!-- The route is changed in the place's form; the card only reads it. -->
