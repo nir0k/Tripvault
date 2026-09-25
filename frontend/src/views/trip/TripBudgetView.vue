@@ -610,7 +610,7 @@ async function saveLeg(leg: Leg, changes: documentsApi.LegChanges): Promise<void
       <PlanPlaceDialog ref="placeDialog" :focus="null" @save="savePlace" />
       <PlanStayDialog ref="stayDialog" :focus="null" @save="saveStay" />
       <PlanTransferDialog ref="transferDialog" :focus="null" @save="saveTransfer" />
-      <PlanLegDialog ref="legDialog" @save="saveLeg" />
+      <PlanLegDialog ref="legDialog" costs-only @save="saveLeg" />
       <ConfirmDialog ref="confirmDialog" />
     </template>
   </div>

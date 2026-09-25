@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -118,15 +119,60 @@ func scanStay(row pgx.Row) (domain.Stay, error) {
 var legColumns = `l.id, l.document_id, l.day_id, l.from_item_id, l.to_item_id, l.mode, l.distance_m, l.duration_s,
 	coalesce(l.geometry, ''), l.calc_source, coalesce(l.calc_error, ''), l.calc_input, l.calculated_at,
 	l.manual_distance_m, l.manual_duration_s, (l.planned_cost_amount * 100)::bigint,
-	(l.actual_cost_amount * 100)::bigint, l.note, l.created_at, l.updated_at`
+	(l.actual_cost_amount * 100)::bigint, l.note, l.route_preference, l.via, l.route_pinned,
+	l.created_at, l.updated_at`
 
 // scanLeg reads one row in the order of legColumns.
 func scanLeg(row pgx.Row) (domain.Leg, error) {
-	var l domain.Leg
+	var (
+		l   domain.Leg
+		via []byte
+	)
 	err := row.Scan(&l.ID, &l.DocumentID, &l.DayID, &l.FromItemID, &l.ToItemID, &l.Mode, &l.DistanceM, &l.DurationS,
 		&l.Geometry, &l.Source, &l.Error, &l.Input, &l.CalculatedAt,
-		&l.ManualDistanceM, &l.ManualDurationS, &l.PlannedCost, &l.ActualCost, &l.Note, &l.CreatedAt, &l.UpdatedAt)
+		&l.ManualDistanceM, &l.ManualDurationS, &l.PlannedCost, &l.ActualCost, &l.Note,
+		&l.Preference, &via, &l.Pinned, &l.CreatedAt, &l.UpdatedAt)
+	if err != nil {
+		return l, err
+	}
+	l.Via, err = parseVia(via)
 	return l, err
+}
+
+// viaPoint is a via point as the via column keeps it.
+type viaPoint struct {
+	Lat float64 `json:"lat"`
+	Lng float64 `json:"lng"`
+}
+
+// viaParam writes a leg's via points as the via column takes them: an array,
+// never null.
+func viaParam(points []domain.Point) ([]byte, error) {
+	stored := make([]viaPoint, len(points))
+	for index, point := range points {
+		stored[index] = viaPoint{Lat: point.Lat, Lng: point.Lng}
+	}
+	encoded, err := json.Marshal(stored)
+	if err != nil {
+		return nil, fmt.Errorf("encode via points: %w", err)
+	}
+	return encoded, nil
+}
+
+// parseVia reads the via column, nil for a leg routed through no points.
+func parseVia(raw []byte) ([]domain.Point, error) {
+	var stored []viaPoint
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return nil, fmt.Errorf("read via points: %w", err)
+	}
+	if len(stored) == 0 {
+		return nil, nil
+	}
+	points := make([]domain.Point, len(stored))
+	for index, point := range stored {
+		points[index] = domain.Point{Lat: point.Lat, Lng: point.Lng}
+	}
+	return points, nil
 }
 
 var itemColumns = `i.id, i.document_id, i.day_id, i.position, i.kind, coalesce(i.anchor, ''), i.stay_id, i.name,
@@ -553,7 +599,8 @@ func syncLegs(ctx context.Context, tx pgx.Tx, tripID uuid.UUID) error {
 		for _, leg := range plan.Reset {
 			if _, err := tx.Exec(ctx,
 				`UPDATE legs SET calc_input = $2, calc_source = 'pending', distance_m = NULL, duration_s = NULL,
-				                 geometry = NULL, calc_error = NULL, calculated_at = NULL, updated_at = now()
+				                 geometry = NULL, calc_error = NULL, calculated_at = NULL, route_pinned = false,
+				                 updated_at = now()
 				 WHERE id = $1`, leg.ID, leg.Input); err != nil {
 				return fmt.Errorf("reset leg: %w", err)
 			}
@@ -1263,8 +1310,9 @@ func (r *DocumentRepository) Leg(ctx context.Context, id uuid.UUID) (domain.Leg,
 	return oneRow(scanLeg, r.pool.QueryRow(ctx, `SELECT `+legColumns+` FROM legs l WHERE l.id = $1`, id), "get leg")
 }
 
-// UpdateLeg - stores a leg's mode, typed values, cost and note. A new mode
-// sends the leg back to pending.
+// UpdateLeg - stores a leg's mode, typed values, cost, note and how it asks to
+// be routed. A new mode, preference or set of via points sends the leg back to
+// pending.
 //
 // Arguments:
 //   - ctx: context bounding the transaction.
@@ -1278,13 +1326,17 @@ func (r *DocumentRepository) UpdateLeg(ctx context.Context, leg domain.Leg) erro
 		if err != nil {
 			return err
 		}
+		via, err := viaParam(leg.Via)
+		if err != nil {
+			return err
+		}
 		tag, err := tx.Exec(ctx,
 			`UPDATE legs SET mode = $2, manual_distance_m = $3, manual_duration_s = $4,
 			                 planned_cost_amount = $5::numeric, actual_cost_amount = $6::numeric, note = $7,
-			                 updated_at = now()
+			                 route_preference = $8, via = $9, updated_at = now()
 			 WHERE id = $1`,
 			leg.ID, leg.Mode, leg.ManualDistanceM, leg.ManualDurationS, moneyParam(leg.PlannedCost),
-			moneyParam(leg.ActualCost), leg.Note)
+			moneyParam(leg.ActualCost), leg.Note, leg.Route().Preference, via)
 		if err != nil {
 			return fmt.Errorf("update leg: %w", err)
 		}
@@ -1306,20 +1358,24 @@ func (r *DocumentRepository) UpdateLeg(ctx context.Context, leg domain.Leg) erro
 //   - legID: the leg.
 //   - input: the input the calculation used.
 //   - calculation: the result.
+//   - pinned: true for a route somebody chose among the alternatives, which
+//     later calculations leave alone; false for an ordinary calculation, which
+//     replaces any choice made before.
 //   - at: when it was calculated.
 //
 // Returns:
-//   - an error if the statement fails; a stale result is dropped silently.
+//   - whether the result was stored; false when the leg changed meanwhile.
+//   - an error if the statement fails.
 func (r *DocumentRepository) SaveLegCalculation(ctx context.Context, legID uuid.UUID, input string,
-	calculation domain.LegCalculation, at time.Time) error {
-	_, err := r.pool.Exec(ctx,
+	calculation domain.LegCalculation, pinned bool, at time.Time) (bool, error) {
+	tag, err := r.pool.Exec(ctx,
 		`UPDATE legs SET distance_m = $3, duration_s = $4, geometry = nullif($5, ''), calc_source = $6,
-		                 calc_error = nullif($7, ''), calculated_at = $8, updated_at = now()
+		                 calc_error = nullif($7, ''), calculated_at = $8, route_pinned = $9, updated_at = now()
 		 WHERE id = $1 AND calc_input = $2`,
 		legID, input, calculation.DistanceM, calculation.DurationS, calculation.Geometry, calculation.Source,
-		calculation.Error, at)
+		calculation.Error, at, pinned)
 	if err != nil {
-		return fmt.Errorf("save leg calculation: %w", err)
+		return false, fmt.Errorf("save leg calculation: %w", err)
 	}
-	return nil
+	return tag.RowsAffected() > 0, nil
 }

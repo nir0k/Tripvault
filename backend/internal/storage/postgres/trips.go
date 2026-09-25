@@ -49,7 +49,8 @@ func tripSummaryColumns(reader string) string {
 		   WHERE st.id = t.source_trip_id AND (st.owner_id = ` + reader + ` OR sm.user_id IS NOT NULL))`
 	}
 	return `t.id, t.owner_id, t.kind, t.source_trip_id, t.title, t.summary, t.start_date, t.end_date,
-	t.timezone, t.currency, t.travelers, (t.budget_amount * 100)::bigint, t.cover_media_id, t.languages,
+	t.timezone, t.currency, t.travelers, (t.budget_amount * 100)::bigint, t.cover_media_id,
+	t.cover_crop_x, t.cover_crop_y, t.cover_crop_w, t.cover_crop_h, t.languages,
 	(SELECT jsonb_object_agg(tr.lang, tr.fields) FROM (
 	   SELECT lang, jsonb_object_agg(field, value) AS fields FROM translations
 	   WHERE trip_id = t.id AND num_nonnulls(document_id, day_id, stay_id, item_id, leg_id, transfer_id) = 0
@@ -67,15 +68,20 @@ func scanTripSummary(row pgx.Row, extra ...any) (domain.TripSummary, error) {
 		s      domain.TripSummary
 		budget *int64
 		role   *string
+		crop   [4]*float64
 	)
 	dest := []any{&s.ID, &s.OwnerID, &s.Kind, &s.SourceTripID, &s.Title, &s.Summary, &s.StartDate, &s.EndDate,
-		&s.Timezone, &s.Currency, &s.Travelers, &budget, &s.CoverMediaID, &s.Languages, &s.Translations,
+		&s.Timezone, &s.Currency, &s.Travelers, &budget, &s.CoverMediaID,
+		&crop[0], &crop[1], &crop[2], &crop[3], &s.Languages, &s.Translations,
 		&s.CreatedAt, &s.UpdatedAt, &s.Owner.DisplayName, &s.Owner.Email,
 		&s.PlanID, &s.ReportID, &s.SourceVisible, &role}
 	if err := row.Scan(append(dest, extra...)...); err != nil {
 		return domain.TripSummary{}, err
 	}
 	s.Owner.ID = s.OwnerID
+	if crop[0] != nil && crop[1] != nil && crop[2] != nil && crop[3] != nil {
+		s.CoverCrop = &domain.CoverCrop{X: *crop[0], Y: *crop[1], W: *crop[2], H: *crop[3]}
+	}
 	if budget != nil {
 		amount := domain.Money(*budget)
 		s.Budget = &amount
@@ -108,6 +114,15 @@ func languagesParam(languages []string) []string {
 		return []string{}
 	}
 	return languages
+}
+
+// cropParams gives a cover's frame as its four columns, all nil for a cover
+// shown by its middle.
+func cropParams(crop *domain.CoverCrop) (x, y, w, h *float64) {
+	if crop == nil {
+		return nil, nil, nil, nil
+	}
+	return &crop.X, &crop.Y, &crop.W, &crop.H
 }
 
 // Create - inserts a trip with its document, empty days one per date: a plan
@@ -425,14 +440,17 @@ func (r *TripRepository) Update(ctx context.Context, trip domain.Trip, confirm b
 		if err != nil {
 			return err
 		}
+		cropX, cropY, cropW, cropH := cropParams(trip.CoverCrop)
 		if _, err := tx.Exec(ctx,
 			`UPDATE trips
 			 SET title = $2, summary = $3, start_date = $4, end_date = $5, timezone = $6, currency = $7,
 			     travelers = $8, budget_amount = $9::numeric, cover_media_id = $10, languages = $11,
+			     cover_crop_x = $12, cover_crop_y = $13, cover_crop_w = $14, cover_crop_h = $15,
 			     updated_at = now()
 			 WHERE id = $1`,
 			trip.ID, trip.Title, trip.Summary, trip.StartDate, trip.EndDate, trip.Timezone, trip.Currency,
-			trip.Travelers, moneyParam(trip.Budget), trip.CoverMediaID, languagesParam(trip.Languages)); err != nil {
+			trip.Travelers, moneyParam(trip.Budget), trip.CoverMediaID, languagesParam(trip.Languages),
+			cropX, cropY, cropW, cropH); err != nil {
 			return fmt.Errorf("update trip: %w", err)
 		}
 		translated := []string{}

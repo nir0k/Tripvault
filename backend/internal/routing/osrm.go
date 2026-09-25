@@ -49,6 +49,15 @@ func (o *OSRM) Name() string {
 	return "osrm"
 }
 
+// Capabilities - says what an OSRM server can be asked for. OSRM routes by
+// time and nothing else: a shortest route is not among its answers.
+//
+// Returns:
+//   - alternatives, but not the shortest route.
+func (o *OSRM) Capabilities() Capabilities {
+	return Capabilities{Alternatives: true}
+}
+
 // osrmProfiles translates this service's profiles into the names OSRM puts in
 // the path. A server is built for one profile and mostly ignores the name, but
 // a deployment that puts three behind one address relies on it.
@@ -69,55 +78,67 @@ type osrmResponse struct {
 	} `json:"routes"`
 }
 
-// Route - asks an OSRM server for the route between two points.
+// Route - asks an OSRM server for a route, through the request's points. The
+// preference is not sent: OSRM always answers with its fastest route.
 //
 // Arguments:
 //   - ctx: context bounding the request.
-//   - profile: one of this package's profiles.
-//   - from, to: the points.
+//   - request: the profile, the points and the alternatives.
 //
 // Returns:
-//   - the route, its line in the five-decimal polyline this service stores.
+//   - the routes, the best first, each line in the five-decimal polyline this
+//     service stores.
 //   - ErrNoRoute when the points cannot be joined by road, ErrUnavailable for
 //     anything else.
-func (o *OSRM) Route(ctx context.Context, profile string, from, to domain.Point) (Route, error) {
-	address := fmt.Sprintf("%s/route/v1/%s/%s;%s?overview=full&geometries=polyline&alternatives=false&steps=false",
-		o.baseURL, url.PathEscape(osrmProfile(profile)), osrmPoint(from), osrmPoint(to))
-
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
-	if err != nil {
-		return Route{}, fmt.Errorf("%w: build request: %v", ErrUnavailable, err)
+func (o *OSRM) Route(ctx context.Context, request Request) ([]Route, error) {
+	points := make([]string, len(request.Points))
+	for index, point := range request.Points {
+		points[index] = osrmPoint(point)
 	}
-	request.Header.Set("Accept", "application/json")
+	alternatives := "false"
+	if wantsAlternatives(request) {
+		alternatives = strconv.Itoa(request.Alternatives - 1)
+	}
+	address := fmt.Sprintf("%s/route/v1/%s/%s?overview=full&geometries=polyline&alternatives=%s&steps=false",
+		o.baseURL, url.PathEscape(osrmProfile(request.Profile)), strings.Join(points, ";"), alternatives)
 
-	response, err := o.client.Do(request)
+	call, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
-		return Route{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return nil, fmt.Errorf("%w: build request: %v", ErrUnavailable, err)
+	}
+	call.Header.Set("Accept", "application/json")
+
+	response, err := o.client.Do(call)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	defer func() { _ = response.Body.Close() }()
 
-	raw, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 8<<20))
 	if err != nil {
-		return Route{}, fmt.Errorf("%w: read response: %v", ErrUnavailable, err)
+		return nil, fmt.Errorf("%w: read response: %v", ErrUnavailable, err)
 	}
 	var decoded osrmResponse
 	_ = json.Unmarshal(raw, &decoded)
 
 	switch {
 	case response.StatusCode == http.StatusTooManyRequests:
-		return Route{}, fmt.Errorf("%w: status %d", ErrRateLimited, response.StatusCode)
+		return nil, fmt.Errorf("%w: status %d", ErrRateLimited, response.StatusCode)
 	case decoded.Code == "NoRoute" || decoded.Code == "NoSegment":
-		return Route{}, fmt.Errorf("%w: %s", ErrNoRoute, decoded.Code)
+		return nil, fmt.Errorf("%w: %s", ErrNoRoute, decoded.Code)
 	case response.StatusCode != http.StatusOK || decoded.Code != "Ok" || len(decoded.Routes) == 0:
-		return Route{}, fmt.Errorf("%w: status %d, code %q", ErrUnavailable, response.StatusCode, decoded.Code)
+		return nil, fmt.Errorf("%w: status %d, code %q", ErrUnavailable, response.StatusCode, decoded.Code)
 	}
 
-	route := decoded.Routes[0]
-	return Route{
-		DistanceM: int(math.Round(route.Distance)),
-		DurationS: int(math.Round(route.Duration)),
-		Geometry:  route.Geometry,
-	}, nil
+	routes := make([]Route, 0, len(decoded.Routes))
+	for _, route := range decoded.Routes {
+		routes = append(routes, Route{
+			DistanceM: int(math.Round(route.Distance)),
+			DurationS: int(math.Round(route.Duration)),
+			Geometry:  route.Geometry,
+		})
+	}
+	return routes, nil
 }
 
 // osrmProfile names the profile in the path, falling back to driving for a

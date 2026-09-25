@@ -281,7 +281,15 @@
       "report_only": "Only a report can be written in several languages.",
       "not_a_translation": "The report is not translated into this language. Add it in the settings first.",
       "unknown_target": "That part of the report no longer exists.",
-      "duplicate_language": "A language is listed more than once."
+      "duplicate_language": "A language is listed more than once.",
+      "not_a_route_link": "This is not a link to a route in Google Maps.",
+      "no_points": "The link names no positions: its places are given only by name.",
+      "too_many": "A leg passes through at most 25 points.",
+      "not_routed": "Only a road leg can be routed this way.",
+      "wrong_ends": "The route does not run between the ends of this leg.",
+      "invalid_line": "The route could not be read.",
+      "invalid_point": "A point is not a valid position.",
+      "missing_coordinates": "Both ends of the leg need a position."
     },
     "already_member": "This person already has access to the trip.",
     "days_would_be_removed": "The change removes days with content.",
@@ -311,7 +319,13 @@
     "archive_not_found": "That archive is no longer where it was.",
     "passphrase_required": "This archive is encrypted. Enter the passphrase it was locked with.",
     "destination_unavailable": "The backup destination could not be reached.",
-    "secrets_unavailable": "The stored backup credentials cannot be opened on this server."
+    "secrets_unavailable": "The stored backup credentials cannot be opened on this server.",
+    "routing_disabled": "Route calculation is not configured on this server.",
+    "routing_limited": "The routing service is busy. Try again later.",
+    "routing_unavailable": "The routing service did not answer. Try again later.",
+    "no_route": "No road joins the two ends of this leg.",
+    "leg_changed": "The leg changed meanwhile. Open it again and choose the route once more.",
+    "link_unreachable": "The short link could not be opened. Paste the full link from the address bar instead."
   },
   "tripForm": {
     "title": "Title",
@@ -375,7 +389,8 @@
     "coverHint": "The picture the trip is shown by in the list of trips.",
     "chooseCover": "Choose a cover",
     "changeCover": "Change the cover",
-    "removeCover": "Remove the cover"
+    "removeCover": "Remove the cover",
+    "cropCover": "Adjust the frame"
   },
   "members": {
     "role": "Role",
@@ -867,7 +882,27 @@
     "retryEstimates": "Calculate them",
     "recalculate": "Recalculate",
     "recalculateHint": "Ask the routing service again for this leg, ignoring the saved route.",
-    "noRouteHint": "A point may be too far from any road. Move it closer to a road or a car park, or choose another way to travel."
+    "noRouteHint": "A point may be too far from any road. Move it closer to a road or a car park, or choose another way to travel.",
+    "route": "Route",
+    "routeFastest": "Fastest",
+    "routeShortest": "Shortest",
+    "shortestUnavailable": "The routing service of this server finds only the fastest route.",
+    "routePinned": "A route chosen among the alternatives is kept for this leg. Recalculate to return to the automatic one.",
+    "routeOptions": "Show other routes",
+    "routeOptionsSaveFirst": "Save the new preference first, then compare the routes.",
+    "routeOptionsHint": "Choose a route here or on the map; it is kept when you save.",
+    "routeOption": "Route {number}",
+    "googleLink": "Link to a route in Google Maps",
+    "googleLinkPlaceholder": "https://maps.app.goo.gl/…",
+    "googleLinkRead": "Use",
+    "googleLinkHint": "Build the route in Google Maps, drag its line where it should go, share it and paste the link here: the leg will be routed through the same points.",
+    "viaCount": "Through one point | Through {count} points",
+    "viaClear": "Clear",
+    "viaRemove": "Remove point {number}",
+    "viaNoneInLink": "The link has no points between its start and its end, so the route stays as it is.",
+    "openInGoogle": "Open in Google Maps",
+    "pinned": "chosen route",
+    "via": "via points"
   },
   "map": {
     "label": "Map of the plan",
@@ -955,7 +990,20 @@
     "notLinked": "Not linked to a day",
     "setFavoriteHere": "Show in the report here",
     "unsetFavoriteHere": "Stop showing in the report here",
-    "favoriteNeedsPlace": "This picture is not linked to a day yet. Choose the day or place it belongs to, and it will be shown in the report there. | These pictures are not linked to a day yet. Choose the days or places they belong to, and they will be shown in the report there."
+    "favoriteNeedsPlace": "This picture is not linked to a day yet. Choose the day or place it belongs to, and it will be shown in the report there. | These pictures are not linked to a day yet. Choose the days or places they belong to, and they will be shown in the report there.",
+    "cropTitle": "Choose the part of the cover",
+    "cropHint": "Drag the photograph and zoom it until the frame shows what the trip should be known by. The photograph itself stays whole.",
+    "cropZoom": "Zoom",
+    "uploadTitle": "Uploads",
+    "uploadProgress": "Uploading {done} of {total}",
+    "uploadDone": "One photograph uploaded | {count} photographs uploaded",
+    "uploadFailedCount": "{done} uploaded, {failed} failed",
+    "uploadWaiting": "Waiting",
+    "uploadRetry": "Retry",
+    "uploadCancelOne": "Stop uploading {name}",
+    "uploadCancelAll": "Cancel the rest",
+    "uploadCollapse": "Collapse",
+    "uploadExpand": "Expand"
   },
   "track": {
     "import": "Import a track",

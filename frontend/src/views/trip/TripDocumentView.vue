@@ -7,7 +7,7 @@ import * as mediaApi from '@/api/media'
 import { getClientConfig } from '@/api/config'
 import { downloadSharedReportPDF } from '@/api/shared'
 import type {
-  ClientConfig, ItemStatus, Leg, Media, PlanDay, PlanItem, Transfer, TranslationEntry, TranslationTarget,
+  ClientConfig, ItemStatus, Leg, Media, PlanDay, PlanItem, RouteOption, Transfer, TranslationEntry, TranslationTarget,
   TripDocument,
 } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
@@ -587,11 +587,12 @@ async function removeMedia(media: Media): Promise<void> {
   await applyMedia(() => mediaApi.deleteMedia(media.id))
 }
 
-// saveLeg stores what the leg form says: the means, typed figures and costs.
-async function saveLeg(leg: Leg, changes: documentsApi.LegChanges): Promise<void> {
+// saveLeg stores what the leg form says: the means, typed figures, costs, how
+// the leg is routed and a route chosen among its alternatives.
+async function saveLeg(leg: Leg, changes: documentsApi.LegChanges, route: RouteOption | null): Promise<void> {
   busy.value = true
   try {
-    document.value = await documentsApi.updateLeg(leg.id, changes)
+    document.value = await documentsApi.saveLeg(leg.id, changes, route)
     legDialog.value?.close()
   } catch (err) {
     legDialog.value?.fail(errorMessage(err, t, te))

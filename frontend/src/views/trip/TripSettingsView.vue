@@ -6,9 +6,10 @@ import {
   addMember, deleteTrip, listMembers, removeMember, searchUsers, updateMember, updateTrip,
 } from '@/api/trips'
 import { ApiError } from '@/api/client'
-import type { Media, MemberRole, RemovedDay, TripMember, TripUser } from '@/api/types'
+import type { CoverCrop, MemberRole, RemovedDay, TripMember, TripUser } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import CoverCropDialog from '@/components/media/CoverCropDialog.vue'
 import MediaImage from '@/components/media/MediaImage.vue'
 import MediaPicker from '@/components/media/MediaPicker.vue'
 import ReportLanguagesCard from '@/components/ReportLanguagesCard.vue'
@@ -45,6 +46,9 @@ const saveError = ref('')
 // remove, taking a member off the trip, and deleting the trip itself.
 const confirmDialog = useTemplateRef<InstanceType<typeof ConfirmDialog>>('confirmDialog')
 const coverPicker = useTemplateRef<InstanceType<typeof MediaPicker>>('coverPicker')
+// A picture chosen as the cover is framed before it is kept, and the frame of
+// the one already kept can be moved again.
+const coverCrop = useTemplateRef<InstanceType<typeof CoverCropDialog>>('coverCrop')
 
 const members = ref<TripMember[]>([])
 const membersError = ref('')
@@ -85,13 +89,13 @@ function fillForm(): void {
 // The trip's own picture is set on the spot rather than with the form: it is
 // chosen from the pictures the trip already carries, and a choice that waited
 // for a save button would be a choice nobody trusted.
-async function setCover(media: Media | null): Promise<void> {
+async function setCover(mediaId: string | null, crop: CoverCrop | null = null): Promise<void> {
   if (!trip.value) {
     return
   }
   saveError.value = ''
   try {
-    store.set(await updateTrip(trip.value.id, { cover_media_id: media?.id ?? null }))
+    store.set(await updateTrip(trip.value.id, { cover_media_id: mediaId, cover_crop: mediaId ? crop : null }))
   } catch (err) {
     saveError.value = errorMessage(err, t, te)
   }
@@ -271,8 +275,8 @@ watch(() => trip.value?.id, () => {
           <h2 class="card-title">{{ t('settings.cover') }}</h2>
           <p class="text-sm text-base-content/70">{{ t('settings.coverHint') }}</p>
           <div class="flex flex-wrap items-center gap-3">
-            <div class="h-28 w-44 overflow-hidden rounded-box border border-base-300">
-              <MediaImage v-if="trip.cover_media_id" :id="trip.cover_media_id" :size="640" fill />
+            <div class="aspect-[5/2] w-56 overflow-hidden rounded-box border border-base-300">
+              <MediaImage v-if="trip.cover_media_id" :id="trip.cover_media_id" :size="640" :crop="trip.cover_crop" fill />
               <div v-else class="flex size-full items-center justify-center text-base-content/40">
                 <AppIcon name="image" />
               </div>
@@ -280,6 +284,14 @@ watch(() => trip.value?.id, () => {
             <div v-if="canEdit" class="flex flex-wrap gap-2">
               <button type="button" class="btn btn-sm btn-hover-outline" @click="coverPicker?.open()">
                 {{ trip.cover_media_id ? t('settings.changeCover') : t('settings.chooseCover') }}
+              </button>
+              <button
+                v-if="trip.cover_media_id"
+                type="button"
+                class="btn btn-sm btn-hover-outline"
+                @click="coverCrop?.open(trip.cover_media_id, trip.cover_crop)"
+              >
+                {{ t('settings.cropCover') }}
               </button>
               <button
                 v-if="trip.cover_media_id"
@@ -360,7 +372,8 @@ watch(() => trip.value?.id, () => {
       </div>
     </div>
 
-    <MediaPicker ref="coverPicker" :trip-id="trip.id" @choose="(media) => setCover(media)" />
+    <MediaPicker ref="coverPicker" :trip-id="trip.id" @choose="(media) => coverCrop?.open(media.id)" />
+    <CoverCropDialog ref="coverCrop" @save="(mediaId, crop) => setCover(mediaId, crop)" />
     <ConfirmDialog ref="confirmDialog" />
   </div>
 </template>

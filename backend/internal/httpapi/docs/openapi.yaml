@@ -2338,6 +2338,157 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/v1/legs/{legID}:alternatives:
+    post:
+      tags: [Documents]
+      summary: List the routes a road leg could take
+      description: |
+        Asks the routing provider for up to three routes between the leg's
+        ends, the best first by the leg's `route_preference`, for its editor to
+        choose one. Nothing is stored and nothing is cached; the choice is sent
+        to `POST /legs/{legID}:route`. A provider that offers no alternatives,
+        and a long route the provider will not find others for, answer with one.
+        The request counts against the routing limits like any other.
+      operationId: listLegAlternatives
+      parameters:
+        - $ref: "#/components/parameters/LegID"
+      responses:
+        "200":
+          description: The routes, the best first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Route"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: |
+            `validation_failed` for a leg that is not a road leg or lacks a
+            position at one end; `no_route` when no road joins its ends.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "`routing_disabled`, `routing_limited` or `routing_unavailable`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/legs/{legID}:route:
+    post:
+      tags: [Documents]
+      summary: Keep a chosen route for a road leg
+      description: |
+        Stores one of the routes `POST /legs/{legID}:alternatives` offered. The
+        leg keeps it (`route_pinned`) until its ends, mode, preference or via
+        points change, or it is recalculated. The line must run between the
+        leg's ends, allowing for the provider snapping them to a road. Refused
+        on a leg routed through via points, whose route those points decide.
+      operationId: pinLegRoute
+      parameters:
+        - $ref: "#/components/parameters/LegID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Route"
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: "`leg_changed`: the leg changed after the routes were listed."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/legs/{legID}:google-link:
+    post:
+      tags: [Documents]
+      summary: Read the via points of a Google Maps route link
+      description: |
+        Reads the points a route drawn in Google Maps passes through - the
+        points its line was dragged through and the stops between its start
+        and its end - for the leg to be routed through them. The link's own
+        start and end are the leg's and are left out. A short link
+        (`maps.app.goo.gl`) is expanded first by asking Google's own hosts where
+        it leads; nothing else is requested. Nothing is stored: the points are
+        saved with `PATCH /legs/{legID}` as `via`.
+      operationId: readLegGoogleLink
+      parameters:
+        - $ref: "#/components/parameters/LegID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              additionalProperties: false
+              properties:
+                url:
+                  type: string
+                  maxLength: 2000
+      responses:
+        "200":
+          description: The via points, in order; empty for a route with none between its ends.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [via]
+                properties:
+                  via:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Point"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: |
+            `validation_failed`: `not_a_route_link` for text that is not a
+            Google Maps route link, `no_points` for one that names no position,
+            `too_many` for more than 25 points.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "`link_unreachable`: the short link could not be opened."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /api/v1/admin/users:
     get:
       tags: [Administration]
@@ -3227,7 +3378,8 @@ components:
 
     ClientConfig:
       type: object
-      required: [version, locales, routing_enabled, geocoding_enabled, map_tile_url, map_attribution]
+      required: [version, locales, routing_enabled, routing_shortest, routing_alternatives, geocoding_enabled,
+                 map_tile_url, map_attribution]
       properties:
         version:
           type: string
@@ -3239,6 +3391,12 @@ components:
         routing_enabled:
           type: boolean
           description: False when no routing provider is configured and road legs are estimates.
+        routing_shortest:
+          type: boolean
+          description: Whether a road leg can be routed by the shortest distance rather than the fastest time.
+        routing_alternatives:
+          type: boolean
+          description: Whether the provider offers other routes than its best for a leg to choose from.
         geocoding_enabled:
           type: boolean
           description: False when place search and reverse lookups are unavailable.
@@ -3759,8 +3917,8 @@ components:
     Trip:
       type: object
       required: [id, kind, source_trip_id, title, summary, start_date, end_date, timezone, currency, travelers,
-                 budget_amount, status, day_count, role, owner, plan_id, report_id, languages, translations,
-                 created_at, updated_at]
+                 budget_amount, status, day_count, role, owner, plan_id, report_id, cover_media_id, cover_crop,
+                 languages, translations, created_at, updated_at]
       properties:
         id:
           type: string
@@ -3831,6 +3989,11 @@ components:
           type: [string, "null"]
           format: uuid
           description: The picture the trip is shown by, out of its own media.
+        cover_crop:
+          description: The part of the cover the trip is shown by; null means its middle.
+          oneOf:
+            - $ref: "#/components/schemas/CoverCrop"
+            - type: "null"
         languages:
           $ref: "#/components/schemas/Languages"
         translations:
@@ -3846,6 +4009,32 @@ components:
                 type: string
               summary:
                 type: string
+    CoverCrop:
+      type: object
+      required: [x, y, w, h]
+      additionalProperties: false
+      description: |
+        A frame inside a picture, as fractions of its width and height measured
+        from the top left corner of the picture as it is shown upright. The
+        file itself is never cut.
+      properties:
+        x:
+          type: number
+          minimum: 0
+          maximum: 1
+        y:
+          type: number
+          minimum: 0
+          maximum: 1
+        w:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 1
+        h:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 1
+
     Languages:
       type: array
       description: |
@@ -3926,6 +4115,17 @@ components:
         budget_amount:
           oneOf:
             - $ref: "#/components/schemas/Amount"
+            - type: "null"
+        cover_media_id:
+          type: [string, "null"]
+          format: uuid
+          description: The picture the trip is shown by, out of its own media; null takes it away.
+        cover_crop:
+          description: |
+            The part of the cover shown; null means its middle. A new cover
+            sent without a frame is shown by its middle.
+          oneOf:
+            - $ref: "#/components/schemas/CoverCrop"
             - type: "null"
         languages:
           allOf:
@@ -5260,7 +5460,7 @@ components:
         `from_item_id` is then an element of that earlier day.
       required: [id, from_item_id, to_item_id, mode, distance_m, duration_s, calculated_distance_m,
                  calculated_duration_s, manual_distance, manual_duration, geometry, source, error, calculated_at,
-                 planned_cost_amount, actual_cost_amount, note]
+                 planned_cost_amount, actual_cost_amount, note, route_preference, via, route_pinned]
       properties:
         id:
           type: string
@@ -5314,6 +5514,55 @@ components:
           description: Report only.
         note:
           type: string
+        route_preference:
+          $ref: "#/components/schemas/RoutePreference"
+        via:
+          type: array
+          maxItems: 25
+          description: The points a road route passes through, in order; empty for a route from end to end.
+          items:
+            $ref: "#/components/schemas/Point"
+        route_pinned:
+          type: boolean
+          description: |
+            A route chosen among the alternatives, kept until the leg's ends,
+            mode, preference or via points change or it is recalculated.
+
+    RoutePreference:
+      type: string
+      enum: [fastest, shortest]
+      description: |
+        What a road route is optimised for. A provider that routes only by
+        time (OSRM) answers every leg with its fastest route.
+
+    Point:
+      type: object
+      required: [lat, lng]
+      additionalProperties: false
+      properties:
+        lat:
+          type: number
+          minimum: -90
+          maximum: 90
+        lng:
+          type: number
+          minimum: -180
+          maximum: 180
+
+    Route:
+      type: object
+      required: [distance_m, duration_s, geometry]
+      additionalProperties: false
+      properties:
+        distance_m:
+          type: integer
+          minimum: 0
+        duration_s:
+          type: integer
+          minimum: 0
+        geometry:
+          type: string
+          description: Encoded polyline, precision 5.
 
     UpdateLegRequest:
       type: object
@@ -5341,6 +5590,17 @@ components:
         reset_manual:
           type: boolean
           description: Drop both typed values.
+        route_preference:
+          $ref: "#/components/schemas/RoutePreference"
+        via:
+          type: [array, "null"]
+          maxItems: 25
+          description: |
+            Replaces the points a road route passes through; null or an empty
+            list routes it from end to end. Ignored on a leg that is not
+            routed on roads. A change sends the leg back to pending.
+          items:
+            $ref: "#/components/schemas/Point"
 
     ProviderStatus:
       type: object

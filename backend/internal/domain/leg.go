@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -64,6 +65,57 @@ func (l Leg) RetryableEstimate() bool {
 // maxLegNoteLength bounds a leg's note, such as "bus Strætó 51".
 const maxLegNoteLength = 500
 
+// RoutePreference is what a road route is optimised for.
+type RoutePreference string
+
+// Route preferences. Fastest is what a leg is routed by unless somebody asks
+// for another; a provider that knows only the fastest route routes every leg
+// that way.
+const (
+	RouteFastest  RoutePreference = "fastest"
+	RouteShortest RoutePreference = "shortest"
+)
+
+// MaxLegVia bounds the points a road leg is routed through. A route copied from
+// a map rarely needs more than a handful, and every one is a waypoint the
+// provider must snap.
+const MaxLegVia = 25
+
+// ValidateRoutePreference - checks that a preference is one this service knows.
+//
+// Arguments:
+//   - field: the name reported in the error.
+//   - preference: the value.
+//
+// Returns:
+//   - a *ValidationError when it is unknown.
+func ValidateRoutePreference(field string, preference RoutePreference) error {
+	switch preference {
+	case RouteFastest, RouteShortest:
+		return nil
+	}
+	return NewValidationError(field, "unsupported", "must be fastest or shortest")
+}
+
+// LegRoute is how a leg asks to be routed: what the route is optimised for and
+// the points it passes through on the way, in order.
+type LegRoute struct {
+	Preference RoutePreference
+	Via        []Point
+}
+
+// Route - reports how the leg asks to be routed.
+//
+// Returns:
+//   - the leg's preference, fastest when none is stored, and its via points.
+func (l Leg) Route() LegRoute {
+	preference := l.Preference
+	if preference == "" {
+		preference = RouteFastest
+	}
+	return LegRoute{Preference: preference, Via: l.Via}
+}
+
 // Leg is the journey between two neighbouring elements of a day.
 type Leg struct {
 	ID         uuid.UUID
@@ -89,8 +141,16 @@ type Leg struct {
 	// ActualCost belongs to a report; in a plan it stays empty.
 	ActualCost *Money
 	Note       string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// Preference is what the road route is optimised for.
+	Preference RoutePreference
+	// Via are the points the road route passes through, in order.
+	Via []Point
+	// Pinned marks a route somebody chose among the provider's alternatives:
+	// it is kept, not calculated again, until the leg's input changes or the
+	// leg is recalculated on purpose.
+	Pinned    bool
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Distance - reports the distance the plan uses: the typed one, else the
@@ -138,8 +198,39 @@ func (l Leg) Normalize(kind DocumentKind) (Leg, error) {
 	if l.ManualDurationS != nil && (*l.ManualDurationS < 0 || *l.ManualDurationS > 7*24*3600) {
 		return l, NewValidationError("duration_s", "out_of_range", "must be between 0 and 7 days")
 	}
+	if l.Preference == "" {
+		l.Preference = RouteFastest
+	}
+	if err := ValidateRoutePreference("route_preference", l.Preference); err != nil {
+		return l, err
+	}
+	if len(l.Via) > MaxLegVia {
+		return l, NewValidationError("via", "too_many", "a leg passes through at most 25 points")
+	}
+	for _, point := range l.Via {
+		if err := validatePoint("via", point); err != nil {
+			return l, err
+		}
+	}
+	// Only a road is routed through points; any other leg is a straight line,
+	// and points it could not use would only confuse the next person to edit it.
+	if !l.Mode.Routed() {
+		l.Via = nil
+	}
+	if len(l.Via) == 0 {
+		l.Via = nil
+	}
 	l.Note = strings.TrimSpace(l.Note)
 	return l, checkLength("note", l.Note, maxLegNoteLength)
+}
+
+// validatePoint checks that a point is a position on Earth.
+func validatePoint(field string, point Point) error {
+	if math.IsNaN(point.Lat) || math.IsNaN(point.Lng) ||
+		point.Lat < -90 || point.Lat > 90 || point.Lng < -180 || point.Lng > 180 {
+		return NewValidationError(field, "invalid_point", "must be a latitude and a longitude")
+	}
+	return nil
 }
 
 // LegCalculation is a calculated leg, ready to be stored.
@@ -213,23 +304,44 @@ func trackLine(tracks []Track, itemID uuid.UUID) []Point {
 	return DecodePolyline(track.Geometry, 5)
 }
 
-// LegInput - describes what a leg's calculation depends on: the mode and both
-// points, rounded as the route cache rounds them.
+// LegInput - describes what a leg's calculation depends on: the mode, both
+// points rounded as the route cache rounds them, and how a road leg asks to be
+// routed.
+//
+// A road leg routed the default way - the fastest route, through no points of
+// its own - describes itself exactly as every leg did before routes could be
+// chosen, so choosing became possible without sending every leg of every trip
+// back to the provider.
 //
 // Arguments:
 //   - mode: the travel mode.
 //   - from, to: the points, nil when unknown.
+//   - route: the preference and the via points.
 //
 // Returns:
 //   - a string that changes exactly when a recalculation is needed.
-func LegInput(mode TravelMode, from, to *Point) string {
+func LegInput(mode TravelMode, from, to *Point, route LegRoute) string {
 	point := func(p *Point) string {
 		if p == nil {
 			return "?"
 		}
 		return fmt.Sprintf("%.5f,%.5f", p.Lat, p.Lng)
 	}
-	return string(mode) + "|" + point(from) + "|" + point(to)
+	input := string(mode) + "|" + point(from) + "|" + point(to)
+	if !mode.Routed() {
+		return input
+	}
+	if route.Preference != "" && route.Preference != RouteFastest {
+		input += "|" + string(route.Preference)
+	}
+	if len(route.Via) > 0 {
+		via := make([]string, len(route.Via))
+		for index := range route.Via {
+			via[index] = point(&route.Via[index])
+		}
+		input += "|via:" + strings.Join(via, ";")
+	}
+	return input
 }
 
 // LegPlan is what bringing a document's legs in line with its days requires.
@@ -281,13 +393,13 @@ func ReconcileLegs(content DocumentContent, existing []Leg, newID func() uuid.UU
 	kept := make(map[uuid.UUID]bool, len(existing))
 	// need keeps or creates the leg between two elements, owned by a day.
 	need := func(day Day, from, to Item) {
-		points := func(mode TravelMode) string {
+		points := func(mode TravelMode, route LegRoute) string {
 			start, end := LegEnds(from, to, stays, content.Tracks)
-			return LegInput(mode, start, end)
+			return LegInput(mode, start, end, route)
 		}
 		if leg, ok := byPair[pair{from.ID, to.ID}]; ok && leg.DayID == day.ID {
 			kept[leg.ID] = true
-			if input := points(leg.Mode); input != leg.Input {
+			if input := points(leg.Mode, leg.Route()); input != leg.Input {
 				leg.Input = input
 				plan.Reset = append(plan.Reset, leg)
 			}
@@ -303,7 +415,7 @@ func ReconcileLegs(content DocumentContent, existing []Leg, newID func() uuid.UU
 		plan.Create = append(plan.Create, Leg{
 			ID: newID(), DocumentID: content.Document.ID, DayID: day.ID,
 			FromItemID: from.ID, ToItemID: to.ID, Mode: mode,
-			Source: LegPending, Input: points(mode),
+			Source: LegPending, Input: points(mode, LegRoute{}),
 		})
 	}
 

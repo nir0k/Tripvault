@@ -85,6 +85,28 @@ type legResponse struct {
 	PlannedCostAmount *string    `json:"planned_cost_amount"`
 	ActualCostAmount  *string    `json:"actual_cost_amount"`
 	Note              string     `json:"note"`
+	// RoutePreference is what the road route is optimised for.
+	RoutePreference string `json:"route_preference"`
+	// Via are the points the road route passes through, in order.
+	Via []pointBody `json:"via"`
+	// RoutePinned is true for a route chosen among the alternatives, which is
+	// kept until the leg changes or is recalculated.
+	RoutePinned bool `json:"route_pinned"`
+}
+
+// pointBody is a position on the wire.
+type pointBody struct {
+	Lat float64 `json:"lat"`
+	Lng float64 `json:"lng"`
+}
+
+// newPointBodies renders positions as a list, never null.
+func newPointBodies(points []domain.Point) []pointBody {
+	bodies := make([]pointBody, len(points))
+	for index, point := range points {
+		bodies[index] = pointBody{Lat: point.Lat, Lng: point.Lng}
+	}
+	return bodies
 }
 
 // modeTotalResponse sums the legs of one travel mode.
@@ -132,6 +154,9 @@ func newLegResponse(leg domain.Leg) legResponse {
 		PlannedCostAmount: formatMoney(leg.PlannedCost),
 		ActualCostAmount:  formatMoney(leg.ActualCost),
 		Note:              leg.Note,
+		RoutePreference:   string(leg.Route().Preference),
+		Via:               newPointBodies(leg.Via),
+		RoutePinned:       leg.Pinned,
 	}
 }
 

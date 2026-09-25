@@ -1,6 +1,6 @@
 import { http } from './client'
 import type {
-  Budget, CreatedShareLink, DocumentKind, ListResponse, MemberRole, PageResponse, ShareLink, Trip, TripMember,
+  Budget, CoverCrop, CreatedShareLink, DocumentKind, ListResponse, MemberRole, PageResponse, ShareLink, Trip, TripMember,
   TripUser,
 } from './types'
 
@@ -48,6 +48,8 @@ export interface TripChanges {
   budget_amount?: string | null
   /** The picture the trip is shown by; null takes the cover away. */
   cover_media_id?: string | null
+  /** The part of the cover shown; null means its middle. A new cover sent without one is shown by its middle. */
+  cover_crop?: CoverCrop | null
   /** A report's languages, the original first; a language left out loses its translations. */
   languages?: string[]
   /** Accept that the new period removes days holding content. */

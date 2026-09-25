@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { computed, useTemplateRef } from 'vue'
+import { computed, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import AppIcon, { type IconName } from '@/components/AppIcon.vue'
 import AppLogo from '@/components/AppLogo.vue'
 import AppSearch from '@/components/AppSearch.vue'
 import LanguageDialog from '@/components/LanguageDialog.vue'
+import UploadPanel from '@/components/media/UploadPanel.vue'
 import ThemeSelect from '@/components/ThemeSelect.vue'
 import UserAvatar from '@/components/UserAvatar.vue'
 import { useDropdown } from '@/composables/useDropdown'
 import { useSessionStore } from '@/stores/session'
+import { useUploadsStore } from '@/stores/uploads'
 
 interface NavItem {
   name: string
@@ -21,6 +23,15 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
+const uploads = useUploadsStore()
+
+// Files still on their way belong to the reader who picked them, so they stop
+// when that reader signs out or the session ends.
+watch(() => session.user, (user) => {
+  if (!user) {
+    uploads.reset()
+  }
+})
 const userMenu = useDropdown('accountMenu')
 const adminDropdown = useDropdown('adminMenu')
 const languageDialog = useTemplateRef<InstanceType<typeof LanguageDialog>>('languageDialog')
@@ -175,5 +186,6 @@ async function signOut(): Promise<void> {
 
     <!-- Outside the account menu: a dialog inside it would be hidden with it. -->
     <LanguageDialog ref="languageDialog" />
+    <UploadPanel />
   </div>
 </template>

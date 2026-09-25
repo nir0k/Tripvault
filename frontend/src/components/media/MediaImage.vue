@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, useTemplateRef, watch } from 'vue'
 import { mediaFilePath, mediaThumbnailPath, type MediaSize } from '@/api/media'
+import type { CoverCrop } from '@/api/types'
 import { useMediaBase, useMediaUrl } from '@/composables/useMediaUrl'
 import { useVisible } from '@/composables/useVisible'
 
@@ -21,7 +22,12 @@ const props = withDefaults(defineProps<{
   square?: boolean
   /** Fill the box the parent gives, cropping whatever does not fit. */
   fill?: boolean
-}>(), { alt: '', size: 320, width: 0, height: 0, square: false, fill: false })
+  /**
+   * The part of the picture a filled box shows, chosen for a box of the same
+   * proportions; the middle of the picture when it is not given.
+   */
+  crop?: CoverCrop | null
+}>(), { alt: '', size: 320, width: 0, height: 0, square: false, fill: false, crop: null })
 
 const base = useMediaBase()
 const root = useTemplateRef<HTMLElement>('root')
@@ -53,6 +59,22 @@ watch(() => [props.id, props.size], () => {
   arrived.value = false
 })
 
+// A framed picture is stretched so that its frame covers the box exactly and
+// moved so the frame's corner sits on the box's. The frame was chosen for a box
+// of these proportions, so nothing is distorted.
+const cropStyle = computed(() => {
+  const crop = props.fill ? props.crop : null
+  if (!crop || crop.w <= 0 || crop.h <= 0) {
+    return undefined
+  }
+  return {
+    width: `${100 / crop.w}%`,
+    height: `${100 / crop.h}%`,
+    left: `${(-crop.x / crop.w) * 100}%`,
+    top: `${(-crop.y / crop.h) * 100}%`,
+  }
+})
+
 // A tile keeps its shape before its picture arrives, so a gallery does not jump
 // about as the pictures load: the parent's box where the picture fills it, a
 // square where tiles line up, and the picture's own proportions otherwise.
@@ -71,11 +93,18 @@ const ratio = computed(() => {
   <span
     ref="root"
     class="block max-w-full overflow-hidden bg-base-200"
-    :class="{ 'size-full': fill }"
+    :class="{ 'size-full': fill, relative: !!cropStyle }"
     :style="{ aspectRatio: ratio }"
   >
     <img
-      v-if="url"
+      v-if="url && cropStyle"
+      :src="url"
+      :alt="alt"
+      class="absolute max-w-none"
+      :style="cropStyle"
+    />
+    <img
+      v-else-if="url"
       :src="url"
       :alt="alt"
       class="size-full"

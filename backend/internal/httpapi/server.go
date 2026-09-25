@@ -118,7 +118,8 @@ type DocumentStore interface {
 	DeleteTrack(ctx context.Context, itemID uuid.UUID) error
 	Leg(ctx context.Context, id uuid.UUID) (domain.Leg, error)
 	UpdateLeg(ctx context.Context, leg domain.Leg) error
-	SaveLegCalculation(ctx context.Context, legID uuid.UUID, input string, calculation domain.LegCalculation, at time.Time) error
+	SaveLegCalculation(ctx context.Context, legID uuid.UUID, input string, calculation domain.LegCalculation,
+		pinned bool, at time.Time) (bool, error)
 	SaveTranslations(ctx context.Context, documentID uuid.UUID, language string, translations []domain.Translation) error
 }
 
@@ -126,8 +127,11 @@ type DocumentStore interface {
 type Router interface {
 	Enabled() bool
 	ProviderName() string
-	Calculate(ctx context.Context, mode domain.TravelMode, from, to *domain.Point) domain.LegCalculation
-	Forget(ctx context.Context, mode domain.TravelMode, from, to domain.Point) error
+	Capabilities() routing.Capabilities
+	Calculate(ctx context.Context, mode domain.TravelMode, from, to *domain.Point, route domain.LegRoute) domain.LegCalculation
+	Forget(ctx context.Context, mode domain.TravelMode, from, to domain.Point, route domain.LegRoute) error
+	Alternatives(ctx context.Context, mode domain.TravelMode, from, to domain.Point,
+		preference domain.RoutePreference) ([]domain.LegCalculation, error)
 }
 
 // RoutingStats reports a provider's usage and its cache.
@@ -492,6 +496,9 @@ func (s *Server) routes() http.Handler {
 				member.Delete("/expenses/{expenseID}", s.handleDeleteExpense)
 				member.Patch("/legs/{legID}", s.handleUpdateLeg)
 				member.Post("/legs/{legID}:recalculate", s.handleRecalculateLeg)
+				member.Post("/legs/{legID}:alternatives", s.handleLegAlternatives)
+				member.Post("/legs/{legID}:route", s.handlePinLegRoute)
+				member.Post("/legs/{legID}:google-link", s.handleLegGoogleLink)
 
 				member.Group(func(admin chi.Router) {
 					admin.Use(s.requireAdmin)

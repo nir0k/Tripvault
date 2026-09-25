@@ -31,7 +31,7 @@ func TestReconcileLegs(t *testing.T) {
 	// a moves: a→b goes back to pending, b→c is untouched.
 	existing := []Leg{plan.Create[0], plan.Create[1]}
 	existing[0].Mode = ModeBike
-	existing[0].Input = LegInput(ModeBike, &Point{lat, lng}, &Point{lat, lng})
+	existing[0].Input = LegInput(ModeBike, &Point{lat, lng}, &Point{lat, lng}, LegRoute{})
 	content.Items[0].Lat = &moved
 	plan = ReconcileLegs(content, existing, newID)
 	if len(plan.Reset) != 1 || plan.Reset[0].ID != existing[0].ID || plan.Reset[0].Input != "bike|63.40000,-21.90000|64.10000,-21.90000" ||
@@ -187,5 +187,48 @@ func TestReconcileLegsBetweenDays(t *testing.T) {
 	}
 	if leg := OpeningLeg(plan.Create, DayItems(content.Items, &fourth)); leg != nil {
 		t.Errorf("a day opening with a stay mark has an opening leg: %+v", leg)
+	}
+}
+
+// TestLegInputFollowsTheRouting checks that a leg routed the default way keeps
+// the input it had before routes could be chosen, so no stored leg is sent back
+// to the provider, and that a preference or via points change it.
+func TestLegInputFollowsTheRouting(t *testing.T) {
+	from, to := &Point{Lat: 64.1466, Lng: -21.9426}, &Point{Lat: 63.4186, Lng: -19.006}
+	plain := LegInput(ModeCar, from, to, LegRoute{})
+	if plain != "car|64.14660,-21.94260|63.41860,-19.00600" {
+		t.Errorf("a default leg's input changed: %q", plain)
+	}
+	if LegInput(ModeCar, from, to, LegRoute{Preference: RouteFastest}) != plain {
+		t.Error("naming the default preference changed the input")
+	}
+	shortest := LegInput(ModeCar, from, to, LegRoute{Preference: RouteShortest})
+	through := LegInput(ModeCar, from, to, LegRoute{Via: []Point{{Lat: 63.9, Lng: -20.5}}})
+	if shortest == plain || through == plain || shortest == through {
+		t.Errorf("inputs do not follow the routing: %q %q", shortest, through)
+	}
+	if LegInput(ModeFlight, from, to, LegRoute{Preference: RouteShortest}) != LegInput(ModeFlight, from, to, LegRoute{}) {
+		t.Error("a flight's input followed a road preference")
+	}
+}
+
+// TestLegNormalizeChecksTheRouting checks the preference and the via points.
+func TestLegNormalizeChecksTheRouting(t *testing.T) {
+	leg, err := Leg{Mode: ModeCar}.Normalize(DocumentPlan)
+	if err != nil || leg.Preference != RouteFastest {
+		t.Errorf("a leg without a preference: %+v %v", leg, err)
+	}
+	if _, err := (Leg{Mode: ModeCar, Preference: "scenic"}).Normalize(DocumentPlan); err == nil {
+		t.Error("an unknown preference was accepted")
+	}
+	if _, err := (Leg{Mode: ModeCar, Via: []Point{{Lat: 95}}}).Normalize(DocumentPlan); err == nil {
+		t.Error("a via point off the Earth was accepted")
+	}
+	if _, err := (Leg{Mode: ModeCar, Via: make([]Point, MaxLegVia+1)}).Normalize(DocumentPlan); err == nil {
+		t.Error("too many via points were accepted")
+	}
+	flight, err := Leg{Mode: ModeFlight, Via: []Point{{Lat: 1, Lng: 1}}}.Normalize(DocumentPlan)
+	if err != nil || flight.Via != nil {
+		t.Errorf("a flight kept its via points: %+v %v", flight.Via, err)
 	}
 }

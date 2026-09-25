@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"math"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -23,6 +24,19 @@ const (
 	ModeCableCar TravelMode = "cable_car"
 	ModeOther    TravelMode = "other"
 )
+
+// Routed - reports whether a leg of this mode follows roads, and so is asked
+// of the routing provider, rather than a straight line.
+//
+// Returns:
+//   - true for walking, cycling, driving and public transport.
+func (m TravelMode) Routed() bool {
+	switch m {
+	case ModeWalk, ModeBike, ModeCar, ModeTransit:
+		return true
+	}
+	return false
+}
 
 // ValidateTravelMode - checks that a travel mode is one the service knows.
 //
@@ -180,6 +194,9 @@ type Trip struct {
 	Budget       *Money
 	// CoverMediaID is the picture the trip is shown by, out of its own media.
 	CoverMediaID *uuid.UUID
+	// CoverCrop is the part of the cover the trip is shown by; nil means the
+	// middle of the picture.
+	CoverCrop *CoverCrop
 	// Languages are a report's languages: the original first, then the ones it
 	// is translated into. A plan has none.
 	Languages []string
@@ -242,9 +259,49 @@ func (t Trip) Normalize() (Trip, error) {
 	if t.Travelers < 1 || t.Travelers > maxTravelers {
 		return t, NewValidationError("travelers", "out_of_range", "must be between 1 and 100")
 	}
+	// A frame without a picture frames nothing.
+	if t.CoverMediaID == nil {
+		t.CoverCrop = nil
+	}
+	if t.CoverCrop != nil {
+		if err := t.CoverCrop.Validate(); err != nil {
+			return t, err
+		}
+	}
 	var err error
 	t.Languages, err = NormalizeLanguages(t.Kind, t.Languages, "")
 	return t, err
+}
+
+// coverCropTolerance absorbs the rounding of a frame worked out in a browser,
+// whose right or bottom edge may land a hair past the picture's.
+const coverCropTolerance = 1e-6
+
+// CoverCrop is the part of a cover picture that is shown, as fractions of the
+// picture's width and height measured from its top left corner. The picture is
+// never cut: the frame is applied wherever the cover is drawn.
+type CoverCrop struct {
+	X float64
+	Y float64
+	W float64
+	H float64
+}
+
+// Validate - checks that the frame lies inside the picture and is not empty.
+//
+// Returns:
+//   - a *ValidationError on cover_crop when it does not.
+func (c CoverCrop) Validate() error {
+	for _, value := range []float64{c.X, c.Y, c.W, c.H} {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return NewValidationError("cover_crop", "invalid_crop", "must be a frame inside the picture")
+		}
+	}
+	if c.X < 0 || c.Y < 0 || c.W <= 0 || c.H <= 0 ||
+		c.X+c.W > 1+coverCropTolerance || c.Y+c.H > 1+coverCropTolerance {
+		return NewValidationError("cover_crop", "invalid_crop", "must be a frame inside the picture")
+	}
+	return nil
 }
 
 // DayCount - reports how many calendar days the trip's period covers.

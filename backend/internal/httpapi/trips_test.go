@@ -301,3 +301,53 @@ func TestTripCreateAndUpdate(t *testing.T) {
 		t.Errorf("list: %d %s", recorder.Code, recorder.Body.String())
 	}
 }
+
+// TestApplyTripChangesKeepsTheFrameWithItsCover checks that a frame is set,
+// kept while the cover stays, and dropped when another picture becomes the
+// cover without a frame of its own.
+func TestApplyTripChangesKeepsTheFrameWithItsCover(t *testing.T) {
+	first, second := uuid.New(), uuid.New()
+	start, _ := domain.ParseDate("start_date", "2026-06-20")
+	end, _ := domain.ParseDate("end_date", "2026-06-27")
+	trip := domain.Trip{ID: uuid.New(), Kind: domain.DocumentPlan, Title: "Iceland", Currency: "ISK",
+		Travelers: 1, StartDate: &start, EndDate: &end}
+
+	decode := func(body string) updateTripRequest {
+		t.Helper()
+		var request updateTripRequest
+		if err := json.Unmarshal([]byte(body), &request); err != nil {
+			t.Fatalf("decode %s: %v", body, err)
+		}
+		return request
+	}
+
+	framed, err := applyTripChanges(trip, decode(`{"cover_media_id":"`+first.String()+
+		`","cover_crop":{"x":0.1,"y":0.2,"w":0.8,"h":0.3}}`))
+	if err != nil || framed.CoverCrop == nil || framed.CoverCrop.Y != 0.2 {
+		t.Fatalf("set a framed cover: %+v %v", framed.CoverCrop, err)
+	}
+
+	renamed, err := applyTripChanges(framed, decode(`{"title":"Iceland again"}`))
+	if err != nil || renamed.CoverCrop == nil {
+		t.Errorf("an unrelated change lost the frame: %+v %v", renamed.CoverCrop, err)
+	}
+
+	same, err := applyTripChanges(framed, decode(`{"cover_media_id":"`+first.String()+`"}`))
+	if err != nil || same.CoverCrop == nil {
+		t.Errorf("the same cover lost its frame: %+v %v", same.CoverCrop, err)
+	}
+
+	replaced, err := applyTripChanges(framed, decode(`{"cover_media_id":"`+second.String()+`"}`))
+	if err != nil || replaced.CoverCrop != nil {
+		t.Errorf("a new cover kept the old frame: %+v %v", replaced.CoverCrop, err)
+	}
+
+	centred, err := applyTripChanges(framed, decode(`{"cover_crop":null}`))
+	if err != nil || centred.CoverCrop != nil {
+		t.Errorf("a cleared frame stayed: %+v %v", centred.CoverCrop, err)
+	}
+
+	if _, err := applyTripChanges(framed, decode(`{"cover_crop":{"x":0.5,"y":0,"w":0.8,"h":1}}`)); err == nil {
+		t.Error("a frame running off the picture was accepted")
+	}
+}

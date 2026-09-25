@@ -431,3 +431,23 @@ func TestSharedReportPDFOfAPlan(t *testing.T) {
 		t.Errorf("without a token: %d %s", recorder.Code, recorder.Body.String())
 	}
 }
+
+// TestCoverPreviewWidthKeepsAFrameSharp checks that a framed cover is cut from
+// a preview wide enough to fill the page the way a whole picture does.
+func TestCoverPreviewWidthKeepsAFrameSharp(t *testing.T) {
+	cases := []struct {
+		crop *domain.CoverCrop
+		want int
+	}{
+		{nil, pdfPhotoWidth},
+		{&domain.CoverCrop{W: 1, H: 0.4}, 640},
+		{&domain.CoverCrop{W: 0.5, H: 0.2}, 1280},
+		{&domain.CoverCrop{W: 0.4, H: 0.2}, 1920},
+		{&domain.CoverCrop{W: 0.1, H: 0.05}, 1920},
+	}
+	for _, tc := range cases {
+		if got := coverPreviewWidth(tc.crop); got != tc.want {
+			t.Errorf("coverPreviewWidth(%+v) = %d, want %d", tc.crop, got, tc.want)
+		}
+	}
+}

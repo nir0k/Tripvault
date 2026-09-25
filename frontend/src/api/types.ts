@@ -64,6 +64,10 @@ export interface ClientConfig {
   locales: string[]
   /** False when road legs are estimates because no routing provider is configured. */
   routing_enabled: boolean
+  /** Whether a road leg can be routed by the shortest distance. */
+  routing_shortest: boolean
+  /** Whether the provider offers other routes than its best to choose from. */
+  routing_alternatives: boolean
   /** False when place search and reverse lookups are unavailable. */
   geocoding_enabled: boolean
   /** Raster tile URL template with {z}, {x} and {y}. */
@@ -189,12 +193,25 @@ export interface Trip {
   report_id: string | null
   /** The picture the trip is shown by, out of its own files. */
   cover_media_id: string | null
+  /** The part of the cover the trip is shown by; null means its middle. */
+  cover_crop: CoverCrop | null
   /** A report's languages, the original first; empty for a plan. */
   languages: string[]
   /** A report's title and summary in its further languages. */
   translations: TripTranslations
   created_at: string
   updated_at: string
+}
+
+/**
+ * CoverCrop is a frame inside a picture, as fractions of its width and height
+ * from the top left corner of the picture as it is shown upright.
+ */
+export interface CoverCrop {
+  x: number
+  y: number
+  w: number
+  h: number
 }
 
 /** TripTranslations are a report's own title and summary, by language, then by field. */
@@ -466,6 +483,29 @@ export interface Leg {
   /** What was really spent. Report only. */
   actual_cost_amount: string | null
   note: string
+  /** What a road route is optimised for. */
+  route_preference: RoutePreference
+  /** The points a road route passes through, in order. */
+  via: GeoPoint[]
+  /** A route chosen among the alternatives, kept until the leg changes. */
+  route_pinned: boolean
+}
+
+/** RoutePreference is what a road route is optimised for. */
+export type RoutePreference = 'fastest' | 'shortest'
+
+/** GeoPoint is a position on Earth. */
+export interface GeoPoint {
+  lat: number
+  lng: number
+}
+
+/** RouteOption is one road route a leg could take. */
+export interface RouteOption {
+  distance_m: number
+  duration_s: number
+  /** Encoded polyline, precision 5. */
+  geometry: string
 }
 
 export interface DaySummary {

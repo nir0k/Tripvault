@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -87,12 +88,33 @@ func (s *Service) ProviderName() string {
 	return s.provider.Name()
 }
 
-// cacheKey hashes what identifies a route: provider, profile and both points
-// rounded to five decimals (about a metre).
-func cacheKey(provider, profile string, from, to domain.Point) []byte {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%.5f,%.5f|%.5f,%.5f",
-		provider, profile, from.Lat, from.Lng, to.Lat, to.Lng)))
+// cacheKey hashes what identifies a route: provider, profile, preference, and
+// every point it passes through rounded to five decimals (about a metre).
+func cacheKey(provider, profile string, route domain.LegRoute, from, to domain.Point) []byte {
+	var key strings.Builder
+	fmt.Fprintf(&key, "%s|%s|%s|%.5f,%.5f", provider, profile, preferenceOf(route), from.Lat, from.Lng)
+	for _, point := range route.Via {
+		fmt.Fprintf(&key, "|%.5f,%.5f", point.Lat, point.Lng)
+	}
+	fmt.Fprintf(&key, "|%.5f,%.5f", to.Lat, to.Lng)
+	sum := sha256.Sum256([]byte(key.String()))
 	return sum[:]
+}
+
+// preferenceOf reads a route's preference, the fastest when none is given.
+func preferenceOf(route domain.LegRoute) domain.RoutePreference {
+	if route.Preference == "" {
+		return domain.RouteFastest
+	}
+	return route.Preference
+}
+
+// routePoints lists where a route starts, passes and ends, in order.
+func routePoints(route domain.LegRoute, from, to domain.Point) []domain.Point {
+	points := make([]domain.Point, 0, len(route.Via)+2)
+	points = append(points, from)
+	points = append(points, route.Via...)
+	return append(points, to)
 }
 
 // takeMinuteSlot reserves a request within the per-minute limit.
@@ -114,6 +136,18 @@ func (s *Service) takeMinuteSlot(now time.Time) bool {
 	return true
 }
 
+// Capabilities - says what the configured provider can be asked for beyond
+// the fastest route.
+//
+// Returns:
+//   - the provider's capabilities, none when no provider is configured.
+func (s *Service) Capabilities() Capabilities {
+	if s.provider == nil {
+		return Capabilities{}
+	}
+	return s.provider.Capabilities()
+}
+
 // Forget - drops the cached route of a leg so the next calculation asks the
 // provider again. Legs that are not routed on roads have nothing cached.
 //
@@ -121,15 +155,16 @@ func (s *Service) takeMinuteSlot(now time.Time) bool {
 //   - ctx: context bounding the statement.
 //   - mode: the leg's mode.
 //   - from, to: the leg's points.
+//   - route: how the leg asks to be routed.
 //
 // Returns:
 //   - an error if the cache cannot be changed.
-func (s *Service) Forget(ctx context.Context, mode domain.TravelMode, from, to domain.Point) error {
+func (s *Service) Forget(ctx context.Context, mode domain.TravelMode, from, to domain.Point, route domain.LegRoute) error {
 	profile, routed := Profile(mode)
 	if !routed || s.provider == nil {
 		return nil
 	}
-	return s.cache.Delete(ctx, cacheKey(s.provider.Name(), profile, from, to))
+	return s.cache.Delete(ctx, cacheKey(s.provider.Name(), profile, route, from, to))
 }
 
 // Calculate - works out a leg's distance, time and line.
@@ -143,10 +178,12 @@ func (s *Service) Forget(ctx context.Context, mode domain.TravelMode, from, to d
 //   - ctx: context bounding the lookups and the provider request.
 //   - mode: the travel mode.
 //   - from, to: the points; nil when unknown.
+//   - route: what the route is optimised for and the points it passes.
 //
 // Returns:
 //   - the result to store on the leg.
-func (s *Service) Calculate(ctx context.Context, mode domain.TravelMode, from, to *domain.Point) Result {
+func (s *Service) Calculate(ctx context.Context, mode domain.TravelMode, from, to *domain.Point,
+	route domain.LegRoute) Result {
 	if from == nil || to == nil {
 		return Result{Source: domain.LegMissingCoordinates}
 	}
@@ -159,43 +196,108 @@ func (s *Service) Calculate(ctx context.Context, mode domain.TravelMode, from, t
 	}
 
 	now := s.now()
-	key := cacheKey(s.provider.Name(), profile, *from, *to)
-	if route, ok, err := s.cache.Get(ctx, key, now); err != nil {
+	key := cacheKey(s.provider.Name(), profile, route, *from, *to)
+	if cached, ok, err := s.cache.Get(ctx, key, now); err != nil {
 		s.logger.Warn("route cache read failed", slog.Any("error", err))
 	} else if ok {
-		return providerResult(route)
+		return providerResult(cached)
 	}
 
+	routes, err := s.ask(ctx, Request{
+		Profile: profile, Points: routePoints(route, *from, *to), Preference: preferenceOf(route), Alternatives: 1,
+	})
+	if err != nil {
+		return Estimate(mode, *from, *to, estimateReason(err))
+	}
+	if err := s.cache.Put(ctx, key, s.provider.Name(), profile, routes[0], now.Add(s.opts.CacheTTL)); err != nil {
+		s.logger.Warn("route cache write failed", slog.Any("error", err))
+	}
+	return providerResult(routes[0])
+}
+
+// alternativeCount is how many routes a leg is offered to choose from.
+const alternativeCount = 3
+
+// Alternatives - asks the provider for the routes a leg could take, for
+// somebody to choose one. They are not cached: the question is asked once,
+// when the choice is made, and the chosen route is stored on the leg.
+//
+// Arguments:
+//   - ctx: context bounding the provider request.
+//   - mode: the travel mode, which must follow roads.
+//   - from, to: the points.
+//   - preference: what the best of the routes is optimised for.
+//
+// Returns:
+//   - the routes, the best first; one when the provider offers no others.
+//   - ErrNotRouted for a mode that does not follow roads, ErrDisabled when no
+//     provider is configured, ErrDailyLimit or ErrRateLimited when a limit is
+//     reached, ErrNoRoute or ErrUnavailable from the provider.
+func (s *Service) Alternatives(ctx context.Context, mode domain.TravelMode, from, to domain.Point,
+	preference domain.RoutePreference) ([]Result, error) {
+	profile, routed := Profile(mode)
+	if !routed {
+		return nil, ErrNotRouted
+	}
+	if s.provider == nil {
+		return nil, ErrDisabled
+	}
+	routes, err := s.ask(ctx, Request{
+		Profile: profile, Points: []domain.Point{from, to},
+		Preference: preferenceOf(domain.LegRoute{Preference: preference}), Alternatives: alternativeCount,
+	})
+	if err != nil {
+		return nil, err
+	}
+	results := make([]Result, len(routes))
+	for index, route := range routes {
+		results[index] = providerResult(route)
+	}
+	return results, nil
+}
+
+// ask sends one request to the provider within the limits, counting it.
+//
+// Returns:
+//   - the routes, never empty without an error.
+//   - ErrDailyLimit or ErrRateLimited when a limit is reached first, or the
+//     provider's own error.
+func (s *Service) ask(ctx context.Context, request Request) ([]Route, error) {
+	now := s.now()
 	if used, err := s.usage.Requests24h(ctx, now); err != nil {
 		s.logger.Warn("routing usage read failed", slog.Any("error", err))
 	} else if s.opts.Daily > 0 && used >= s.opts.Daily {
-		return Estimate(mode, *from, *to, domain.LegErrorDailyLimit)
+		return nil, ErrDailyLimit
 	}
 	if !s.takeMinuteSlot(now) {
-		return Estimate(mode, *from, *to, domain.LegErrorRateLimited)
+		return nil, ErrRateLimited
 	}
 
-	route, err := s.provider.Route(ctx, profile, *from, *to)
+	routes, err := s.provider.Route(ctx, request)
+	if err == nil && len(routes) == 0 {
+		err = fmt.Errorf("%w: the answer held no route", ErrUnavailable)
+	}
 	if recordErr := s.usage.Record(ctx, now, err == nil || errors.Is(err, ErrNoRoute)); recordErr != nil {
 		s.logger.Warn("routing usage write failed", slog.Any("error", recordErr))
 	}
-	if err != nil {
-		reason := domain.LegErrorProvider
-		switch {
-		case errors.Is(err, ErrNoRoute):
-			reason = domain.LegErrorNoRoute
-		case errors.Is(err, ErrRateLimited):
-			reason = domain.LegErrorRateLimited
-		default:
-			s.logger.Warn("routing request failed", slog.String("profile", profile), slog.Any("error", err))
-		}
-		return Estimate(mode, *from, *to, reason)
+	if err != nil && !errors.Is(err, ErrNoRoute) && !errors.Is(err, ErrRateLimited) {
+		s.logger.Warn("routing request failed", slog.String("profile", request.Profile), slog.Any("error", err))
 	}
+	return routes, err
+}
 
-	if err := s.cache.Put(ctx, key, s.provider.Name(), profile, route, now.Add(s.opts.CacheTTL)); err != nil {
-		s.logger.Warn("route cache write failed", slog.Any("error", err))
+// estimateReason names why a leg became an estimate, from the error that made it one.
+func estimateReason(err error) string {
+	switch {
+	case errors.Is(err, ErrDailyLimit):
+		return domain.LegErrorDailyLimit
+	case errors.Is(err, ErrNoRoute):
+		return domain.LegErrorNoRoute
+	case errors.Is(err, ErrRateLimited):
+		return domain.LegErrorRateLimited
+	default:
+		return domain.LegErrorProvider
 	}
-	return providerResult(route)
 }
 
 // providerResult turns a provider route into a stored result.

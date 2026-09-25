@@ -56,7 +56,11 @@ func TestOSRMRoute(t *testing.T) {
 	defer server.Close()
 
 	profile, _ := Profile(domain.ModeCar)
-	route, err := NewOSRM(server.URL).Route(context.Background(), profile, reykjavik, vik)
+	routes, err := NewOSRM(server.URL).Route(context.Background(), Request{Profile: profile, Points: []domain.Point{reykjavik, vik}})
+	if err != nil || len(routes) != 1 {
+		t.Fatalf("Route() returned %d routes and %v", len(routes), err)
+	}
+	route := routes[0]
 	if err != nil {
 		t.Fatalf("Route() returned an unexpected error: %v", err)
 	}
@@ -70,7 +74,7 @@ func TestOSRMRoute(t *testing.T) {
 
 	// Longitude first, the profile in the path, and a shape worth drawing.
 	for _, want := range []string{"/route/v1/driving/", "-21.942600,64.146600;-19.006000,63.418600",
-		"overview=full", "geometries=polyline"} {
+		"overview=full", "geometries=polyline", "alternatives=false"} {
 		if !strings.Contains(asked, want) {
 			t.Errorf("the request %q does not contain %q", asked, want)
 		}
@@ -107,7 +111,11 @@ func TestValhallaRoute(t *testing.T) {
 	defer server.Close()
 
 	profile, _ := Profile(domain.ModeWalk)
-	route, err := NewValhalla(server.URL).Route(context.Background(), profile, reykjavik, vik)
+	routes, err := NewValhalla(server.URL).Route(context.Background(), Request{Profile: profile, Points: []domain.Point{reykjavik, vik}})
+	if err != nil || len(routes) != 1 {
+		t.Fatalf("Route() returned %d routes and %v", len(routes), err)
+	}
+	route := routes[0]
 	if err != nil {
 		t.Fatalf("Route() returned an unexpected error: %v", err)
 	}
@@ -149,6 +157,87 @@ func TestValhallaRefusals(t *testing.T) {
 	checkRefusals(t, cases, func(address string) Provider { return NewValhalla(address) })
 }
 
+// TestOSRMThroughPointsAndAlternatives checks that via points go into the path
+// in order, and that alternatives are asked for only between two points.
+func TestOSRMThroughPointsAndAlternatives(t *testing.T) {
+	var asked string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = r.URL.String()
+		_, _ = io.WriteString(w, `{"code":"Ok","routes":[{"distance":1,"duration":1,"geometry":"a"},
+			{"distance":2,"duration":2,"geometry":"b"}]}`)
+	}))
+	defer server.Close()
+	osrm := NewOSRM(server.URL)
+	via := domain.Point{Lat: 63.9, Lng: -20.5}
+
+	if _, err := osrm.Route(context.Background(), Request{Profile: profileCar,
+		Points: []domain.Point{reykjavik, via, vik}, Alternatives: 3}); err != nil {
+		t.Fatalf("route through a point: %v", err)
+	}
+	if !strings.Contains(asked, "-21.942600,64.146600;-20.500000,63.900000;-19.006000,63.418600") ||
+		!strings.Contains(asked, "alternatives=false") {
+		t.Errorf("a route through a point asked %q", asked)
+	}
+
+	routes, err := osrm.Route(context.Background(), Request{Profile: profileCar,
+		Points: []domain.Point{reykjavik, vik}, Alternatives: 3})
+	if err != nil || len(routes) != 2 || routes[1].DistanceM != 2 {
+		t.Errorf("alternatives came back as %+v %v", routes, err)
+	}
+	if !strings.Contains(asked, "alternatives=2") {
+		t.Errorf("alternatives were asked as %q", asked)
+	}
+}
+
+// TestValhallaPreferenceThroughPointsAndAlternates checks the shortest route,
+// via locations and alternates are asked for the way Valhalla takes them, and
+// that the lines of several legs become one.
+func TestValhallaPreferenceThroughPointsAndAlternates(t *testing.T) {
+	first := encodeWithPrecision([]domain.Point{{Lat: 1, Lng: 1}, {Lat: 2, Lng: 2}}, 6)
+	second := encodeWithPrecision([]domain.Point{{Lat: 2, Lng: 2}, {Lat: 3, Lng: 3}}, 6)
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body = nil
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_, _ = io.WriteString(w, `{"trip":{"status":0,"summary":{"length":1,"time":60},
+			"legs":[{"shape":"`+first+`"},{"shape":"`+second+`"}]},
+			"alternates":[{"trip":{"status":0,"summary":{"length":2,"time":90},"legs":[{"shape":"`+first+`"}]}}]}`)
+	}))
+	defer server.Close()
+	valhalla := NewValhalla(server.URL)
+	via := domain.Point{Lat: 63.9, Lng: -20.5}
+
+	routes, err := valhalla.Route(context.Background(), Request{Profile: profileCar,
+		Points: []domain.Point{reykjavik, via, vik}, Preference: domain.RouteShortest, Alternatives: 3})
+	if err != nil || len(routes) != 2 {
+		t.Fatalf("route came back as %+v %v", routes, err)
+	}
+	if line := domain.DecodePolyline(routes[0].Geometry, 5); len(line) != 3 {
+		t.Errorf("the legs were joined into %d points, want 3", len(line))
+	}
+	locations, _ := body["locations"].([]any)
+	middle, _ := locations[1].(map[string]any)
+	if len(locations) != 3 || middle["type"] != "via" {
+		t.Errorf("the locations were %v", locations)
+	}
+	options, _ := body["costing_options"].(map[string]any)
+	auto, _ := options["auto"].(map[string]any)
+	if auto["shortest"] != true {
+		t.Errorf("the shortest route was asked as %v", body["costing_options"])
+	}
+	if _, asked := body["alternates"]; asked {
+		t.Error("alternates were asked for a route through a point")
+	}
+
+	if _, err := valhalla.Route(context.Background(), Request{Profile: profileCar,
+		Points: []domain.Point{reykjavik, vik}, Alternatives: 3}); err != nil {
+		t.Fatalf("route: %v", err)
+	}
+	if body["alternates"] != float64(2) || body["costing_options"] != nil {
+		t.Errorf("a fastest route with alternatives asked %v and %v", body["alternates"], body["costing_options"])
+	}
+}
+
 // refusal is one answer a provider can give and the error it must become.
 type refusal struct {
 	status int
@@ -166,7 +255,7 @@ func checkRefusals(t *testing.T, cases map[string]refusal, provider func(address
 			w.WriteHeader(test.status)
 			_, _ = io.WriteString(w, test.body)
 		}))
-		_, err := provider(server.URL).Route(context.Background(), profile, reykjavik, vik)
+		_, err := provider(server.URL).Route(context.Background(), Request{Profile: profile, Points: []domain.Point{reykjavik, vik}})
 		server.Close()
 
 		if !errors.Is(err, test.want) {

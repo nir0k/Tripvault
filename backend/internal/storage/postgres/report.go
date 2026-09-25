@@ -285,14 +285,22 @@ func copyLegs(ctx context.Context, tx pgx.Tx, reportID uuid.UUID, legs []domain.
 		if leg.Error != "" {
 			calcError = &leg.Error
 		}
+		// The report is travelled the way the plan was meant to be: the route
+		// chosen there, and the points it passed through, come along.
+		via, err := viaParam(leg.Via)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO legs (id, document_id, day_id, from_item_id, to_item_id, mode, distance_m, duration_s,
 			                   geometry, calc_source, calc_error, calc_input, calculated_at,
-			                   manual_distance_m, manual_duration_s, planned_cost_amount)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::numeric)`,
+			                   manual_distance_m, manual_duration_s, planned_cost_amount,
+			                   route_preference, via, route_pinned)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::numeric, $17, $18, $19)`,
 			uuid.Must(uuid.NewV7()), reportID, dayID, from, to, leg.Mode, leg.DistanceM, leg.DurationS,
 			geometry, leg.Source, calcError, leg.Input, leg.CalculatedAt,
-			leg.ManualDistanceM, leg.ManualDurationS, moneyParam(leg.PlannedCost)); err != nil {
+			leg.ManualDistanceM, leg.ManualDurationS, moneyParam(leg.PlannedCost),
+			leg.Route().Preference, via, leg.Pinned); err != nil {
 			return fmt.Errorf("copy leg: %w", err)
 		}
 	}

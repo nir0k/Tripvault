@@ -6,7 +6,7 @@ import * as documentsApi from '@/api/documents'
 import { ApiError } from '@/api/client'
 import { getClientConfig } from '@/api/config'
 import type {
-  ClientConfig, Leg, PlanDay, PlanItem, RemovedDay, Stay, Transfer, TravelMode, TripDocument,
+  ClientConfig, Leg, PlanDay, PlanItem, RemovedDay, RouteOption, Stay, Transfer, TravelMode, TripDocument,
 } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
@@ -414,9 +414,21 @@ async function setLegMode(leg: Leg, mode: TravelMode): Promise<void> {
   await apply(() => documentsApi.updateLeg(leg.id, { mode }))
 }
 
-// saveLeg stores typed values from the leg form.
-async function saveLeg(leg: Leg, changes: documentsApi.LegChanges): Promise<void> {
-  if (await apply(() => documentsApi.updateLeg(leg.id, changes))) {
+// saveLeg stores what the leg form says: typed values, costs, how the leg is
+// routed, and a route chosen among its alternatives.
+async function saveLeg(leg: Leg, changes: documentsApi.LegChanges, route: RouteOption | null): Promise<void> {
+  if (await apply(() => documentsApi.saveLeg(leg.id, changes, route))) {
+    legDialog.value?.close()
+  } else {
+    legDialog.value?.fail(error.value)
+    error.value = ''
+  }
+}
+
+// recalculateLegFromForm drops a route chosen among the alternatives and asks
+// the provider again, keeping the form closed on what came back.
+async function recalculateLegFromForm(leg: Leg): Promise<void> {
+  if (await apply(() => documentsApi.recalculateLeg(leg.id))) {
     legDialog.value?.close()
   } else {
     legDialog.value?.fail(error.value)
@@ -681,7 +693,7 @@ async function removeStay(stay: Stay): Promise<void> {
     <PlanPlaceDialog ref="placeDialog" :focus="searchFocus" tracks @save="savePlace" />
     <PlanStayDialog ref="stayDialog" :focus="searchFocus" @save="saveStay" />
     <PlanTransferDialog ref="transferDialog" :focus="searchFocus" @save="saveTransfer" />
-    <PlanLegDialog ref="legDialog" @save="saveLeg" />
+    <PlanLegDialog ref="legDialog" @save="saveLeg" @recalculate="recalculateLegFromForm" />
     <PlanTargetDialog v-if="plan" ref="targetDialog" :days="plan.days" @choose="chooseTarget" />
     <ConfirmDialog ref="confirmDialog" />
   </div>

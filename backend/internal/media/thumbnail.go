@@ -8,6 +8,7 @@ import (
 	_ "image/jpeg" // registers the JPEG decoder
 	_ "image/png"  // registers the PNG decoder
 	"log/slog"
+	"math"
 	"sync"
 	"sync/atomic"
 
@@ -243,4 +244,52 @@ func renderWidth(data []byte, width int) ([]byte, error) {
 		return nil, fmt.Errorf("encode preview: %w", err)
 	}
 	return preview, nil
+}
+
+// Crop - cuts a frame out of a preview, for a cover shown by only a part of it.
+//
+// The frame is measured on the preview as it is drawn - upright, the way a
+// browser shows it - so it is applied to a rendered preview rather than to the
+// original, whose pixels may still be stored on their side.
+//
+// Arguments:
+//   - data: a JPEG preview.
+//   - x, y: the frame's top left corner, as fractions of the width and height.
+//   - w, h: the frame's width and height, as fractions of the same.
+//
+// Returns:
+//   - a JPEG of the frame.
+//   - ErrNoThumbnail when the preview cannot be read, or another error.
+func Crop(data []byte, x, y, w, h float64) ([]byte, error) {
+	if err := startRenderer(); err != nil {
+		return nil, fmt.Errorf("start libvips: %w", err)
+	}
+	picture, err := vips.NewImageFromBuffer(data)
+	if err != nil {
+		return nil, ErrNoThumbnail
+	}
+	defer picture.Close()
+
+	width, height := picture.Width(), picture.Height()
+	left := clampPixel(x*float64(width), width-1)
+	top := clampPixel(y*float64(height), height-1)
+	frameWidth := max(1, min(width-left, int(math.Round(w*float64(width)))))
+	frameHeight := max(1, min(height-top, int(math.Round(h*float64(height)))))
+	if err := picture.ExtractArea(left, top, frameWidth, frameHeight); err != nil {
+		return nil, fmt.Errorf("cut the frame: %w", err)
+	}
+	cropped, _, err := picture.ExportJpeg(&vips.JpegExportParams{
+		Quality:        thumbnailQuality,
+		StripMetadata:  true,
+		OptimizeCoding: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode frame: %w", err)
+	}
+	return cropped, nil
+}
+
+// clampPixel rounds a position to a pixel between zero and limit.
+func clampPixel(value float64, limit int) int {
+	return max(0, min(limit, int(math.Round(value))))
 }

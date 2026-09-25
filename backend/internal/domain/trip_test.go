@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // date builds a calendar date for the tests.
@@ -52,6 +54,7 @@ func TestRolePermissions(t *testing.T) {
 
 // TestTripNormalize checks defaults and the rules on every field.
 func TestTripNormalize(t *testing.T) {
+	cover := uuid.New()
 	valid := Trip{Kind: DocumentPlan, Title: "  Iceland  ", Currency: "isk", Travelers: 2,
 		StartDate: date(t, "2026-06-20"), EndDate: date(t, "2026-06-27")}
 	normalized, err := valid.Normalize()
@@ -79,6 +82,10 @@ func TestTripNormalize(t *testing.T) {
 		"no travelers":  {func(t *Trip) { t.Travelers = 0 }, "travelers:out_of_range"},
 		"one-day trip":  {func(tr *Trip) { tr.StartDate, tr.EndDate = date(t, "2026-06-20"), date(t, "2026-06-20") }, ""},
 		"leap year max": {func(tr *Trip) { tr.StartDate, tr.EndDate = date(t, "2028-01-01"), date(t, "2028-12-31") }, ""},
+		"framed cover":  {func(t *Trip) { t.CoverMediaID, t.CoverCrop = &cover, &CoverCrop{X: 0.1, Y: 0.2, W: 0.9, H: 0.4} }, ""},
+		"frame outside": {func(t *Trip) { t.CoverMediaID, t.CoverCrop = &cover, &CoverCrop{X: 0.5, W: 0.6, H: 1} }, "cover_crop:invalid_crop"},
+		"empty frame":   {func(t *Trip) { t.CoverMediaID, t.CoverCrop = &cover, &CoverCrop{W: 0, H: 1} }, "cover_crop:invalid_crop"},
+		"negative edge": {func(t *Trip) { t.CoverMediaID, t.CoverCrop = &cover, &CoverCrop{X: -0.1, W: 0.5, H: 1} }, "cover_crop:invalid_crop"},
 	}
 	for name, tc := range cases {
 		trip := valid
@@ -87,6 +94,21 @@ func TestTripNormalize(t *testing.T) {
 		if got := validationCode(t, err); got != tc.want {
 			t.Errorf("%s: got %q, want %q", name, got, tc.want)
 		}
+	}
+}
+
+// TestTripNormalizeDropsAFrameWithoutACover checks that a frame does not
+// outlive the picture it was chosen for.
+func TestTripNormalizeDropsAFrameWithoutACover(t *testing.T) {
+	trip := Trip{Kind: DocumentPlan, Title: "Iceland", Currency: "ISK", Travelers: 1,
+		StartDate: date(t, "2026-06-20"), EndDate: date(t, "2026-06-27"),
+		CoverCrop: &CoverCrop{X: 0, Y: 0, W: 1, H: 0.5}}
+	normalized, err := trip.Normalize()
+	if err != nil {
+		t.Fatalf("trip refused: %v", err)
+	}
+	if normalized.CoverCrop != nil {
+		t.Errorf("a trip without a cover kept a frame: %+v", normalized.CoverCrop)
 	}
 }
 

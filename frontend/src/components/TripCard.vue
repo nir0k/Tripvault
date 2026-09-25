@@ -30,13 +30,15 @@ const target = computed(() => tripRoute(props.trip))
 
 <template>
   <article class="card border border-base-300 bg-base-100 transition-shadow hover:shadow-md" :data-trip-id="trip.id">
+    <!-- The cover strip keeps the proportions its frame is chosen in
+         (CoverCropDialog), so the card shows exactly the part that was chosen. -->
     <RouterLink
       :to="target"
-      class="flex h-28 items-center justify-center overflow-hidden rounded-t-box text-primary"
+      class="flex aspect-[5/2] items-center justify-center overflow-hidden rounded-t-box text-primary"
       :class="trip.cover_media_id ? '' : 'bg-linear-to-br from-primary/25 to-secondary/25'"
       :aria-label="title"
     >
-      <MediaImage v-if="trip.cover_media_id" :id="trip.cover_media_id" :alt="title" :size="640" fill />
+      <MediaImage v-if="trip.cover_media_id" :id="trip.cover_media_id" :alt="title" :size="640" :crop="trip.cover_crop" fill />
       <AppIcon v-else :name="trip.kind === 'report' ? 'report' : 'map'" />
     </RouterLink>
     <div class="card-body gap-2 p-4">

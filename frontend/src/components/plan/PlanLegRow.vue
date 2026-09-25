@@ -77,6 +77,9 @@ const noRoute = computed(() => props.leg.source === 'estimate' && props.leg.erro
     </span>
     <span v-if="flightEstimate" class="badge badge-ghost badge-xs">{{ t('leg.flightEstimate') }}</span>
     <span v-if="leg.mode === 'transit' && leg.source === 'provider'" class="badge badge-ghost badge-xs">{{ t('leg.transitEstimate') }}</span>
+    <span v-if="leg.route_preference === 'shortest'" class="badge badge-ghost badge-xs">{{ t('leg.routeShortest') }}</span>
+    <span v-if="leg.route_pinned" class="badge badge-ghost badge-xs">{{ t('leg.pinned') }}</span>
+    <span v-if="leg.via.length > 0" class="badge badge-ghost badge-xs">{{ t('leg.via') }}</span>
     <span v-if="leg.note" class="italic">{{ leg.note }}</span>
 
     <template v-if="canEdit">

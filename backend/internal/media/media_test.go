@@ -162,6 +162,26 @@ func TestPreviewsRenderEveryWidth(t *testing.T) {
 	}
 }
 
+// TestCropCutsTheFrame checks that a cover's frame is cut out at the share of
+// the preview it names, and that rubbish is refused rather than passed on.
+func TestCropCutsTheFrame(t *testing.T) {
+	cropped, err := Crop(jpegBytes(t, 400, 200), 0.25, 0.5, 0.5, 0.5)
+	if err != nil {
+		t.Fatalf("crop: %v", err)
+	}
+	width, height, err := Dimensions(cropped)
+	if err != nil {
+		t.Fatalf("read cropped size: %v", err)
+	}
+	if width != 200 || height != 100 {
+		t.Errorf("frame is %dx%d, want 200x100", width, height)
+	}
+
+	if _, err := Crop([]byte("not a picture"), 0, 0, 1, 1); err != ErrNoThumbnail {
+		t.Errorf("a file that is not a picture gave %v, want ErrNoThumbnail", err)
+	}
+}
+
 // TestHasSizeAcceptsOfferedWidthsOnly keeps the preview sizes a closed set, so
 // a request cannot ask the service to render an arbitrary size.
 func TestHasSizeAcceptsOfferedWidthsOnly(t *testing.T) {

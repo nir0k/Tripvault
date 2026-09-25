@@ -69,18 +69,29 @@ func TestStraightLinesAndEstimates(t *testing.T) {
 type fakeProvider struct {
 	err   error
 	calls int
+	last  Request
 }
 
 // Name identifies the fake.
 func (f *fakeProvider) Name() string { return "fake" }
 
-// Route returns the fixed answer.
-func (f *fakeProvider) Route(context.Context, string, domain.Point, domain.Point) (Route, error) {
+// Capabilities says the fake can do everything.
+func (f *fakeProvider) Capabilities() Capabilities {
+	return Capabilities{Shortest: true, Alternatives: true}
+}
+
+// Route returns the fixed answer, as many routes as were asked for.
+func (f *fakeProvider) Route(_ context.Context, request Request) ([]Route, error) {
 	f.calls++
+	f.last = request
 	if f.err != nil {
-		return Route{}, f.err
+		return nil, f.err
 	}
-	return Route{DistanceM: 186000, DurationS: 8000, Geometry: "abc"}, nil
+	routes := []Route{{DistanceM: 186000, DurationS: 8000, Geometry: "abc"}}
+	for index := 1; index < request.Alternatives; index++ {
+		routes = append(routes, Route{DistanceM: 186000 + index, DurationS: 8000 + index, Geometry: "alt"})
+	}
+	return routes, nil
 }
 
 // memoryStore is an in-memory cache and usage counter.
@@ -132,40 +143,96 @@ func TestServiceCalculate(t *testing.T) {
 	provider := &fakeProvider{}
 	service, store := newTestService(provider, Options{PerMinute: 2, Daily: 100, CacheTTL: time.Hour})
 
-	first := service.Calculate(ctx, domain.ModeCar, &reykjavik, &vik)
-	second := service.Calculate(ctx, domain.ModeTransit, &reykjavik, &vik)
+	first := service.Calculate(ctx, domain.ModeCar, &reykjavik, &vik, domain.LegRoute{})
+	second := service.Calculate(ctx, domain.ModeTransit, &reykjavik, &vik, domain.LegRoute{})
 	if first.Source != domain.LegProvider || second.Source != domain.LegProvider || provider.calls != 1 {
 		t.Errorf("transit should reuse the car route from the cache: %+v %+v calls=%d", first, second, provider.calls)
 	}
 
-	service.Calculate(ctx, domain.ModeWalk, &reykjavik, &vik)
-	limited := service.Calculate(ctx, domain.ModeBike, &reykjavik, &vik)
+	service.Calculate(ctx, domain.ModeWalk, &reykjavik, &vik, domain.LegRoute{})
+	limited := service.Calculate(ctx, domain.ModeBike, &reykjavik, &vik, domain.LegRoute{})
 	if limited.Source != domain.LegEstimate || limited.Error != domain.LegErrorRateLimited {
 		t.Errorf("per-minute limit: %+v", limited)
 	}
 
-	if err := service.Forget(ctx, domain.ModeCar, reykjavik, vik); err != nil || len(store.routes) != 1 {
+	if err := service.Forget(ctx, domain.ModeCar, reykjavik, vik, domain.LegRoute{}); err != nil || len(store.routes) != 1 {
 		t.Errorf("forget: %v, %d cached", err, len(store.routes))
 	}
 
-	if got := service.Calculate(ctx, domain.ModeCar, nil, &vik); got.Source != domain.LegMissingCoordinates {
+	if got := service.Calculate(ctx, domain.ModeCar, nil, &vik, domain.LegRoute{}); got.Source != domain.LegMissingCoordinates {
 		t.Errorf("missing point: %+v", got)
 	}
 
 	daily, dailyStore := newTestService(&fakeProvider{}, Options{Daily: 1})
 	dailyStore.requests = 1
-	if got := daily.Calculate(ctx, domain.ModeCar, &reykjavik, &vik); got.Error != domain.LegErrorDailyLimit {
+	if got := daily.Calculate(ctx, domain.ModeCar, &reykjavik, &vik, domain.LegRoute{}); got.Error != domain.LegErrorDailyLimit {
 		t.Errorf("daily limit: %+v", got)
 	}
 
 	failing, _ := newTestService(&fakeProvider{err: ErrNoRoute}, Options{})
-	if got := failing.Calculate(ctx, domain.ModeCar, &reykjavik, &vik); got.Error != domain.LegErrorNoRoute {
+	if got := failing.Calculate(ctx, domain.ModeCar, &reykjavik, &vik, domain.LegRoute{}); got.Error != domain.LegErrorNoRoute {
 		t.Errorf("no route: %+v", got)
 	}
 
 	disabled, _ := newTestService(nil, Options{})
-	if got := disabled.Calculate(ctx, domain.ModeCar, &reykjavik, &vik); got.Error != domain.LegErrorProviderDisabled || disabled.Enabled() {
+	if got := disabled.Calculate(ctx, domain.ModeCar, &reykjavik, &vik, domain.LegRoute{}); got.Error != domain.LegErrorProviderDisabled || disabled.Enabled() {
 		t.Errorf("no provider: %+v", got)
+	}
+}
+
+// TestServiceRoutesAsTheLegAsks checks that a leg's preference and via points
+// reach the provider and keep routes apart in the cache, and that forgetting
+// forgets the route the leg asked for.
+func TestServiceRoutesAsTheLegAsks(t *testing.T) {
+	ctx := context.Background()
+	provider := &fakeProvider{}
+	service, store := newTestService(provider, Options{CacheTTL: time.Hour})
+	via := domain.Point{Lat: 63.9, Lng: -20.5}
+	shortest := domain.LegRoute{Preference: domain.RouteShortest}
+	through := domain.LegRoute{Via: []domain.Point{via}}
+
+	service.Calculate(ctx, domain.ModeCar, &reykjavik, &vik, domain.LegRoute{})
+	service.Calculate(ctx, domain.ModeCar, &reykjavik, &vik, shortest)
+	if provider.last.Preference != domain.RouteShortest || provider.calls != 2 {
+		t.Errorf("the shortest route was asked as %+v after %d calls", provider.last, provider.calls)
+	}
+	service.Calculate(ctx, domain.ModeCar, &reykjavik, &vik, through)
+	if len(provider.last.Points) != 3 || provider.last.Points[1] != via || provider.last.Preference != domain.RouteFastest {
+		t.Errorf("a route through a point was asked as %+v", provider.last)
+	}
+	if len(store.routes) != 3 {
+		t.Errorf("three ways of routing one leg share %d cache entries", len(store.routes))
+	}
+	if err := service.Forget(ctx, domain.ModeCar, reykjavik, vik, through); err != nil || len(store.routes) != 2 {
+		t.Errorf("forget: %v, %d cached", err, len(store.routes))
+	}
+}
+
+// TestServiceAlternatives checks the routes a leg is offered and the refusals.
+func TestServiceAlternatives(t *testing.T) {
+	ctx := context.Background()
+	provider := &fakeProvider{}
+	service, store := newTestService(provider, Options{CacheTTL: time.Hour})
+
+	results, err := service.Alternatives(ctx, domain.ModeCar, reykjavik, vik, domain.RouteShortest)
+	if err != nil || len(results) != alternativeCount || results[1].Source != domain.LegProvider {
+		t.Fatalf("alternatives: %+v %v", results, err)
+	}
+	if provider.last.Alternatives != alternativeCount || provider.last.Preference != domain.RouteShortest ||
+		len(store.routes) != 0 || store.requests != 1 {
+		t.Errorf("asked %+v, cached %d, counted %d", provider.last, len(store.routes), store.requests)
+	}
+	if _, err := service.Alternatives(ctx, domain.ModeFlight, reykjavik, vik, ""); !errors.Is(err, ErrNotRouted) {
+		t.Errorf("a flight: %v", err)
+	}
+	disabled, _ := newTestService(nil, Options{})
+	if _, err := disabled.Alternatives(ctx, domain.ModeCar, reykjavik, vik, ""); !errors.Is(err, ErrDisabled) {
+		t.Errorf("no provider: %v", err)
+	}
+	limited, limitedStore := newTestService(&fakeProvider{}, Options{Daily: 1})
+	limitedStore.requests = 1
+	if _, err := limited.Alternatives(ctx, domain.ModeCar, reykjavik, vik, ""); !errors.Is(err, ErrDailyLimit) {
+		t.Errorf("daily limit: %v", err)
 	}
 }
 
@@ -183,14 +250,37 @@ func TestORSClient(t *testing.T) {
 	defer server.Close()
 
 	client := NewORS(server.URL+"/openrouteservice/", "secret-key")
-	route, err := client.Route(context.Background(), "driving-car", reykjavik, vik)
-	if err != nil || route.DistanceM != 186020 || route.DurationS != 8041 || route.Geometry != "_p~iF" {
-		t.Errorf("route: %+v %v", route, err)
+	routes, err := client.Route(context.Background(), Request{Profile: profileCar, Points: []domain.Point{reykjavik, vik}})
+	if err != nil || len(routes) != 1 || routes[0].DistanceM != 186020 || routes[0].DurationS != 8041 ||
+		routes[0].Geometry != "_p~iF" {
+		t.Errorf("route: %+v %v", routes, err)
 	}
+	// The fastest route is asked for by name: openrouteservice's own default is
+	// a judgement of its own that often leaves the main road.
 	if gotAuth != "secret-key" || gotPath != "/openrouteservice/v2/directions/driving-car" ||
 		!strings.Contains(gotBody, `"coordinates":[[-21.9426,64.1466],[-19.006,63.4186]]`) ||
-		!strings.Contains(gotBody, `"radiuses":[5000,5000]`) {
+		!strings.Contains(gotBody, `"radiuses":[5000,5000]`) || !strings.Contains(gotBody, `"preference":"fastest"`) ||
+		strings.Contains(gotBody, "alternative_routes") {
 		t.Errorf("request: auth=%q path=%q body=%s", gotAuth, gotPath, gotBody)
+	}
+
+	via := domain.Point{Lat: 63.9, Lng: -20.5}
+	if _, err := client.Route(context.Background(), Request{Profile: profileCar,
+		Points: []domain.Point{reykjavik, via, vik}, Preference: domain.RouteShortest, Alternatives: 3}); err != nil {
+		t.Fatalf("route through a point: %v", err)
+	}
+	if !strings.Contains(gotBody, `"coordinates":[[-21.9426,64.1466],[-20.5,63.9],[-19.006,63.4186]]`) ||
+		!strings.Contains(gotBody, `"radiuses":[5000,5000,5000]`) || !strings.Contains(gotBody, `"preference":"shortest"`) ||
+		strings.Contains(gotBody, "alternative_routes") {
+		t.Errorf("a shortest route through a point asked %s", gotBody)
+	}
+
+	if _, err := client.Route(context.Background(), Request{Profile: profileCar,
+		Points: []domain.Point{reykjavik, vik}, Alternatives: 3}); err != nil {
+		t.Fatalf("alternatives: %v", err)
+	}
+	if !strings.Contains(gotBody, `"alternative_routes":{"share_factor":0.6,"target_count":3,"weight_factor":1.4}`) {
+		t.Errorf("alternatives were asked as %s", gotBody)
 	}
 
 	cases := []struct {
@@ -205,7 +295,7 @@ func TestORSClient(t *testing.T) {
 	}
 	for _, tc := range cases {
 		status, answer = tc.status, tc.answer
-		if _, err := client.Route(context.Background(), "driving-car", reykjavik, vik); !errors.Is(err, tc.want) {
+		if _, err := client.Route(context.Background(), Request{Profile: profileCar, Points: []domain.Point{reykjavik, vik}}); !errors.Is(err, tc.want) {
 			t.Errorf("status %d: %v, want %v", tc.status, err, tc.want)
 		}
 	}

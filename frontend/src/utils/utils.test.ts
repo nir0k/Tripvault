@@ -272,7 +272,7 @@ describe('media hints', () => {
       id: 'l1', from_item_id: 'x', to_item_id: 'p1', mode: 'walk' as const, distance_m: null, duration_s: null,
       calculated_distance_m: null, calculated_duration_s: null, manual_distance: false, manual_duration: false,
       geometry: '', source: 'pending' as const, error: null, calculated_at: null, planned_cost_amount: null,
-      actual_cost_amount: null, note: 'bus',
+      actual_cost_amount: null, note: 'bus', route_preference: 'fastest' as const, via: [], route_pinned: false,
     }
     const report: TripDocument = {
       ...document,

@@ -183,7 +183,9 @@ func NewExpander() *Expander {
 const maxRedirects = 5
 
 // Expand - follows a short link's redirects, one at a time, while they stay on
-// Google hosts, and returns the first link that holds a position.
+// Google hosts, and returns the first link that is no longer a short one. What
+// that link holds - a place, or a whole route - is for its reader to work out,
+// so a route link comes back as it is rather than being taken for a place.
 //
 // Arguments:
 //   - ctx: context bounding the requests.
@@ -199,7 +201,8 @@ func (e *Expander) Expand(ctx context.Context, text string) (string, error) {
 		if err != nil || link.Scheme != "https" || !redirectHosts[strings.ToLower(link.Hostname())] {
 			return "", ErrUnrecognized
 		}
-		if _, err := ParseLocation(current); err == nil {
+		host := strings.ToLower(link.Hostname())
+		if !shortLinkHosts[host] && host != "consent.google.com" {
 			return current, nil
 		}
 		// A consent page carries the real link in its "continue" parameter.

@@ -13,6 +13,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/nir0k/tripvault/backend/internal/domain"
+	"github.com/nir0k/tripvault/backend/internal/googlelink"
+	"github.com/nir0k/tripvault/backend/internal/routing"
 )
 
 // fakeDocuments serves one document of the fake trip, with one day, one place
@@ -242,11 +244,13 @@ func (f *fakeDocuments) UpdateLeg(_ context.Context, leg domain.Leg) error {
 
 // SaveLegCalculation stores a calculation when the input still matches.
 func (f *fakeDocuments) SaveLegCalculation(_ context.Context, legID uuid.UUID, input string,
-	calculation domain.LegCalculation, _ time.Time) error {
-	if legID == f.leg.ID && input == f.leg.Input {
-		f.leg.DistanceM, f.leg.DurationS, f.leg.Source = calculation.DistanceM, calculation.DurationS, calculation.Source
+	calculation domain.LegCalculation, pinned bool, _ time.Time) (bool, error) {
+	if legID != f.leg.ID || input != f.leg.Input {
+		return false, nil
 	}
-	return nil
+	f.leg.DistanceM, f.leg.DurationS, f.leg.Source = calculation.DistanceM, calculation.DurationS, calculation.Source
+	f.leg.Geometry, f.leg.Pinned = calculation.Geometry, pinned
+	return true, nil
 }
 
 // SaveTranslations keeps what was saved, so a test can see what reached the
@@ -293,6 +297,10 @@ func (f *fakeDocuments) DeleteTrack(_ context.Context, itemID uuid.UUID) error {
 type fakeRouter struct {
 	calculated int
 	forgotten  int
+	// route is the routing the last calculation was asked for.
+	route domain.LegRoute
+	// alternativesErr fails the next request for alternatives.
+	alternativesErr error
 }
 
 // Enabled reports a configured provider.
@@ -301,17 +309,42 @@ func (f *fakeRouter) Enabled() bool { return true }
 // ProviderName names the fake.
 func (f *fakeRouter) ProviderName() string { return "fake" }
 
+// Capabilities says the fake can do everything.
+func (f *fakeRouter) Capabilities() routing.Capabilities {
+	return routing.Capabilities{Shortest: true, Alternatives: true}
+}
+
 // Calculate returns 12 km in 15 minutes.
-func (f *fakeRouter) Calculate(context.Context, domain.TravelMode, *domain.Point, *domain.Point) domain.LegCalculation {
+func (f *fakeRouter) Calculate(_ context.Context, _ domain.TravelMode, _, _ *domain.Point,
+	route domain.LegRoute) domain.LegCalculation {
 	f.calculated++
+	f.route = route
 	distance, duration := 12000, 900
 	return domain.LegCalculation{DistanceM: &distance, DurationS: &duration, Source: domain.LegProvider}
 }
 
 // Forget counts forgotten routes.
-func (f *fakeRouter) Forget(context.Context, domain.TravelMode, domain.Point, domain.Point) error {
+func (f *fakeRouter) Forget(context.Context, domain.TravelMode, domain.Point, domain.Point, domain.LegRoute) error {
 	f.forgotten++
 	return nil
+}
+
+// Alternatives returns two routes between the ends, a straight one and a
+// longer one, or the error it was told to fail with.
+func (f *fakeRouter) Alternatives(_ context.Context, mode domain.TravelMode, from, to domain.Point,
+	_ domain.RoutePreference) ([]domain.LegCalculation, error) {
+	if f.alternativesErr != nil {
+		return nil, f.alternativesErr
+	}
+	if !mode.Routed() {
+		return nil, routing.ErrNotRouted
+	}
+	line := domain.EncodePolyline([]domain.Point{from, to})
+	first, firstTime, second, secondTime := 12000, 900, 15000, 1100
+	return []domain.LegCalculation{
+		{DistanceM: &first, DurationS: &firstTime, Geometry: line, Source: domain.LegProvider},
+		{DistanceM: &second, DurationS: &secondTime, Geometry: line, Source: domain.LegProvider},
+	}, nil
 }
 
 // newDocumentServer builds a server whose reader holds role on the trip that
@@ -569,5 +602,118 @@ func TestRetryEstimatedLegsNeedsAnEditor(t *testing.T) {
 	}
 	if router.calculated != 0 {
 		t.Errorf("a viewer spent %d provider requests", router.calculated)
+	}
+}
+
+// TestLegRouteChoice checks choosing how a road leg is routed: its preference
+// and via points reach the router, the alternatives are listed, a chosen one is
+// kept and left alone by later calculations, and a route link is read into via
+// points.
+func TestLegRouteChoice(t *testing.T) {
+	s, docs, router := newRoutingServer(domain.RoleEditor)
+	placeLat, placeLng, stayLat, stayLng := 63.6156, -19.9886, 63.4186, -19.006
+	docs.place.Lat, docs.place.Lng = &placeLat, &placeLng
+	docs.stay.Lat, docs.stay.Lng = &stayLat, &stayLng
+	to := domain.Point{Lat: stayLat, Lng: stayLng}
+	base := "/api/v1/documents/" + docs.document.ID.String()
+	legPath := "/api/v1/legs/" + docs.leg.ID.String()
+
+	recorder := send(s, http.MethodPatch, legPath, "good",
+		`{"route_preference":"shortest","via":[{"lat":63.5,"lng":-19.5}]}`)
+	if recorder.Code != http.StatusOK || docs.leg.Preference != domain.RouteShortest || len(docs.leg.Via) != 1 {
+		t.Fatalf("set the routing: %d %s", recorder.Code, recorder.Body.String())
+	}
+	send(s, http.MethodPost, base+"/legs:calculate", "good", "")
+	if router.route.Preference != domain.RouteShortest || len(router.route.Via) != 1 {
+		t.Errorf("the routing reached the router as %+v", router.route)
+	}
+	for _, body := range []string{`{"route_preference":"scenic"}`, `{"via":[{"lat":91,"lng":0}]}`} {
+		if recorder = send(s, http.MethodPatch, legPath, "good", body); recorder.Code != http.StatusUnprocessableEntity {
+			t.Errorf("%s: %d", body, recorder.Code)
+		}
+	}
+
+	recorder = send(s, http.MethodPost, legPath+":alternatives", "good", "")
+	var routes routeListResponse
+	_ = json.Unmarshal(recorder.Body.Bytes(), &routes)
+	if recorder.Code != http.StatusOK || len(routes.Items) != 2 || routes.Items[1].DistanceM != 15000 {
+		t.Fatalf("alternatives: %d %s", recorder.Code, recorder.Body.String())
+	}
+	chosen, _ := json.Marshal(routes.Items[1])
+
+	// A leg routed through points of its own takes the route they make.
+	if recorder = send(s, http.MethodPost, legPath+":route", "good", string(chosen)); recorder.Code != http.StatusUnprocessableEntity {
+		t.Errorf("a route chosen for a leg with via points: %d", recorder.Code)
+	}
+	send(s, http.MethodPatch, legPath, "good", `{"via":null}`)
+	recorder = send(s, http.MethodPost, legPath+":route", "good", string(chosen))
+	if recorder.Code != http.StatusOK || !docs.leg.Pinned || *docs.leg.DistanceM != 15000 {
+		t.Fatalf("pin the route: %d %s %+v", recorder.Code, recorder.Body.String(), docs.leg)
+	}
+	elsewhere, _ := json.Marshal(routeBody{DistanceM: 1, DurationS: 1,
+		Geometry: domain.EncodePolyline([]domain.Point{{Lat: 64.1, Lng: -21.9}, to})})
+	if recorder = send(s, http.MethodPost, legPath+":route", "good", string(elsewhere)); recorder.Code != http.StatusUnprocessableEntity {
+		t.Errorf("a route from elsewhere: %d", recorder.Code)
+	}
+
+	// A pinned leg waiting after a change is not calculated over its choice;
+	// an explicit recalculation replaces it.
+	docs.leg.Source = domain.LegPending
+	calculated := router.calculated
+	send(s, http.MethodPost, base+"/legs:calculate", "good", "")
+	if router.calculated != calculated {
+		t.Errorf("a pinned leg was calculated again")
+	}
+	send(s, http.MethodPost, legPath+":recalculate", "good", "")
+	if router.calculated != calculated+1 || docs.leg.Pinned {
+		t.Errorf("a recalculation kept the choice: calculated=%d pinned=%v", router.calculated, docs.leg.Pinned)
+	}
+
+	link := "https://www.google.com/maps/dir/A/B/data=!4m19!4m18!1m10!1m1!1s0x0:0x0!2m2!1d-19.9886!2d63.6156" +
+		"!3m4!1m2!1d-19.5!2d63.5!3s0x0:0x0!1m5!1m1!1s0x0:0x0!2m2!1d-19.006!2d63.4186!3e0"
+	recorder = send(s, http.MethodPost, legPath+":google-link", "good", `{"url":"`+link+`"}`)
+	var via viaListResponse
+	_ = json.Unmarshal(recorder.Body.Bytes(), &via)
+	if recorder.Code != http.StatusOK || len(via.Via) != 1 || via.Via[0].Lat != 63.5 {
+		t.Errorf("read a route link: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if recorder = send(s, http.MethodPost, legPath+":google-link", "good", `{"url":"https://example.com"}`); recorder.Code != http.StatusUnprocessableEntity {
+		t.Errorf("a foreign link: %d", recorder.Code)
+	}
+
+	docs.leg.Mode = domain.ModeFlight
+	if recorder = send(s, http.MethodPost, legPath+":alternatives", "good", ""); recorder.Code != http.StatusUnprocessableEntity {
+		t.Errorf("alternatives of a flight: %d", recorder.Code)
+	}
+	docs.leg.Mode = domain.ModeCar
+	router.alternativesErr = routing.ErrDisabled
+	if recorder = send(s, http.MethodPost, legPath+":alternatives", "good", ""); recorder.Code != http.StatusServiceUnavailable {
+		t.Errorf("alternatives without a provider: %d", recorder.Code)
+	}
+
+	viewer, viewerDocs, _ := newRoutingServer(domain.RoleViewer)
+	if recorder = send(viewer, http.MethodPost, "/api/v1/legs/"+viewerDocs.leg.ID.String()+":alternatives", "good", ""); recorder.Code != http.StatusForbidden {
+		t.Errorf("a viewer lists alternatives: %d", recorder.Code)
+	}
+}
+
+// TestLinkViaTrimsTheEnds checks which positions of a link become via points:
+// a labelled link loses its start and end stops, one read by coordinates alone
+// the positions near the leg's own ends.
+func TestLinkViaTrimsTheEnds(t *testing.T) {
+	from, to := domain.Point{Lat: 64.1466, Lng: -21.9426}, domain.Point{Lat: 63.4186, Lng: -19.006}
+	middle := domain.Point{Lat: 63.9, Lng: -20.5}
+	labelled := googlelink.Route{Labelled: true, Points: []googlelink.Point{
+		{Point: domain.Point{Lat: 60, Lng: 10}, Stop: true}, {Point: middle}, {Point: to, Stop: true},
+	}}
+	if via := linkVia(labelled, from, to); len(via) != 1 || via[0] != middle {
+		t.Errorf("labelled: %+v", via)
+	}
+	near := domain.Point{Lat: from.Lat + 0.005, Lng: from.Lng}
+	plain := googlelink.Route{Points: []googlelink.Point{
+		{Point: near, Stop: true}, {Point: middle, Stop: true}, {Point: to, Stop: true},
+	}}
+	if via := linkVia(plain, from, to); len(via) != 1 || via[0] != middle {
+		t.Errorf("by coordinates: %+v", via)
 	}
 }

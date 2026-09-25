@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nir0k/tripvault/backend/internal/domain"
+	"github.com/nir0k/tripvault/backend/internal/routing"
 	"github.com/nir0k/tripvault/backend/internal/telemetry"
 )
 
@@ -63,6 +64,10 @@ type clientConfigResponse struct {
 	// RoutingEnabled is false when no routing provider is configured and every
 	// road leg is an estimate, which the interface explains.
 	RoutingEnabled bool `json:"routing_enabled"`
+	// RoutingShortest and RoutingAlternatives say whether the provider can be
+	// asked for the shortest route and for other routes than its best.
+	RoutingShortest     bool `json:"routing_shortest"`
+	RoutingAlternatives bool `json:"routing_alternatives"`
 	// GeocodingEnabled is false when place search and reverse lookups are
 	// unavailable; coordinates and links still work.
 	GeocodingEnabled bool `json:"geocoding_enabled"`
@@ -73,12 +78,18 @@ type clientConfigResponse struct {
 
 // handleClientConfig reports the instance settings the client needs up front.
 func (s *Server) handleClientConfig(w http.ResponseWriter, _ *http.Request) {
+	var capabilities routing.Capabilities
+	if s.routing != nil {
+		capabilities = s.routing.Capabilities()
+	}
 	writeJSON(w, s.logger, http.StatusOK, clientConfigResponse{
-		Version:          telemetry.Build().Version,
-		Locales:          domain.SupportedLocales,
-		RoutingEnabled:   s.routing != nil && s.routing.Enabled(),
-		GeocodingEnabled: s.geocoder != nil && s.geocoder.Enabled(),
-		MapTileURL:       s.opts.MapTileURL,
-		MapAttribution:   s.opts.MapAttribution,
+		Version:             telemetry.Build().Version,
+		Locales:             domain.SupportedLocales,
+		RoutingEnabled:      s.routing != nil && s.routing.Enabled(),
+		RoutingShortest:     capabilities.Shortest,
+		RoutingAlternatives: capabilities.Alternatives,
+		GeocodingEnabled:    s.geocoder != nil && s.geocoder.Enabled(),
+		MapTileURL:          s.opts.MapTileURL,
+		MapAttribution:      s.opts.MapAttribution,
 	})
 }

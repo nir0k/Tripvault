@@ -1,16 +1,14 @@
 <script setup lang="ts">
-import { reactive, ref, useTemplateRef } from 'vue'
+import { onBeforeUnmount, ref, useTemplateRef } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { uploadMedia } from '@/api/media'
 import type { Media } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
-import { errorMessage } from '@/utils/errors'
-import { fileChecksum, shrinkPicture } from '@/utils/picture'
+import { useUploadsStore, type UploadHandle } from '@/stores/uploads'
 
 // Adding photographs to a day or a place: pick them, or drop them on the panel.
-// Each file goes up in a request of its own, so each has a bar of its own, and
-// large ones are shrunk here first - a phone's photograph is far larger than
-// anything a report shows, and the service would only store the difference.
+// The files are handed to the application's upload queue, whose window in the
+// corner (UploadPanel) follows them on their way up, so this panel stays free
+// for the next ones and the page keeps its shape.
 const props = withDefaults(defineProps<{
   tripId: string
   /** Start as a button and open on a click, for a place among many others. */
@@ -21,24 +19,25 @@ const emit = defineEmits<{
   uploaded: [media: Media[]]
 }>()
 
-const { t, te } = useI18n()
-
-/** A file on its way up, with what has been sent of it so far. */
-interface Upload {
-  name: string
-  share: number
-  error: string
-}
+const { t } = useI18n()
+const uploads = useUploadsStore()
 
 const field = useTemplateRef<HTMLInputElement>('field')
 // A compact uploader is a button until it is asked for: a report with a dozen
 // places would otherwise be a column of identical panels.
 const open = ref(!props.compact)
-const uploads = reactive<Upload[]>([])
-const busy = ref(false)
 const dragging = ref(false)
 const isPrivate = ref(false)
 const shrink = ref(readShrinkPreference())
+// The batches this panel started, which stop reporting to it once it is gone:
+// the files still go up, and the page they were added from is no longer there
+// to show them.
+const handles: UploadHandle[] = []
+onBeforeUnmount(() => {
+  for (const handle of handles) {
+    handle.detach()
+  }
+})
 
 /** SHRINK_KEY remembers, per browser, whether large pictures are reduced. */
 const SHRINK_KEY = 'tripvault.media_shrink'
@@ -62,63 +61,30 @@ function rememberShrink(value: boolean): void {
   }
 }
 
-// send uploads the chosen files one after another, reporting each one's
-// progress, and hands the stored files to the page that asked for them.
-async function send(files: File[]): Promise<void> {
-  if (files.length === 0 || busy.value) {
+// send hands the chosen files to the upload queue; the page hears of the
+// stored ones once they are all through.
+function send(files: File[]): void {
+  if (files.length === 0) {
     return
   }
-  busy.value = true
-  uploads.splice(0, uploads.length, ...files.map((file) => ({ name: file.name, share: 0, error: '' })))
-  const stored: Media[] = []
-
-  for (const [index, file] of files.entries()) {
-    const upload = uploads[index]
-    if (!upload) {
-      continue
-    }
-    try {
-      // The sum is taken of the chosen file, before shrinking, so a copy of it
-      // is refused however it was shrunk the time before.
-      const sourceChecksum = await fileChecksum(file)
-      const prepared = shrink.value ? await shrinkPicture(file) : file
-      stored.push(await uploadMedia(props.tripId, prepared, {
-        private: isPrivate.value,
-        sourceChecksum: sourceChecksum ?? undefined,
-        onProgress: (share) => {
-          upload.share = share
-        },
-      }))
-      upload.share = 1
-    } catch (err) {
-      upload.error = errorMessage(err, t, te)
-    }
-  }
-
-  busy.value = false
-  if (stored.length > 0) {
-    emit('uploaded', stored)
-    // The panel folds away again once it has done its work.
-    open.value = !props.compact
-  }
-  // The finished bars stay only while something failed, so the reason can be read.
-  if (!uploads.some((upload) => upload.error)) {
-    uploads.splice(0, uploads.length)
-  }
+  handles.push(uploads.enqueue(props.tripId, files, { private: isPrivate.value, shrink: shrink.value },
+    (media) => emit('uploaded', media)))
+  // A compact panel folds away at once: the window in the corner takes over.
+  open.value = !props.compact
 }
 
 // onPick takes the files from the field and empties it, so the same file can be
 // chosen again after it was removed.
 function onPick(event: Event): void {
   const input = event.target as HTMLInputElement
-  void send(Array.from(input.files ?? []))
+  send(Array.from(input.files ?? []))
   input.value = ''
 }
 
 // onDrop takes the files dropped on the panel.
 function onDrop(event: DragEvent): void {
   dragging.value = false
-  void send(Array.from(event.dataTransfer?.files ?? []))
+  send(Array.from(event.dataTransfer?.files ?? []))
 }
 
 // onShrink stores the choice as it is made.
@@ -158,7 +124,7 @@ function onShrink(event: Event): void {
         class="hidden"
         @change="onPick"
       />
-      <button type="button" class="btn btn-sm btn-hover-outline" :disabled="busy" @click="field?.click()">
+      <button type="button" class="btn btn-sm btn-hover-outline" @click="field?.click()">
         {{ t('media.choose') }}
       </button>
 
@@ -173,18 +139,5 @@ function onShrink(event: Event): void {
         </label>
       </div>
     </div>
-
-    <ul v-if="uploads.length > 0" class="space-y-1">
-      <li v-for="upload in uploads" :key="upload.name" class="flex items-center gap-2 text-sm">
-        <span class="min-w-0 flex-1 truncate">{{ upload.name }}</span>
-        <progress
-          v-if="!upload.error"
-          class="progress progress-primary w-32"
-          :value="Math.round(upload.share * 100)"
-          max="100"
-        ></progress>
-        <span v-else class="text-error">{{ upload.error }}</span>
-      </li>
-    </ul>
   </div>
 </template>

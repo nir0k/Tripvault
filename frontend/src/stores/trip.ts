@@ -33,6 +33,7 @@ function sharedTrip(shared: Shared): Trip {
     plan_id: shared.kind === 'plan' ? SHARED_TRIP_ID : null,
     report_id: shared.kind === 'report' ? SHARED_TRIP_ID : null,
     cover_media_id: null,
+    cover_crop: null,
     languages: trip.languages,
     translations: trip.translations,
     created_at: '',

@@ -5,9 +5,10 @@ import { useRoute, useRouter } from 'vue-router'
 import * as mediaApi from '@/api/media'
 import { MEDIA_FAVORITE_LIMIT } from '@/api/media'
 import { updateTrip } from '@/api/trips'
-import type { Media, MediaTarget, PlanDay, PlanItem, TripDocument } from '@/api/types'
+import type { CoverCrop, Media, MediaTarget, PlanDay, PlanItem, TripDocument } from '@/api/types'
 import AppIcon, { type IconName } from '@/components/AppIcon.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import CoverCropDialog from '@/components/media/CoverCropDialog.vue'
 import MediaImage from '@/components/media/MediaImage.vue'
 import MediaLinkDialog from '@/components/media/MediaLinkDialog.vue'
 import MediaUploader from '@/components/media/MediaUploader.vue'
@@ -67,6 +68,7 @@ const selected = ref(new Set<string>())
 const confirmDialog = useTemplateRef<InstanceType<typeof ConfirmDialog>>('confirmDialog')
 const linkDialog = useTemplateRef<InstanceType<typeof MediaLinkDialog>>('linkDialog')
 const viewer = useTemplateRef<InstanceType<typeof MediaViewer>>('viewer')
+const coverCrop = useTemplateRef<InstanceType<typeof CoverCropDialog>>('coverCrop')
 const more = useTemplateRef<HTMLElement>('more')
 
 const trip = computed(() => store.trip)
@@ -278,14 +280,15 @@ function setPrivacy(picture: Media, isPrivate: boolean): void {
   void apply(async () => replaceMedia([await mediaApi.updateMedia(picture.id, { is_private: isPrivate })]), false)
 }
 
-// setCover makes a picture the one the trip is shown by.
-function setCover(picture: Media): void {
+// setCover makes a picture the one the trip is shown by, framed as it was
+// framed in the window that asked which part of it to show.
+function setCover(mediaId: string, crop: CoverCrop): void {
   const current = trip.value
   if (!current) {
     return
   }
   void apply(async () => {
-    store.set(await updateTrip(current.id, { cover_media_id: picture.id }))
+    store.set(await updateTrip(current.id, { cover_media_id: mediaId, cover_crop: crop }))
   })
 }
 
@@ -709,7 +712,7 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
                     </button>
                   </li>
                   <li>
-                    <button type="button" :disabled="busy" @click="setCover(tile.picture)">
+                    <button type="button" :disabled="busy" @click="coverCrop?.open(tile.picture.id)">
                       <AppIcon name="image" />
                       {{ t('media.setTripCover') }}
                     </button>
@@ -805,6 +808,7 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
       <MediaViewer ref="viewer" :items="order" />
       <MediaLinkDialog ref="linkDialog" :documents="documents" @save="applyLinks" />
       <ConfirmDialog ref="confirmDialog" />
+      <CoverCropDialog ref="coverCrop" @save="setCover" />
     </template>
   </div>
 </template>

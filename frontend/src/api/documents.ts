@@ -1,8 +1,8 @@
 import { http, PDF_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } from './client'
 import { filenameFrom, saveBlob } from '@/utils/download'
 import type {
-  ActivityType, CostCategory, ItemStatus, PlaceCategory, StayKind, Track, TransferKind, TranslationEntry, TravelMode,
-  TripDocument,
+  ActivityType, CostCategory, GeoPoint, ItemStatus, ListResponse, PlaceCategory, RouteOption, RoutePreference, StayKind,
+  Track, TransferKind, TranslationEntry, TravelMode, TripDocument,
 } from './types'
 
 // Every change answers with the whole document, recomputed, so each function
@@ -118,6 +118,9 @@ export interface LegChanges {
   actual_cost_amount?: string | null
   note?: string
   reset_manual?: boolean
+  route_preference?: RoutePreference
+  /** Replaces the points a road route passes through; null routes it end to end. */
+  via?: GeoPoint[] | null
 }
 
 /** path encodes one identifier into an API path. */
@@ -284,6 +287,32 @@ export async function updateLeg(legId: string, changes: LegChanges): Promise<Tri
  */
 export async function retryEstimatedLegs(documentId: string): Promise<TripDocument> {
   return (await http.post<TripDocument>(path`/documents/${documentId}/legs:retry`)).data
+}
+
+/**
+ * saveLeg stores a leg's changes and then, when one was chosen, keeps a route
+ * picked among its alternatives. The route goes second: a change of routing
+ * sends the leg back to pending, and the choice is made for the leg as it
+ * stands after the change.
+ */
+export async function saveLeg(legId: string, changes: LegChanges, route: RouteOption | null = null): Promise<TripDocument> {
+  const updated = await updateLeg(legId, changes)
+  return route ? pinLegRoute(legId, route) : updated
+}
+
+/** legAlternatives asks for the routes a road leg could take, the best first. */
+export async function legAlternatives(legId: string): Promise<RouteOption[]> {
+  return (await http.post<ListResponse<RouteOption>>(path`/legs/${legId}:alternatives`)).data.items
+}
+
+/** pinLegRoute keeps a route chosen among a leg's alternatives. */
+export async function pinLegRoute(legId: string, route: RouteOption): Promise<TripDocument> {
+  return (await http.post<TripDocument>(path`/legs/${legId}:route`, route)).data
+}
+
+/** readGoogleLink reads the points a Google Maps route passes through, for a leg. */
+export async function readGoogleLink(legId: string, url: string): Promise<GeoPoint[]> {
+  return (await http.post<{ via: GeoPoint[] }>(path`/legs/${legId}:google-link`, { url })).data.via
 }
 
 /** recalculateLeg calculates a leg again, bypassing the route cache. */

@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/nir0k/tripvault/backend/internal/domain"
+	"github.com/nir0k/tripvault/backend/internal/media"
 	"github.com/nir0k/tripvault/backend/internal/pdf"
 	"github.com/nir0k/tripvault/backend/internal/staticmap"
 )
@@ -254,7 +255,16 @@ func (s *Server) reportPhotos(ctx context.Context, trip domain.TripSummary,
 	var cover []byte
 	if trip.CoverMediaID != nil {
 		if item, held := pictures.byID[*trip.CoverMediaID]; held {
-			cover, _ = s.photoPreview(ctx, item)
+			cover, _ = s.photoPreview(ctx, item, coverPreviewWidth(trip.CoverCrop))
+		}
+		// The title page shows the part of the cover the trip is shown by
+		// everywhere else; a frame that cannot be cut leaves the whole picture.
+		if crop := trip.CoverCrop; cover != nil && crop != nil {
+			if framed, err := media.Crop(cover, crop.X, crop.Y, crop.W, crop.H); err == nil {
+				cover = framed
+			} else {
+				s.logger.Warn("the cover of a report was left uncut", slog.Any("error", err))
+			}
 		}
 	}
 
@@ -293,7 +303,7 @@ func (s *Server) reportPhotos(ctx context.Context, trip domain.TripSummary,
 		group.Go(func() {
 			workers <- struct{}{}
 			defer func() { <-workers }()
-			body, err := s.photoPreview(ctx, chosen[index].item)
+			body, err := s.photoPreview(ctx, chosen[index].item, pdfPhotoWidth)
 			if err != nil {
 				s.logger.Warn("a photograph was left out of a report",
 					slog.String("media_id", chosen[index].item.ID.String()), slog.Any("error", err))
@@ -341,18 +351,34 @@ func reportPictures(gallery []shown) []domain.Media {
 	return chosen
 }
 
-// photoPreview returns a photograph at the width the document draws pictures
-// at. It is the same preview the gallery asks for: the one kept in the store
+// coverPreviewWidth picks the preview a cover is cut from: the frame is drawn
+// across the page like a whole picture, so a frame of half the picture is cut
+// from a preview twice as wide, up to the widest one kept.
+func coverPreviewWidth(crop *domain.CoverCrop) int {
+	if crop == nil || crop.W <= 0 {
+		return pdfPhotoWidth
+	}
+	wanted := float64(pdfPhotoWidth) / crop.W
+	for _, size := range media.Sizes {
+		if float64(size) >= wanted {
+			return size
+		}
+	}
+	return media.Sizes[len(media.Sizes)-1]
+}
+
+// photoPreview returns a photograph at the given width, which is one of the
+// widths previews are kept at. It is the same preview the gallery asks for: the one kept in the store
 // when there is one, or a fresh one, rendered from the original and kept for
 // the next reader, with every other width - so a report is slow to export only
 // the first time, and only for pictures the background has not reached yet. The
 // result is a JPEG whatever the file was uploaded as, which is also what keeps
 // WebP out of a format that cannot carry it.
-func (s *Server) photoPreview(ctx context.Context, item domain.Media) ([]byte, error) {
+func (s *Server) photoPreview(ctx context.Context, item domain.Media, width int) ([]byte, error) {
 	if s.mediaFiles == nil {
 		return nil, fmt.Errorf("this service has no media store")
 	}
-	if preview, ok := s.storedPreview(ctx, item, pdfPhotoWidth); ok {
+	if preview, ok := s.storedPreview(ctx, item, width); ok {
 		return preview, nil
 	}
 
@@ -360,7 +386,7 @@ func (s *Server) photoPreview(ctx context.Context, item domain.Media) ([]byte, e
 	if err != nil {
 		return nil, err
 	}
-	return previews[pdfPhotoWidth], nil
+	return previews[width], nil
 }
 
 // pdfFilename turns a trip's title into a filename a browser will save happily.

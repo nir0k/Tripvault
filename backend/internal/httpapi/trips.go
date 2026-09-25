@@ -48,6 +48,8 @@ type tripResponse struct {
 	ReportID     *string          `json:"report_id"`
 	// CoverMediaID is the picture the trip is shown by, out of its own files.
 	CoverMediaID *string `json:"cover_media_id"`
+	// CoverCrop is the part of the cover shown; null means its middle.
+	CoverCrop *coverCropBody `json:"cover_crop"`
 	// Languages are a report's languages, the original first; empty for a plan.
 	Languages []string `json:"languages"`
 	// Translations are the report's title and summary in its further
@@ -55,6 +57,23 @@ type tripResponse struct {
 	Translations domain.TripTranslations `json:"translations"`
 	CreatedAt    time.Time               `json:"created_at"`
 	UpdatedAt    time.Time               `json:"updated_at"`
+}
+
+// coverCropBody is the frame of a cover on the wire, as fractions of the
+// picture's width and height from its top left corner.
+type coverCropBody struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	W float64 `json:"w"`
+	H float64 `json:"h"`
+}
+
+// newCoverCropBody renders a cover's frame, nil for one shown by its middle.
+func newCoverCropBody(crop *domain.CoverCrop) *coverCropBody {
+	if crop == nil {
+		return nil
+	}
+	return &coverCropBody{X: crop.X, Y: crop.Y, W: crop.W, H: crop.H}
 }
 
 // formatDate renders an optional calendar date in the API's form.
@@ -111,6 +130,7 @@ func newTripResponse(trip domain.TripSummary, now time.Time) tripResponse {
 		PlanID:       formatID(trip.PlanID),
 		ReportID:     formatID(trip.ReportID),
 		CoverMediaID: formatID(trip.CoverMediaID),
+		CoverCrop:    newCoverCropBody(trip.CoverCrop),
 		Languages:    wireLanguages(trip.Languages),
 		Translations: wireTripTranslations(trip.Translations),
 		CreatedAt:    trip.CreatedAt,
@@ -351,6 +371,10 @@ type updateTripRequest struct {
 	BudgetAmount optional[string] `json:"budget_amount"`
 	// CoverMediaID is the picture the trip is shown by; null takes it away.
 	CoverMediaID optional[string] `json:"cover_media_id"`
+	// CoverCrop is the part of the cover shown; null means its middle. A new
+	// cover sent without one is shown by its middle, since the old frame was
+	// chosen for another picture.
+	CoverCrop optional[coverCropBody] `json:"cover_crop"`
 	// Languages are a report's languages, the original first. A language left
 	// out loses its translations.
 	Languages optional[[]string] `json:"languages"`
@@ -376,12 +400,31 @@ func applyOptionalDate(field string, change optional[string], target **time.Time
 	return nil
 }
 
+// sameID reports whether two optional identifiers name the same thing.
+func sameID(a, b *uuid.UUID) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
 // applyTripChanges applies a partial update onto a stored trip. A null on a
 // field that cannot be cleared is treated as an empty value, which validation
 // then refuses.
 func applyTripChanges(trip domain.Trip, body updateTripRequest) (domain.Trip, error) {
+	previousCover := trip.CoverMediaID
 	if err := applyCover(body.CoverMediaID, &trip.CoverMediaID); err != nil {
 		return trip, err
+	}
+	if !sameID(previousCover, trip.CoverMediaID) {
+		trip.CoverCrop = nil
+	}
+	if body.CoverCrop.Set {
+		trip.CoverCrop = nil
+		if !body.CoverCrop.Null {
+			value := body.CoverCrop.Value
+			trip.CoverCrop = &domain.CoverCrop{X: value.X, Y: value.Y, W: value.W, H: value.H}
+		}
 	}
 	if body.Title.Set {
 		trip.Title = body.Title.Value
