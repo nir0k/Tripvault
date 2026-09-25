@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import type { PlanItem } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import MarkdownText from '@/components/MarkdownText.vue'
+import ReportTrackLine from '@/components/report/ReportTrackLine.vue'
 import { formatClock, formatMoney } from '@/utils/format'
 import { formatDuration, itemIcon, itemKindLabel } from '@/utils/plan'
 
@@ -135,6 +136,8 @@ const host = computed(() => {
         <span class="badge badge-warning badge-sm h-auto py-0.5">{{ t('place.late', { time: item.desired_time }) }}</span>
       </p>
       <MarkdownText v-if="item.description_md" :source="item.description_md" class="mt-1" />
+      <!-- The route is changed in the place's form; the card only reads it. -->
+      <ReportTrackLine v-if="item.track" :track="item.track" :editing="false" hint="" class="mt-2" />
     </div>
 
     <div v-if="canEdit" class="dropdown dropdown-end">

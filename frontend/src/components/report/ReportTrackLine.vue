@@ -10,8 +10,8 @@ import { errorMessage } from '@/utils/errors'
 import { formatDistance, formatHeight } from '@/utils/format'
 import { activeUnits } from '@/utils/units'
 
-// The line a day, a place or an activity was really travelled, imported from a
-// watch or a phone. It is one quiet row of figures - how far, how much up, how
+// The line a place or an activity was really travelled in a report, or is meant
+// to be travelled in a plan, imported from a watch, a phone or an outdoor app. It is one quiet row of figures - how far, how much up, how
 // much down - each told by its icon rather than a word, with the file one click
 // away; the map above does the actual showing.
 defineProps<{

@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import type { PlaceFields } from '@/api/documents'
 import type { ActivityType, CostCategory, PlaceCategory, PlanItem } from '@/api/types'
 import AmountInput from '@/components/AmountInput.vue'
+import AppIcon from '@/components/AppIcon.vue'
 import IconSelect from '@/components/IconSelect.vue'
 import PlaceKindFields from '@/components/plan/PlaceKindFields.vue'
 import LocationField, { type LocationModel } from '@/components/LocationField.vue'
@@ -14,10 +15,16 @@ import { costCategoryOptions } from '@/utils/plan'
 defineProps<{
   /** Ranks place search results near this point first. */
   focus: { lat: number; lng: number } | null
+  /** Whether the form offers a GPX or KML route; the budget's form does not. */
+  tracks?: boolean
 }>()
 
 const emit = defineEmits<{
-  save: [fields: PlaceFields, item: PlanItem | null]
+  /**
+   * track is a GPX or KML route to attach once the place is stored, or null;
+   * dropTrack asks for the route the place has to be removed.
+   */
+  save: [fields: PlaceFields, item: PlanItem | null, track: File | null, dropTrack: boolean]
 }>()
 
 const { t } = useI18n()
@@ -33,6 +40,9 @@ const dialog = useTemplateRef<HTMLDialogElement>('dialog')
 const locationField = useTemplateRef<InstanceType<typeof LocationField>>('locationField')
 const editing = ref<PlanItem | null>(null)
 const error = ref('')
+const track = ref<File | null>(null)
+const dropTrack = ref(false)
+const trackField = useTemplateRef<HTMLInputElement>('trackField')
 const form = reactive({
   kind: 'place' as 'place' | 'activity', activityType: 'hike' as ActivityType,
   name: '', category: 'other' as PlaceCategory, visitMinutes: '' as number | '', desiredTime: '', isOptional: false,
@@ -63,6 +73,8 @@ function open(item: PlanItem | null, position: { lat: number; lng: number } | nu
   kind: 'place' | 'activity' = 'place'): void {
   editing.value = item
   error.value = ''
+  forgetTrack()
+  dropTrack.value = false
   Object.assign(form, {
     kind: item?.kind === 'activity' ? 'activity' : item ? 'place' : kind,
     activityType: item?.activity_type ?? 'hike',
@@ -103,6 +115,21 @@ function fail(message: string): void {
   error.value = message
 }
 
+// onTrackPicked keeps the route chosen in the form, in place of the one the
+// place has.
+function onTrackPicked(event: Event): void {
+  track.value = (event.target as HTMLInputElement).files?.[0] ?? null
+  dropTrack.value = false
+}
+
+// forgetTrack drops the route chosen in the form before it was saved.
+function forgetTrack(): void {
+  track.value = null
+  if (trackField.value) {
+    trackField.value.value = ''
+  }
+}
+
 // parseCoordinate reads a typed coordinate, accepting a decimal comma.
 function parseCoordinate(value: string): number | null {
   const cleaned = value.trim().replace(',', '.')
@@ -134,7 +161,7 @@ function submit(): void {
   if (form.costCategory) {
     fields.cost_category = form.costCategory
   }
-  emit('save', fields, editing.value)
+  emit('save', fields, editing.value, track.value, dropTrack.value)
 }
 
 defineExpose({ open, close, fail })
@@ -173,6 +200,30 @@ defineExpose({ open, close, fail })
           <span>{{ t('place.optionalField') }}</span>
         </label>
       </div>
+
+      <fieldset v-if="tracks" class="fieldset rounded-box border border-base-300 p-3">
+        <legend class="fieldset-legend">{{ t('track.route') }}</legend>
+        <div class="flex flex-wrap items-center gap-2">
+          <button type="button" class="btn btn-sm btn-hover-outline" @click="trackField?.click()">
+            <AppIcon name="upload" />
+            {{ track || (editing?.track && !dropTrack) ? t('track.replace') : t('track.choose') }}
+          </button>
+          <span v-if="track" class="flex min-w-0 items-center gap-1 text-sm">
+            <span class="truncate">{{ track.name }}</span>
+            <button type="button" class="btn btn-ghost btn-xs btn-square" :aria-label="t('track.remove')" @click="forgetTrack">
+              <AppIcon name="close" />
+            </button>
+          </span>
+          <span v-else-if="editing?.track && !dropTrack" class="flex min-w-0 items-center gap-1 text-sm">
+            <span class="truncate text-base-content/70">{{ editing.track.original_name || editing.track.format.toUpperCase() }}</span>
+            <button type="button" class="btn btn-ghost btn-xs btn-square" :aria-label="t('track.remove')" @click="dropTrack = true">
+              <AppIcon name="close" />
+            </button>
+          </span>
+        </div>
+        <p class="text-xs text-base-content/60">{{ t('track.routeHint') }}</p>
+        <input ref="trackField" type="file" accept=".gpx,.kml,application/gpx+xml" class="hidden" @change="onTrackPicked" />
+      </fieldset>
 
       <LocationField ref="locationField" v-model="location" :focus="focus" @named="onNamed" />
 

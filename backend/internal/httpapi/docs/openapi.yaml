@@ -1935,20 +1935,21 @@ paths:
   /api/v1/items/{itemID}/track:
     post:
       tags: [Documents]
-      summary: Import the recorded line of a place or an activity
+      summary: Import the line of a place or an activity
       description: |
         A multipart upload with one `file` part holding a GPX or KML export of
         a hike, a walk or a descent that started at a place or makes up an
-        activity. It replaces whatever the place had. The length, the height
+        activity: in a report the recording of what was travelled, in a plan
+        the route meant to be taken. It replaces whatever the place had. The length, the height
         gained and lost and a thinned line are read from the file, and the file
         itself is kept to be downloaded from `/tracks/{trackID}/file`. The
         length is added to the legs of the day, as distance covered inside the
         place rather than between places. A day has no recording of its own.
-        A place with no position takes the recording's first point. When the
-        file records time, a place with no `actual_time` or `actual_end_time`
-        takes the recording's first and last moment in the trip's time zone.
-        A position or a time already set is kept.
-        Only a report takes one; a plan answers `422` with `report_only`.
+        A place with no position takes the line's first point. In a report,
+        when the file records time, a place with no `actual_time` or
+        `actual_end_time` takes the recording's first and last moment in the
+        trip's time zone. A position or a time already set is kept. A report
+        copied from a plan starts with the plan's routes, files included.
       operationId: importItemTrack
       parameters:
         - $ref: "#/components/parameters/ItemID"
@@ -4041,14 +4042,17 @@ components:
           format: uuid
           description: The picture the place is shown by, out of its own media.
         track:
-          description: The line the place or activity was recorded along, or null.
+          description: |
+            The line the place or activity was recorded along in a report, or
+            is meant to follow in a plan; null when it has none.
           oneOf:
             - $ref: "#/components/schemas/Track"
             - type: "null"
     Track:
       type: object
       description: |
-        A recorded line of a place or an activity. The file it came from
+        The line of a place or an activity, recorded in a report or planned
+        in a plan. The file it came from
         is downloaded from `/tracks/{id}/file`.
       required: [id, original_name, format, distance_m, point_count, ascent_m, descent_m, geometry,
                  started_at, ended_at]

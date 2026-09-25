@@ -6,10 +6,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// A track is the line a place or an activity was really travelled - a hike, a
-// walk around a lake - imported from a watch or a phone. It belongs to a
-// report: a plan has the route it intends to take, and what a recording says is
-// what actually happened. Each place or activity holds at most one. A day has
+// A track is the line of a place or an activity - a hike, a walk around a lake.
+// In a report it is what was really travelled, imported from a watch or a
+// phone; in a plan it is the route meant to be taken, drawn in an outdoor app,
+// and a report copied from the plan starts with it until a recording replaces
+// it. Each place or activity holds at most one. A day has
 // none of its own: the journeys between its places are its legs, which are
 // drawn and counted whether or not a part of the day was recorded.
 //

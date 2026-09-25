@@ -21,6 +21,9 @@ import (
 // It happens once per report, so the row-by-row inserts cost nothing that
 // matters.
 //
+// A place's route comes along with its file: in the plan it is the line meant
+// to be walked, and the report shows it until a recording takes its place.
+//
 // Two things are deliberately left out. The unassigned places do not come along:
 // a report describes what was actually done, and those were never put in a day.
 // The actual amounts are not filled either; they start empty and are entered as
@@ -81,6 +84,9 @@ func copyPlan(ctx context.Context, tx pgx.Tx, tripID uuid.UUID, plan domain.Docu
 		return uuid.Nil, err
 	}
 	if err := copyExpenses(ctx, tx, reportID, plan.Expenses, days); err != nil {
+		return uuid.Nil, err
+	}
+	if err := copyTracks(ctx, tx, reportID, plan.Tracks, places); err != nil {
 		return uuid.Nil, err
 	}
 
@@ -175,6 +181,30 @@ func copyPlaces(ctx context.Context, tx pgx.Tx, reportID uuid.UUID, items []doma
 		copies[item.ID] = id
 	}
 	return copies, nil
+}
+
+// copyTracks gives the report's places the routes their plan places had, file
+// and all, so the report starts with the line that was intended until a
+// recording replaces it. The file is copied inside the database and never read
+// into memory. A route of a place that was not copied stays behind.
+func copyTracks(ctx context.Context, tx pgx.Tx, reportID uuid.UUID, tracks []domain.Track,
+	places map[uuid.UUID]uuid.UUID) error {
+	for _, track := range tracks {
+		itemID, ok := places[track.ItemID]
+		if !ok {
+			continue
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO tracks (id, document_id, item_id, original_name, format, geometry, distance_m, point_count,
+			                     ascent_m, descent_m, started_at, ended_at, file_gz)
+			 SELECT $1, $2, $3, original_name, format, geometry, distance_m, point_count,
+			        ascent_m, descent_m, started_at, ended_at, file_gz
+			 FROM tracks WHERE id = $4`,
+			uuid.Must(uuid.NewV7()), reportID, itemID, track.ID); err != nil {
+			return fmt.Errorf("copy track: %w", err)
+		}
+	}
+	return nil
 }
 
 // copyExpenses writes the report's separate expenses with their planned amounts.

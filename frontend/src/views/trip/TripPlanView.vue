@@ -310,18 +310,42 @@ function addAt(lat: number, lng: number): void {
   openPlace(showStays.value ? null : day.value?.id ?? null, { lat, lng })
 }
 
-// savePlace creates or changes a place from the form.
-async function savePlace(fields: documentsApi.PlaceFields, item: PlanItem | null): Promise<void> {
+// savePlace creates or changes a place from the form, then attaches the route
+// chosen there or removes the one the form asked to drop.
+//
+// A new place is found in the answer as the one element that was not there
+// before. Should the route be refused after the place was stored, the form
+// stays open on that place, so a second try changes it instead of adding
+// another.
+async function savePlace(fields: documentsApi.PlaceFields, item: PlanItem | null, track: File | null,
+  dropTrack: boolean): Promise<void> {
   const current = plan.value
   if (!current) {
     return
   }
-  const ok = await apply(() =>
-    item ? documentsApi.updatePlace(item.id, fields) : documentsApi.createPlace(current.id, placeDay.value, fields),
-  )
+  const itemsOf = (document: TripDocument) => [...document.days.flatMap((each) => each.items), ...document.unassigned]
+  const known = new Set(itemsOf(current).map((each) => each.id))
+  let saved: PlanItem | null = item
+  const ok = await apply(async () => {
+    const stored = item
+      ? await documentsApi.updatePlace(item.id, fields)
+      : await documentsApi.createPlace(current.id, placeDay.value, fields)
+    plan.value = stored
+    saved = item ?? itemsOf(stored).find((each) => !known.has(each.id)) ?? null
+    if (track && saved) {
+      return documentsApi.importItemTrack(saved.id, track)
+    }
+    if (dropTrack && saved?.track) {
+      return documentsApi.deleteItemTrack(saved.id)
+    }
+    return stored
+  })
   if (ok) {
     placeDialog.value?.close()
   } else {
+    if (saved && saved !== item) {
+      placeDialog.value?.open(saved)
+    }
     placeDialog.value?.fail(error.value)
     error.value = ''
   }
@@ -582,7 +606,7 @@ async function removeStay(stay: Stay): Promise<void> {
       </aside>
     </div>
 
-    <PlanPlaceDialog ref="placeDialog" :focus="searchFocus" @save="savePlace" />
+    <PlanPlaceDialog ref="placeDialog" :focus="searchFocus" tracks @save="savePlace" />
     <PlanStayDialog ref="stayDialog" :focus="searchFocus" @save="saveStay" />
     <PlanLegDialog ref="legDialog" @save="saveLeg" />
     <PlanTargetDialog v-if="plan" ref="targetDialog" :days="plan.days" @choose="chooseTarget" />

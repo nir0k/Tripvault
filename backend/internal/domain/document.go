@@ -737,7 +737,8 @@ type DocumentContent struct {
 	Legs []Leg
 	// Expenses are the costs tied to no place, stay or leg, oldest first.
 	Expenses []Expense
-	// Tracks are the recorded lines of the days that have one.
+	// Tracks are the lines of the places and activities that have one: in a
+	// report what was recorded, in a plan the route intended.
 	Tracks []Track
 	// Translations are the report's words in its further languages, the trip's
 	// own title and summary aside; a plan has none.

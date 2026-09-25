@@ -60,7 +60,8 @@ type itemResponse struct {
 	// Media are the place's pictures and CoverMediaID the one it is shown by.
 	Media        []mediaResponse `json:"media"`
 	CoverMediaID *string         `json:"cover_media_id"`
-	// Track is the line the place or activity was recorded along, or null.
+	// Track is the line the place or activity was recorded along in a report,
+	// or is meant to follow in a plan; null when it has none.
 	Track *trackResponse `json:"track"`
 }
 
@@ -510,7 +511,9 @@ func newDocumentResponse(content domain.DocumentContent, trip domain.TripSummary
 	}
 
 	for _, item := range domain.DayItems(content.Items, nil) {
-		response.Unassigned = append(response.Unassigned, newItemResponse(item, stays, nil, pictures))
+		entry := newItemResponse(item, stays, nil, pictures)
+		entry.Track = newTrackResponse(domain.TrackOfItem(content.Tracks, item.ID))
+		response.Unassigned = append(response.Unassigned, entry)
 	}
 	for _, stay := range content.Stays {
 		response.Stays = append(response.Stays, newStayResponse(stay))

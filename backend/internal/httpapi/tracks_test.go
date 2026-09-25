@@ -78,6 +78,21 @@ func TestImportTrackStoresTheRecordedLine(t *testing.T) {
 	}
 }
 
+// TestPlanTakesAPlannedRoute checks a plan's place takes a route drawn in
+// advance, the way a report's takes a recording.
+func TestPlanTakesAPlannedRoute(t *testing.T) {
+	s, docs := newReportServerWithTracks(t)
+	docs.document.Kind = domain.DocumentPlan
+	recorder := importTrack(t, s, docs.place.ID.String(), "planned.gpx",
+		gpx([][2]float64{{63.5, -19.5}, {63.51, -19.51}}))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("a plan: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if docs.track == nil || docs.track.ItemID != docs.place.ID || docs.track.OriginalName != "planned.gpx" {
+		t.Errorf("stored %+v, want the place's planned route", docs.track)
+	}
+}
+
 // TestItemTrackIsDownloadedAsUploaded checks the file of a place's recording
 // comes back as it was uploaded, and that the recording can be removed.
 func TestItemTrackIsDownloadedAsUploaded(t *testing.T) {
@@ -117,8 +132,8 @@ func TestItemTrackIsDownloadedAsUploaded(t *testing.T) {
 	}
 }
 
-// TestImportTrackRefusesWhatItCannotRead covers a file that is not a track, a
-// plan, and a reader who may only look.
+// TestImportTrackRefusesWhatItCannotRead covers a file that is not a track and
+// a reader who may only look.
 func TestImportTrackRefusesWhatItCannotRead(t *testing.T) {
 	s, docs := newReportServerWithTracks(t)
 	recorder := importTrack(t, s, docs.place.ID.String(), "notes.txt", []byte("hello"))
@@ -128,15 +143,6 @@ func TestImportTrackRefusesWhatItCannotRead(t *testing.T) {
 	if recorder := importTrack(t, s, docs.place.ID.String(), "one.gpx",
 		gpx([][2]float64{{63.5, -19.5}})); recorder.Code != http.StatusUnprocessableEntity {
 		t.Errorf("a track of one point: %d %s", recorder.Code, recorder.Body.String())
-	}
-
-	// A plan holds the route it intends to take, never a recording.
-	s, docs = newReportServerWithTracks(t)
-	docs.document.Kind = domain.DocumentPlan
-	recorder = importTrack(t, s, docs.place.ID.String(), "day1.gpx",
-		gpx([][2]float64{{63.5, -19.5}, {63.51, -19.51}}))
-	if recorder.Code != http.StatusUnprocessableEntity || errorCode(t, recorder) != "validation_failed" {
-		t.Errorf("a plan: %d %s", recorder.Code, recorder.Body.String())
 	}
 
 	// A viewer may read the report and nothing else.

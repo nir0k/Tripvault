@@ -922,6 +922,8 @@
     "download": "Download {name}",
     "placeHint": "A GPX or KML export shows the walk around this place.",
     "activityHint": "A GPX or KML export shows where this activity went.",
-    "choose": "Choose a GPX or KML file"
+    "choose": "Choose a GPX or KML file",
+    "route": "Route",
+    "routeHint": "A GPX or KML route, such as a hike planned in an outdoor app. A place with no position takes the route's start."
   }
 }
