@@ -54,7 +54,8 @@ type ReportTotals struct {
 //
 // Arguments:
 //   - trip: the trip the report belongs to, for its number of travellers.
-//   - content: the report with its days, places, stays, legs and expenses.
+//   - content: the report with its days, places, stays, transfers, legs and
+//     expenses.
 //
 // Returns:
 //   - the totals.
@@ -123,6 +124,10 @@ func BuildReportTotals(trip Trip, content DocumentContent) ReportTotals {
 		totals.Nights += stay.Nights()
 		totals.PlannedCost += moneyOrZero(stay.PlannedCost)
 		totals.ActualCost += moneyOrZero(stay.ActualCost)
+	}
+	for _, transfer := range content.Transfers {
+		totals.PlannedCost += transfer.PlannedCostTotal(travelers)
+		totals.ActualCost += transfer.ActualCostTotal(travelers)
 	}
 	for _, expense := range content.Expenses {
 		totals.PlannedCost += moneyOrZero(expense.Planned)

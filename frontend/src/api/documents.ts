@@ -1,7 +1,8 @@
 import { http, PDF_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } from './client'
 import { filenameFrom, saveBlob } from '@/utils/download'
 import type {
-  ActivityType, CostCategory, ItemStatus, PlaceCategory, StayKind, Track, TranslationEntry, TravelMode, TripDocument,
+  ActivityType, CostCategory, ItemStatus, PlaceCategory, StayKind, Track, TransferKind, TranslationEntry, TravelMode,
+  TripDocument,
 } from './types'
 
 // Every change answers with the whole document, recomputed, so each function
@@ -66,6 +67,32 @@ export interface StayFields {
   contacts?: string
   notes_md?: string
   planned_cost_amount?: string | null
+  /** Refused on a plan. */
+  actual_cost_amount?: string | null
+}
+
+/** TransferFields holds the fields of a transfer to write. */
+export interface TransferFields {
+  kind?: TransferKind
+  name?: string
+  from_name?: string
+  from_address?: string
+  from_lat?: number | null
+  from_lng?: number | null
+  to_name?: string
+  to_address?: string
+  to_lat?: number | null
+  to_lng?: number | null
+  departure_date?: string
+  departure_time?: string | null
+  /** Null arrives on the day of departure. */
+  arrival_date?: string | null
+  arrival_time?: string | null
+  booking_ref?: string
+  url?: string
+  notes_md?: string
+  planned_cost_amount?: string | null
+  cost_per_person?: boolean
   /** Refused on a plan. */
   actual_cost_amount?: string | null
 }
@@ -208,6 +235,21 @@ export async function updateStay(stayId: string, fields: StayFields): Promise<Tr
 /** deleteStay removes a stay. */
 export async function deleteStay(stayId: string): Promise<TripDocument> {
   return (await http.delete<TripDocument>(path`/stays/${stayId}`)).data
+}
+
+/** createTransfer adds a booked journey. */
+export async function createTransfer(documentId: string, fields: TransferFields): Promise<TripDocument> {
+  return (await http.post<TripDocument>(path`/documents/${documentId}/transfers`, fields)).data
+}
+
+/** updateTransfer changes only the given fields of a transfer. */
+export async function updateTransfer(transferId: string, fields: TransferFields): Promise<TripDocument> {
+  return (await http.patch<TripDocument>(path`/transfers/${transferId}`, fields)).data
+}
+
+/** deleteTransfer removes a transfer. */
+export async function deleteTransfer(transferId: string): Promise<TripDocument> {
+  return (await http.delete<TripDocument>(path`/transfers/${transferId}`)).data
 }
 
 /** createExpense adds a cost that belongs to no place, stay or leg. */

@@ -208,7 +208,7 @@ export type TripTranslations = Record<string, { title?: string; summary?: string
 export type DocumentTranslations = Record<string, Record<string, Record<string, string>>>
 
 /** TranslationTarget is the kind of element a translation belongs to. */
-export type TranslationTarget = 'trip' | 'document' | 'day' | 'stay' | 'item' | 'leg'
+export type TranslationTarget = 'trip' | 'document' | 'day' | 'stay' | 'transfer' | 'item' | 'leg'
 
 /** TranslationEntry is one translated field sent to the server; an empty value removes it. */
 export interface TranslationEntry {
@@ -325,6 +325,11 @@ export const COST_CATEGORIES: readonly CostCategory[] = ['accommodation', 'trans
 export type StayKind = 'hotel' | 'apartment' | 'hostel' | 'camping' | 'friends' | 'other'
 
 export const STAY_KINDS: readonly StayKind[] = ['hotel', 'apartment', 'hostel', 'camping', 'friends', 'other']
+
+/** TransferKind says how a booked journey travels; `transfer` is a car booked to take the travellers somewhere. */
+export type TransferKind = 'flight' | 'train' | 'bus' | 'ferry' | 'transfer' | 'other'
+
+export const TRANSFER_KINDS: readonly TransferKind[] = ['flight', 'train', 'bus', 'ferry', 'transfer', 'other']
 
 /**
  * ItemStatus is how a place of a report turned out. A plan keeps every place at
@@ -524,6 +529,40 @@ export interface Stay {
 }
 
 /**
+ * Transfer is a booked journey between two places - a flight, a train, a ferry.
+ * It belongs to the whole document and shows in the day it departs on and the
+ * day it arrives on, without taking part in the day's schedule.
+ */
+export interface Transfer {
+  id: string
+  kind: TransferKind
+  /** The carrier or the number, such as "Icelandair FI 204"; may be empty. */
+  name: string
+  from_name: string
+  from_address: string
+  from_lat: number | null
+  from_lng: number | null
+  to_name: string
+  to_address: string
+  to_lat: number | null
+  to_lng: number | null
+  departure_date: string
+  departure_time: string | null
+  /** Null when the transfer arrives on the day it departs. */
+  arrival_date: string | null
+  arrival_time: string | null
+  booking_ref: string
+  url: string
+  notes_md: string
+  planned_cost_amount: string | null
+  /** The amounts are per traveller and multiplied in the budget. */
+  cost_per_person: boolean
+  /** What was really spent. Report only. */
+  actual_cost_amount: string | null
+  source_transfer_id: string | null
+}
+
+/**
  * Expense is a cost that belongs to no place, stay or leg. day_id is null for an
  * expense of the whole trip; actual_amount and spent_on stay empty in a plan.
  */
@@ -583,6 +622,8 @@ export interface TripDocument {
   days: PlanDay[]
   unassigned: PlanItem[]
   stays: Stay[]
+  /** By departure date and time. */
+  transfers: Transfer[]
   expenses: Expense[]
   nights: Night[]
   stay_summary: { nights: number; cost: string; average_per_night: string | null }
@@ -643,12 +684,12 @@ export interface Shared {
 }
 
 /** BudgetEntryKind says what carries a cost. */
-export type BudgetEntryKind = 'place' | 'stay' | 'leg' | 'expense'
+export type BudgetEntryKind = 'place' | 'stay' | 'transfer' | 'leg' | 'expense'
 
 /** BudgetEntry is one cost of the document, for the expense list and its filters. */
 export interface BudgetEntry {
   kind: BudgetEntryKind
-  /** The place, stay, leg or expense carrying the cost. */
+  /** The place, stay, transfer, leg or expense carrying the cost. */
   id: string
   label: string
   category: CostCategory
@@ -687,8 +728,8 @@ export interface BudgetDayRow {
 
 /**
  * Budget is the money side of a trip's plan or report. Every amount is a decimal
- * string in the trip's currency. `planned` is the sum of the days, `stays` and
- * `untied`, optional places included; only `unassigned` is reported apart, so a
+ * string in the trip's currency. `planned` is the sum of the days, `stays`,
+ * `transfers` and `untied`, optional places included; only `unassigned` is reported apart, so a
  * place with no day never inflates it.
  *
  * A report's budget carries the planned amounts it was copied with and `actual`
@@ -705,6 +746,7 @@ export interface Budget {
   planned: string
   unassigned: string
   stays: string
+  transfers: string
   untied: string
   /** Everything a report records as spent; "0.00" in a plan. */
   actual: string

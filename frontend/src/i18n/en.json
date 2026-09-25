@@ -513,6 +513,7 @@
     "emptyDayReadOnly": "No places planned for this day.",
     "addPlace": "Add place",
     "addStay": "Add a night's stay",
+    "addTransfer": "Add transfer",
     "summary": {
       "visits": "At places: {duration}",
       "end": "Ends about {time}",
@@ -760,6 +761,40 @@
     "camping": "Camping",
     "friends": "With friends",
     "other": "Other"
+  },
+  "transferKinds": {
+    "flight": "Flight",
+    "train": "Train",
+    "bus": "Bus",
+    "ferry": "Ferry",
+    "transfer": "Transfer",
+    "other": "Other"
+  },
+  "transfer": {
+    "title": "Transfers",
+    "add": "Add transfer",
+    "empty": "No flights or transfers yet.",
+    "newTitle": "New transfer",
+    "editTitle": "Edit transfer",
+    "kind": "Type",
+    "name": "Flight number or carrier",
+    "from": "From",
+    "to": "To",
+    "fromName": "Departure point",
+    "toName": "Arrival point",
+    "departureDate": "Departure date",
+    "departureTime": "Departure time",
+    "arrivalDate": "Arrival date",
+    "arrivalTime": "Arrival time",
+    "arrivalDateHint": "Leave the arrival date empty when it is the day of departure.",
+    "departs": "departs {time}",
+    "arrives": "arrives {time}",
+    "cost": "Cost",
+    "bookingRef": "Booking",
+    "notes": "Notes (Markdown)",
+    "total": "Total: {amount}",
+    "noDate": "Trip without dates: transfers are not shown in the days.",
+    "confirmDelete": "Delete the transfer “{name}”?"
   },
   "stay": {
     "title": "Stays",

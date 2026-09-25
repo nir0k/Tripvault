@@ -5,7 +5,7 @@ import * as documentsApi from '@/api/documents'
 import { getBudget, updateTrip } from '@/api/trips'
 import {
   COST_CATEGORIES, type Budget, type BudgetEntry, type BudgetEntryKind, type Expense, type Leg, type PlanItem,
-  type Stay, type TripDocument,
+  type Stay, type Transfer, type TripDocument,
 } from '@/api/types'
 import AppIcon, { type IconName } from '@/components/AppIcon.vue'
 import BudgetAmountDialog from '@/components/budget/BudgetAmountDialog.vue'
@@ -14,6 +14,7 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import PlanLegDialog from '@/components/plan/PlanLegDialog.vue'
 import PlanPlaceDialog from '@/components/plan/PlanPlaceDialog.vue'
 import PlanStayDialog from '@/components/plan/PlanStayDialog.vue'
+import PlanTransferDialog from '@/components/plan/PlanTransferDialog.vue'
 import { useTripStore } from '@/stores/trip'
 import { errorMessage } from '@/utils/errors'
 import { formatDayDate, formatMoney } from '@/utils/format'
@@ -51,6 +52,7 @@ const confirmDialog = useTemplateRef<InstanceType<typeof ConfirmDialog>>('confir
 const expenseDialog = useTemplateRef<InstanceType<typeof BudgetExpenseDialog>>('expenseDialog')
 const placeDialog = useTemplateRef<InstanceType<typeof PlanPlaceDialog>>('placeDialog')
 const stayDialog = useTemplateRef<InstanceType<typeof PlanStayDialog>>('stayDialog')
+const transferDialog = useTemplateRef<InstanceType<typeof PlanTransferDialog>>('transferDialog')
 const legDialog = useTemplateRef<InstanceType<typeof PlanLegDialog>>('legDialog')
 
 const trip = computed(() => store.trip)
@@ -83,6 +85,7 @@ const untiedRows = computed(() => {
   }
   return [
     { label: t('stay.title'), amount: current.stays },
+    { label: t('transfer.title'), amount: current.transfers },
     { label: t('budget.wholeTrip'), amount: current.untied },
   ].filter((row) => Number(row.amount) !== 0)
 })
@@ -106,7 +109,7 @@ const filteredActual = computed(() =>
 
 // ENTRY_ICONS shows at a glance what carries each cost.
 const ENTRY_ICONS: Record<BudgetEntryKind, IconName> = {
-  place: 'map', stay: 'stay', leg: 'transport', expense: 'wallet',
+  place: 'map', stay: 'stay', transfer: 'modeFlight', leg: 'transport', expense: 'wallet',
 }
 
 /** dayNumber labels the day a cost belongs to, or the trip as a whole. */
@@ -248,6 +251,13 @@ function edit(entry: BudgetEntry): void {
       }
       return
     }
+    case 'transfer': {
+      const transfer = plan.value?.transfers.find((row) => row.id === entry.id)
+      if (transfer) {
+        transferDialog.value?.open(transfer)
+      }
+      return
+    }
     case 'leg': {
       const leg = findLeg(entry.id)
       if (leg) {
@@ -264,19 +274,20 @@ function edit(entry: BudgetEntry): void {
   }
 }
 
-// remove takes a cost out of the plan, after confirmation. A place, a stay and
-// an expense are deleted; a leg only loses its amount, because legs are not
-// records of their own - the server keeps one between every pair of
-// neighbouring elements of a day and would put a deleted one straight back.
+// remove takes a cost out of the plan, after confirmation. A place, a stay, a
+// transfer and an expense are deleted; a leg only loses its amount, because
+// legs are not records of their own - the server keeps one between every pair
+// of neighbouring elements of a day and would put a deleted one straight back.
 async function remove(entry: BudgetEntry): Promise<void> {
   const name = entry.label || amount(entry.amount)
-  const question = entry.kind === 'place'
-    ? t('plan.confirmDeletePlace', { name })
-    : entry.kind === 'stay'
-      ? t('stay.confirmDelete', { name })
-      : entry.kind === 'leg'
-        ? t('budget.confirmClearLegCost', { name })
-        : t('budget.confirmDeleteExpense', { name })
+  const questions: Record<BudgetEntryKind, string> = {
+    place: 'plan.confirmDeletePlace',
+    stay: 'stay.confirmDelete',
+    transfer: 'transfer.confirmDelete',
+    leg: 'budget.confirmClearLegCost',
+    expense: 'budget.confirmDeleteExpense',
+  }
+  const question = t(questions[entry.kind], { name })
   if (!(await confirmDialog.value?.ask(question, { danger: true }))) {
     return
   }
@@ -286,6 +297,9 @@ async function remove(entry: BudgetEntry): Promise<void> {
       return
     case 'stay':
       await change(() => documentsApi.deleteStay(entry.id))
+      return
+    case 'transfer':
+      await change(() => documentsApi.deleteTransfer(entry.id))
       return
     case 'leg':
       await change(() => documentsApi.updateLeg(entry.id, { planned_cost_amount: null }))
@@ -333,6 +347,19 @@ async function saveStay(fields: documentsApi.StayFields, stay: Stay | null): Pro
     stayDialog.value?.close()
   } else {
     stayDialog.value?.fail(error.value)
+    error.value = ''
+  }
+}
+
+// saveTransfer stores a transfer edited from the cost list.
+async function saveTransfer(fields: documentsApi.TransferFields, transfer: Transfer | null): Promise<void> {
+  if (!transfer) {
+    return
+  }
+  if (await change(() => documentsApi.updateTransfer(transfer.id, fields))) {
+    transferDialog.value?.close()
+  } else {
+    transferDialog.value?.fail(error.value)
     error.value = ''
   }
 }
@@ -582,6 +609,7 @@ async function saveLeg(leg: Leg, changes: documentsApi.LegChanges): Promise<void
       <BudgetExpenseDialog ref="expenseDialog" :days="budget.days" @save="saveExpense" />
       <PlanPlaceDialog ref="placeDialog" :focus="null" @save="savePlace" />
       <PlanStayDialog ref="stayDialog" :focus="null" @save="saveStay" />
+      <PlanTransferDialog ref="transferDialog" :focus="null" @save="saveTransfer" />
       <PlanLegDialog ref="legDialog" @save="saveLeg" />
       <ConfirmDialog ref="confirmDialog" />
     </template>

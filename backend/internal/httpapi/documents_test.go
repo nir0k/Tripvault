@@ -25,6 +25,7 @@ type fakeDocuments struct {
 	stay     domain.Stay
 	leg      domain.Leg
 	expense  *domain.Expense
+	transfer *domain.Transfer
 	track    *domain.Track
 	// trackFile is the file the stored track was imported from.
 	trackFile []byte
@@ -63,7 +64,7 @@ func (f *fakeDocuments) Item(_ context.Context, id uuid.UUID) (domain.Item, erro
 func (f *fakeDocuments) Content(context.Context, uuid.UUID) (domain.DocumentContent, error) {
 	return domain.DocumentContent{Document: f.document, Days: []domain.Day{f.day},
 		Items: []domain.Item{f.place, f.anchor}, Stays: []domain.Stay{f.stay}, Legs: []domain.Leg{f.leg},
-		Expenses: f.expenses(), Tracks: f.tracks(), Translations: f.translations}, nil
+		Transfers: f.transfers(), Expenses: f.expenses(), Tracks: f.tracks(), Translations: f.translations}, nil
 }
 
 // tracks lists the stored track, if there is one.
@@ -154,6 +155,43 @@ func (f *fakeDocuments) UpdateStay(context.Context, domain.Stay) error { f.chang
 
 // DeleteStay records a change.
 func (f *fakeDocuments) DeleteStay(context.Context, domain.Stay) error { f.changed++; return nil }
+
+// transfers lists the stored transfer, so the document carries it.
+func (f *fakeDocuments) transfers() []domain.Transfer {
+	if f.transfer == nil {
+		return nil
+	}
+	return []domain.Transfer{*f.transfer}
+}
+
+// Transfer returns the one transfer, or not found before it exists.
+func (f *fakeDocuments) Transfer(_ context.Context, id uuid.UUID) (domain.Transfer, error) {
+	if f.transfer == nil || id != f.transfer.ID {
+		return domain.Transfer{}, domain.ErrNotFound
+	}
+	return *f.transfer, nil
+}
+
+// CreateTransfer stores the transfer.
+func (f *fakeDocuments) CreateTransfer(_ context.Context, transfer domain.Transfer) error {
+	f.transfer = &transfer
+	f.changed++
+	return nil
+}
+
+// UpdateTransfer stores the changed transfer.
+func (f *fakeDocuments) UpdateTransfer(_ context.Context, transfer domain.Transfer) error {
+	f.transfer = &transfer
+	f.changed++
+	return nil
+}
+
+// DeleteTransfer forgets the transfer.
+func (f *fakeDocuments) DeleteTransfer(context.Context, uuid.UUID) error {
+	f.transfer = nil
+	f.changed++
+	return nil
+}
 
 // expenses lists the stored expense, so the document carries it.
 func (f *fakeDocuments) expenses() []domain.Expense {

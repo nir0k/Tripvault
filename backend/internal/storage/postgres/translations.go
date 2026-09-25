@@ -21,6 +21,7 @@ var translationTargets = map[domain.TranslationTarget]struct {
 	domain.TranslateDocument: {column: "document_id", table: "documents"},
 	domain.TranslateDay:      {column: "day_id", table: "days"},
 	domain.TranslateStay:     {column: "stay_id", table: "stays"},
+	domain.TranslateTransfer: {column: "transfer_id", table: "transfers"},
 	// A stay mark shows its stay's name and has no words of its own.
 	domain.TranslateItem: {column: "item_id", table: "items"},
 	domain.TranslateLeg:  {column: "leg_id", table: "legs"},
@@ -28,7 +29,7 @@ var translationTargets = map[domain.TranslationTarget]struct {
 
 // translationKey is the expression the unique index of translations is built
 // on: the element translated, or the trip when the row names no element.
-const translationKey = `COALESCE(document_id, day_id, stay_id, item_id, leg_id, trip_id)`
+const translationKey = `COALESCE(document_id, day_id, stay_id, item_id, leg_id, transfer_id, trip_id)`
 
 // documentTranslations reads the translations of a report's elements, leaving
 // out the trip's own title and summary, which travel with the trip.
@@ -41,11 +42,12 @@ func documentTranslations(ctx context.Context, q querier, tripID uuid.UUID) ([]d
 		`SELECT CASE WHEN document_id IS NOT NULL THEN 'document'
 		             WHEN day_id IS NOT NULL THEN 'day'
 		             WHEN stay_id IS NOT NULL THEN 'stay'
+		             WHEN transfer_id IS NOT NULL THEN 'transfer'
 		             WHEN item_id IS NOT NULL THEN 'item'
 		             ELSE 'leg' END,
 		        `+translationKey+`, field, lang, value
 		 FROM translations
-		 WHERE trip_id = $1 AND num_nonnulls(document_id, day_id, stay_id, item_id, leg_id) = 1
+		 WHERE trip_id = $1 AND num_nonnulls(document_id, day_id, stay_id, item_id, leg_id, transfer_id) = 1
 		 ORDER BY lang, field`, tripID)
 }
 

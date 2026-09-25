@@ -82,6 +82,12 @@ export function translateDocument(document: TripDocument, lang: string): TripDoc
       name: pick(stay.id, 'name', stay.name),
       notes_md: pick(stay.id, 'notes_md', stay.notes_md),
     })),
+    transfers: document.transfers.map((transfer) => ({
+      ...transfer,
+      from_name: pick(transfer.id, 'from_name', transfer.from_name),
+      to_name: pick(transfer.id, 'to_name', transfer.to_name),
+      notes_md: pick(transfer.id, 'notes_md', transfer.notes_md),
+    })),
   }
 }
 
@@ -96,8 +102,8 @@ export interface TranslatableText {
 /**
  * translatableTexts lists the fields of a report that can be translated from
  * this page and hold something to translate: the words around the days, the
- * days, the places and the journeys between them. The trip's own title and
- * summary are translated in its settings.
+ * days, the places, the journeys between them and the transfers the days
+ * show. The trip's own title and summary are translated in its settings.
  */
 export function translatableTexts(document: TripDocument): TranslatableText[] {
   const texts: TranslatableText[] = []
@@ -122,6 +128,11 @@ export function translatableTexts(document: TripDocument): TranslatableText[] {
     for (const leg of day.legs) {
       add('leg', leg.id, 'note', leg.note)
     }
+  }
+  for (const transfer of document.transfers) {
+    add('transfer', transfer.id, 'from_name', transfer.from_name)
+    add('transfer', transfer.id, 'to_name', transfer.to_name)
+    add('transfer', transfer.id, 'notes_md', transfer.notes_md)
   }
   return texts
 }

@@ -25,6 +25,7 @@ const (
 	TranslateDocument TranslationTarget = "document"
 	TranslateDay      TranslationTarget = "day"
 	TranslateStay     TranslationTarget = "stay"
+	TranslateTransfer TranslationTarget = "transfer"
 	TranslateItem     TranslationTarget = "item"
 	TranslateLeg      TranslationTarget = "leg"
 )
@@ -37,6 +38,8 @@ var translatableFields = map[TranslationTarget]map[string]int{
 	TranslateDocument: {"intro_md": maxMarkdownLength, "summary_md": maxMarkdownLength},
 	TranslateDay:      {"title": maxNameLength, "notes_md": maxMarkdownLength},
 	TranslateStay:     {"name": maxNameLength, "notes_md": maxMarkdownLength},
+	// A transfer's name is a carrier or a number, the same in every language.
+	TranslateTransfer: {"from_name": maxNameLength, "to_name": maxNameLength, "notes_md": maxMarkdownLength},
 	TranslateItem:     {"name": maxNameLength, "description_md": maxMarkdownLength, "story_md": maxMarkdownLength},
 	TranslateLeg:      {"note": maxLegNoteLength},
 }
@@ -61,7 +64,8 @@ type Translation struct {
 func (t Translation) Normalize() (Translation, error) {
 	fields, ok := translatableFields[t.Target]
 	if !ok {
-		return t, NewValidationError("target_type", "unsupported", "must be trip, document, day, stay, item or leg")
+		return t, NewValidationError("target_type", "unsupported",
+			"must be trip, document, day, stay, transfer, item or leg")
 	}
 	limit, ok := fields[t.Field]
 	if !ok {
@@ -210,6 +214,13 @@ func (c DocumentContent) Translated(language string) DocumentContent {
 		stay := &c.Stays[index]
 		apply(stay.ID, "name", &stay.Name)
 		apply(stay.ID, "notes_md", &stay.NotesMD)
+	}
+	c.Transfers = slices.Clone(c.Transfers)
+	for index := range c.Transfers {
+		transfer := &c.Transfers[index]
+		apply(transfer.ID, "from_name", &transfer.FromName)
+		apply(transfer.ID, "to_name", &transfer.ToName)
+		apply(transfer.ID, "notes_md", &transfer.NotesMD)
 	}
 	c.Items = slices.Clone(c.Items)
 	for index := range c.Items {

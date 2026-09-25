@@ -66,9 +66,11 @@ type budgetResponse struct {
 	// day yet, is kept out of it.
 	Planned    string `json:"planned"`
 	Unassigned string `json:"unassigned"`
-	// Stays and Untied are the parts of Planned that belong to no single day.
-	Stays  string `json:"stays"`
-	Untied string `json:"untied"`
+	// Stays, Transfers and Untied are the parts of Planned that belong to no
+	// single day.
+	Stays     string `json:"stays"`
+	Transfers string `json:"transfers"`
+	Untied    string `json:"untied"`
 	// Actual is everything a report records as spent; "0.00" in a plan.
 	Actual string `json:"actual"`
 	// PerPerson divides the spending over the travellers: Planned in a plan,
@@ -96,6 +98,7 @@ func newBudgetResponse(budget domain.Budget, documentID *string) budgetResponse 
 		Planned:      budget.Planned.String(),
 		Unassigned:   budget.Unassigned.String(),
 		Stays:        budget.Stays.String(),
+		Transfers:    budget.Transfers.String(),
 		Untied:       budget.Untied.String(),
 		Actual:       budget.Actual.String(),
 		PerPerson:    budget.PerPerson.String(),

@@ -112,6 +112,19 @@ export function formatClock(minutes: number,
   return { time: `${String(hour).padStart(2, '0')}:${mins}`, dayOffset }
 }
 
+/**
+ * formatTimeOfDay shows a time of day the API carries as "HH:MM" in the
+ * reader's clock, or '' for no time.
+ */
+export function formatTimeOfDay(value: string | null | undefined,
+  clock: TimeFormat = activeTimeFormat.value): string {
+  const match = /^(\d{1,2}):(\d{2})/.exec(value ?? '')
+  if (!match) {
+    return ''
+  }
+  return formatClock(Number(match[1]) * 60 + Number(match[2]), clock).time
+}
+
 /** splitDuration breaks minutes into whole hours and the remaining minutes. */
 export function splitDuration(minutes: number): { hours: number; minutes: number } {
   return { hours: Math.floor(minutes / 60), minutes: minutes % 60 }

@@ -49,27 +49,32 @@ type labels struct {
 	difficulty   string
 	difficulties [domain.MaxDifficulty]string
 
-	day          string
-	track        string
-	stay         string
-	checkIn      string
-	checkOut     string
-	expenses     string
-	byMode       string
-	plannedCost  string
-	actualCost   string
-	difference   string
-	statuses     map[string]string
-	modes        map[string]string
-	stayKinds    map[string]string
-	categories   map[string]string
-	activities   map[string]string
-	months       [12]string
-	dateOrder    func(day int, month string, year int) string
-	hourMinute   string
-	kilometres   string
-	miles        string
-	hoursMinutes func(hours, minutes int) string
+	day         string
+	track       string
+	stay        string
+	checkIn     string
+	checkOut    string
+	expenses    string
+	byMode      string
+	plannedCost string
+	actualCost  string
+	difference  string
+	statuses    map[string]string
+	modes       map[string]string
+	stayKinds   map[string]string
+	// transferKinds names how a transfer travels; departs and arrives read
+	// its two ends.
+	transferKinds map[string]string
+	departs       string
+	arrives       string
+	categories    map[string]string
+	activities    map[string]string
+	months        [12]string
+	dateOrder     func(day int, month string, year int) string
+	hourMinute    string
+	kilometres    string
+	miles         string
+	hoursMinutes  func(hours, minutes int) string
 
 	// metres and feet read a height, which is counted in feet where distances
 	// are counted in miles.
@@ -127,6 +132,12 @@ var english = labels{
 		"hotel": "Hotel", "apartment": "Apartment", "hostel": "Hostel",
 		"camping": "Camping", "friends": "With friends", "other": "Other",
 	},
+	transferKinds: map[string]string{
+		"flight": "Flight", "train": "Train", "bus": "Bus",
+		"ferry": "Ferry", "transfer": "Transfer", "other": "Journey",
+	},
+	departs: "departs %s",
+	arrives: "arrives %s",
 	categories: map[string]string{
 		"accommodation": "Accommodation", "transport": "Transport", "food": "Food",
 		"activities": "Activities", "shopping": "Shopping", "other": "Other",
@@ -200,6 +211,12 @@ var russian = labels{
 		"hotel": "Отель", "apartment": "Квартира", "hostel": "Хостел",
 		"camping": "Кемпинг", "friends": "У друзей", "other": "Другое",
 	},
+	transferKinds: map[string]string{
+		"flight": "Перелёт", "train": "Поезд", "bus": "Автобус",
+		"ferry": "Паром", "transfer": "Трансфер", "other": "Переезд",
+	},
+	departs: "отправление %s",
+	arrives: "прибытие %s",
 	categories: map[string]string{
 		"accommodation": "Проживание", "transport": "Транспорт", "food": "Еда",
 		"activities": "Активности", "shopping": "Покупки", "other": "Прочее",

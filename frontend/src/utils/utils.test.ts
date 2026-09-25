@@ -233,7 +233,7 @@ describe('media hints', () => {
   const document = {
     id: 'doc', trip_id: 't', kind: 'report' as const, source_document_id: null, intro_md: '', summary_md: '',
     days: [day('d1', 0, '2026-06-20', []), day('d2', 1, '2026-06-21', [skogafoss])],
-    unassigned: [], stays: [], expenses: [], nights: [],
+    unassigned: [], stays: [], transfers: [], expenses: [], nights: [],
     stay_summary: { nights: 0, cost: '0', average_per_night: null }, pending_legs: 0, estimated_legs: 0,
     totals: null, translations: {},
     created_at: '2026-06-01T00:00:00Z', updated_at: '2026-06-01T00:00:00Z',
@@ -270,6 +270,20 @@ describe('media hints', () => {
       // The original is untouched, and a language without translations is it.
       expect(report.intro_md).toBe('intro')
       expect(translateDocument(report, 'en')).toBe(report)
+    })
+
+    it('translates the ends of a transfer and lists them for translation', () => {
+      const flight = {
+        id: 'f1', kind: 'flight' as const, name: 'FI 204', from_name: 'Keflavík', from_address: '', from_lat: null,
+        from_lng: null, to_name: 'Copenhagen', to_address: '', to_lat: null, to_lng: null,
+        departure_date: '2026-06-20', departure_time: null, arrival_date: null, arrival_time: null, booking_ref: '',
+        url: '', notes_md: '', planned_cost_amount: null, cost_per_person: false, actual_cost_amount: null,
+        source_transfer_id: null,
+      }
+      const withFlight: TripDocument = { ...report, transfers: [flight], translations: { de: { f1: { to_name: 'Kopenhagen' } } } }
+      expect(translateDocument(withFlight, 'de').transfers[0]).toMatchObject({ from_name: 'Keflavík', to_name: 'Kopenhagen', name: 'FI 204' })
+      expect(translatableTexts(withFlight).map((text) => `${text.id}.${text.field}`)).toEqual(
+        expect.arrayContaining(['f1.from_name', 'f1.to_name']))
     })
 
     it('counts what is left to translate', () => {

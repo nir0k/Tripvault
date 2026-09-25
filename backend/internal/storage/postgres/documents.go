@@ -201,7 +201,8 @@ func (r *DocumentRepository) Stay(ctx context.Context, id uuid.UUID) (domain.Sta
 	return oneRow(scanStay, r.pool.QueryRow(ctx, `SELECT `+stayColumns+` FROM stays s WHERE s.id = $1`, id), "get stay")
 }
 
-// Content - reads a whole document: its days, places, marks and stays.
+// Content - reads a whole document: its days, places, marks, stays and
+// transfers.
 //
 // Arguments:
 //   - ctx: context bounding the queries.
@@ -240,6 +241,10 @@ func readContent(ctx context.Context, q querier, id uuid.UUID) (domain.DocumentC
 	}
 	if content.Stays, err = collect(ctx, q, scanStay,
 		`SELECT `+stayColumns+` FROM stays s WHERE s.document_id = $1 ORDER BY s.check_in_date, s.id`, id); err != nil {
+		return content, err
+	}
+	if content.Transfers, err = collect(ctx, q, scanTransfer,
+		`SELECT `+transferColumns+` FROM transfers t WHERE t.document_id = $1 ORDER BY `+transferOrder, id); err != nil {
 		return content, err
 	}
 	if content.Legs, err = collect(ctx, q, scanLeg,
@@ -566,7 +571,7 @@ func syncLegs(ctx context.Context, tx pgx.Tx, tripID uuid.UUID) error {
 }
 
 // reshapeTrip brings a trip's documents in line after its dates changed: stays
-// move with a shifted start, documents get as many days as the period has, and
+// and transfers move with a shifted start, documents get as many days as the period has, and
 // dates and stay marks follow.
 func reshapeTrip(ctx context.Context, tx pgx.Tx, tripID uuid.UUID, oldStart, newStart, newEnd *time.Time, confirm bool) error {
 	if oldStart != nil && newStart != nil && !oldStart.Equal(*newStart) {
@@ -575,6 +580,12 @@ func reshapeTrip(ctx context.Context, tx pgx.Tx, tripID uuid.UUID, oldStart, new
 			`UPDATE stays s SET check_in_date = check_in_date + $2::int, check_out_date = check_out_date + $2::int, updated_at = now()
 			 FROM documents doc WHERE s.document_id = doc.id AND doc.trip_id = $1`, tripID, shift); err != nil {
 			return fmt.Errorf("shift stays: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE transfers t SET departure_date = departure_date + $2::int, arrival_date = arrival_date + $2::int,
+			                        updated_at = now()
+			 FROM documents doc WHERE t.document_id = doc.id AND doc.trip_id = $1`, tripID, shift); err != nil {
+			return fmt.Errorf("shift transfers: %w", err)
 		}
 	}
 	if length := (domain.Trip{StartDate: newStart, EndDate: newEnd}).DayCount(); length != nil {

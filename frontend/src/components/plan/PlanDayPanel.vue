@@ -2,13 +2,14 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { DayChanges } from '@/api/documents'
-import type { Leg, PlanDay, PlanItem, TravelMode } from '@/api/types'
+import type { Leg, PlanDay, PlanItem, Transfer, TravelMode } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import IconSelect from '@/components/IconSelect.vue'
 import MarkdownText from '@/components/MarkdownText.vue'
 import PlanItemCard from '@/components/plan/PlanItemCard.vue'
 import PlanLegRow from '@/components/plan/PlanLegRow.vue'
 import PlanPlaceList from '@/components/plan/PlanPlaceList.vue'
+import TransferRow from '@/components/plan/TransferRow.vue'
 import { formatClock, formatDayDate, formatDistance, formatMoney } from '@/utils/format'
 import { activeUnits } from '@/utils/units'
 import { formatDuration, isVisit, travelModeOptions } from '@/utils/plan'
@@ -21,6 +22,8 @@ import { formatDuration, isVisit, travelModeOptions } from '@/utils/plan'
 // would say nothing about whether it is worth opening.
 const props = defineProps<{
   day: PlanDay
+  /** The transfers departing or arriving on the day's date. */
+  transfers?: Transfer[]
   currency: string
   canEdit: boolean
   draggable: boolean
@@ -35,6 +38,8 @@ const emit = defineEmits<{
   addPlace: []
   addActivity: []
   addStay: []
+  addTransfer: []
+  editTransfer: [transfer: Transfer]
   move: [itemId: string, dayId: string | null, position: number]
   edit: [item: PlanItem]
   pickTarget: [item: PlanItem, mode: 'move' | 'copy']
@@ -218,6 +223,26 @@ function setMode(value: string): void {
       </template>
     </div>
 
+    <!-- A flight or a train frames the day but takes no part in its schedule, so
+         it is listed above the places rather than among them. -->
+    <ul v-if="!collapsed && transfers?.length" class="flex flex-col gap-2" :aria-label="t('transfer.title')">
+      <li
+        v-for="transfer in transfers"
+        :key="transfer.id"
+        class="flex items-start gap-2 rounded-box border border-dashed border-base-300 bg-base-200/60 p-3"
+      >
+        <TransferRow :transfer="transfer" :currency="currency" :date="day.date" class="flex-1" />
+        <button
+          v-if="canEdit"
+          type="button"
+          class="btn btn-ghost btn-xs"
+          @click="emit('editTransfer', transfer)"
+        >
+          {{ t('plan.edit') }}
+        </button>
+      </li>
+    </ul>
+
     <div v-if="!collapsed" class="flex flex-col gap-2">
       <PlanItemCard
         v-if="morning"
@@ -277,6 +302,10 @@ function setMode(value: string): void {
       <button type="button" class="btn btn-sm btn-hover-outline" @click="emit('addStay')">
         <AppIcon name="plus" />
         {{ t('plan.addStay') }}
+      </button>
+      <button v-if="day.date" type="button" class="btn btn-sm btn-hover-outline" @click="emit('addTransfer')">
+        <AppIcon name="plus" />
+        {{ t('plan.addTransfer') }}
       </button>
     </div>
 

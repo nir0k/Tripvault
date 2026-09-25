@@ -733,6 +733,8 @@ type DocumentContent struct {
 	Items []Item
 	// Stays are ordered by check-in.
 	Stays []Stay
+	// Transfers are ordered by departure.
+	Transfers []Transfer
 	// Legs are every leg of the days, in no particular order.
 	Legs []Leg
 	// Expenses are the costs tied to no place, stay or leg, oldest first.

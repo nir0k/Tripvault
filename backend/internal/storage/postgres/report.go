@@ -79,6 +79,9 @@ func copyPlan(ctx context.Context, tx pgx.Tx, tripID uuid.UUID, plan domain.Docu
 	if err := copyStays(ctx, tx, reportID, plan.Stays); err != nil {
 		return uuid.Nil, err
 	}
+	if err := copyTransfers(ctx, tx, reportID, plan.Transfers); err != nil {
+		return uuid.Nil, err
+	}
 	places, err := copyPlaces(ctx, tx, reportID, plan.Items, days)
 	if err != nil {
 		return uuid.Nil, err

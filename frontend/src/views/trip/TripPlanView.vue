@@ -5,7 +5,9 @@ import { useRoute, useRouter } from 'vue-router'
 import * as documentsApi from '@/api/documents'
 import { ApiError } from '@/api/client'
 import { getClientConfig } from '@/api/config'
-import type { ClientConfig, Leg, PlanDay, PlanItem, RemovedDay, Stay, TravelMode, TripDocument } from '@/api/types'
+import type {
+  ClientConfig, Leg, PlanDay, PlanItem, RemovedDay, Stay, Transfer, TravelMode, TripDocument,
+} from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import PlanDayList from '@/components/plan/PlanDayList.vue'
@@ -16,6 +18,8 @@ import PlanPlaceDialog from '@/components/plan/PlanPlaceDialog.vue'
 import PlanPlaceList from '@/components/plan/PlanPlaceList.vue'
 import PlanStayDialog from '@/components/plan/PlanStayDialog.vue'
 import PlanStays from '@/components/plan/PlanStays.vue'
+import PlanTransferDialog from '@/components/plan/PlanTransferDialog.vue'
+import PlanTransfers from '@/components/plan/PlanTransfers.vue'
 import PlanTargetDialog from '@/components/plan/PlanTargetDialog.vue'
 import { useLegCalculation } from '@/composables/useLegCalculation'
 import { useMediaQuery } from '@/composables/useMediaQuery'
@@ -40,6 +44,7 @@ const placeDay = ref<string | null>(null)
 const confirmDialog = useTemplateRef<InstanceType<typeof ConfirmDialog>>('confirmDialog')
 const placeDialog = useTemplateRef<InstanceType<typeof PlanPlaceDialog>>('placeDialog')
 const stayDialog = useTemplateRef<InstanceType<typeof PlanStayDialog>>('stayDialog')
+const transferDialog = useTemplateRef<InstanceType<typeof PlanTransferDialog>>('transferDialog')
 const targetDialog = useTemplateRef<InstanceType<typeof PlanTargetDialog>>('targetDialog')
 const legDialog = useTemplateRef<InstanceType<typeof PlanLegDialog>>('legDialog')
 // The map is beside the list on a wide screen and a tab of its own below that,
@@ -63,8 +68,11 @@ const currency = computed(() => trip.value?.currency ?? 'EUR')
 
 // Every day is shown, one under another. The address says which one to scroll to
 // (?day=<n>, counting from one) so a link still opens where it pointed, and
-// ?view=stays swaps the feed for the stays.
+// ?view=stays or ?view=transfers swaps the feed for the stays or the transfers.
 const showStays = computed(() => route.query.view === 'stays')
+const showTransfers = computed(() => route.query.view === 'transfers')
+// section is the list shown in place of the days, if any.
+const section = computed(() => (showStays.value ? 'stays' : showTransfers.value ? 'transfers' : null))
 const dayIndex = computed(() => {
   const days = plan.value?.days.length ?? 0
   const requested = Number(route.query.day ?? 1)
@@ -165,7 +173,7 @@ const searchFocus = computed(() => {
     }
   }
   const all = plan.value ? [...plan.value.days.flatMap((d) => d.items), ...plan.value.unassigned] : []
-  return (day.value && !showStays.value ? centre(day.value.items) : null) ?? centre(all)
+  return (day.value && !section.value ? centre(day.value.items) : null) ?? centre(all)
 })
 const missingNights = computed(() => plan.value?.nights.filter((night) => night.missing).length ?? 0)
 
@@ -271,6 +279,11 @@ function selectStays(): void {
   void router.replace({ query: { view: 'stays' } })
 }
 
+// selectTransfers opens the flights and transfers.
+function selectTransfers(): void {
+  void router.replace({ query: { view: 'transfers' } })
+}
+
 // addDay appends a day and opens it.
 async function addDay(): Promise<void> {
   const current = plan.value
@@ -307,7 +320,7 @@ function openPlace(dayId: string | null, position: { lat: number; lng: number } 
 // read, or among the unassigned places while the stays are shown.
 function addAt(lat: number, lng: number): void {
   mobileView.value = 'list'
-  openPlace(showStays.value ? null : day.value?.id ?? null, { lat, lng })
+  openPlace(section.value ? null : day.value?.id ?? null, { lat, lng })
 }
 
 // savePlace creates or changes a place from the form, then attaches the route
@@ -417,7 +430,7 @@ async function focusItem(itemId: string, targetDay: number | null): Promise<void
   mobileView.value = 'list'
   // An unassigned place is listed after the days, so the stays make way for the
   // feed; a place of a day also needs its day open and in view.
-  if (showStays.value) {
+  if (section.value) {
     await router.replace({ query: { day: String((targetDay ?? viewedDay.value) + 1) } })
   }
   if (targetDay !== null) {
@@ -442,6 +455,47 @@ async function locateItem(item: PlanItem): Promise<void> {
   }
   const map = sideBySide.value ? wideMap.value : mobileMap.value
   map?.locate(item.id)
+}
+
+// transfersOn lists the transfers a day shows: those that depart or arrive on
+// its date. A day without a date shows none.
+function transfersOn(day: PlanDay): Transfer[] {
+  const date = day.date
+  if (!date || !plan.value) {
+    return []
+  }
+  return plan.value.transfers.filter((transfer) =>
+    transfer.departure_date === date || (transfer.arrival_date ?? transfer.departure_date) === date)
+}
+
+// openTransfer opens the transfer form; asked from a day, it departs that day.
+function openTransfer(transfer: Transfer | null, fromDay: PlanDay | null = null): void {
+  transferDialog.value?.open(transfer, fromDay?.date ?? '')
+}
+
+// saveTransfer creates or changes a transfer from the form.
+async function saveTransfer(fields: documentsApi.TransferFields, transfer: Transfer | null): Promise<void> {
+  const current = plan.value
+  if (!current) {
+    return
+  }
+  const ok = await apply(() => (transfer
+    ? documentsApi.updateTransfer(transfer.id, fields)
+    : documentsApi.createTransfer(current.id, fields)))
+  if (ok) {
+    transferDialog.value?.close()
+  } else {
+    transferDialog.value?.fail(error.value)
+    error.value = ''
+  }
+}
+
+// removeTransfer deletes a transfer after confirmation.
+async function removeTransfer(transfer: Transfer): Promise<void> {
+  const name = `${transfer.from_name} → ${transfer.to_name}`
+  if (await confirmDialog.value?.ask(t('transfer.confirmDelete', { name }), { danger: true })) {
+    await apply(() => documentsApi.deleteTransfer(transfer.id))
+  }
 }
 
 // removeStay deletes a stay after confirmation.
@@ -470,13 +524,16 @@ async function removeStay(stay: Stay): Promise<void> {
       <Teleport defer to="#trip-sidebar-days" :disabled="!wideNav">
         <PlanDayList
           :days="plan.days"
-          :selected="showStays ? null : viewedDay"
+          :selected="section ? null : viewedDay"
+          :section="section"
           :stays-count="plan.stays.length"
+          :transfers-count="plan.transfers.length"
           :missing-nights="missingNights"
           :can-edit="canEdit"
           :draggable="wide"
           @select="(index) => void selectDay(index)"
           @select-stays="selectStays"
+          @select-transfers="selectTransfers"
           @add="addDay"
           @reorder="(ids) => plan && apply(() => documentsApi.reorderDays(plan!.id, ids))"
           @drop-place="(itemId, dayId) => movePlace(itemId, dayId, -1)"
@@ -497,7 +554,7 @@ async function removeStay(stay: Stay): Promise<void> {
           <PlanMap
             ref="mobileMap"
             :document="plan"
-            :selected-day="showStays ? null : viewedDay"
+            :selected-day="section ? null : viewedDay"
             :tile-url="clientConfig.map_tile_url"
             :attribution="clientConfig.map_attribution"
             :can-edit="canEdit"
@@ -532,6 +589,18 @@ async function removeStay(stay: Stay): Promise<void> {
             @remove="removeStay"
           />
 
+          <PlanTransfers
+            v-else-if="showTransfers"
+            :document="plan"
+            :currency="currency"
+            :travelers="trip.travelers"
+            :can-edit="canEdit"
+            :dated="Boolean(trip.start_date)"
+            @add="openTransfer(null)"
+            @edit="(transfer) => openTransfer(transfer)"
+            @remove="removeTransfer"
+          />
+
           <template v-else>
             <div
               v-for="(each, index) in plan.days"
@@ -543,6 +612,7 @@ async function removeStay(stay: Stay): Promise<void> {
             >
               <PlanDayPanel
                 :day="each"
+                :transfers="transfersOn(each)"
                 :currency="currency"
                 :can-edit="canEdit"
                 :draggable="wide"
@@ -555,6 +625,8 @@ async function removeStay(stay: Stay): Promise<void> {
                 @add-place="openPlace(each.id)"
                 @add-activity="openPlace(each.id, null, 'activity')"
                 @add-stay="openStay(null, each)"
+                @add-transfer="openTransfer(null, each)"
+                @edit-transfer="(transfer) => openTransfer(transfer)"
                 @move="movePlace"
                 @edit="(item) => placeDialog?.open(item)"
                 @pick-target="(item, mode) => targetDialog?.open(item, mode)"
@@ -567,7 +639,7 @@ async function removeStay(stay: Stay): Promise<void> {
             </div>
           </template>
 
-          <section v-if="!showStays" class="space-y-3" :aria-label="t('plan.unassigned')">
+          <section v-if="!section" class="space-y-3" :aria-label="t('plan.unassigned')">
             <header class="flex flex-wrap items-center justify-between gap-2">
               <h2 class="text-lg font-semibold">{{ t('plan.unassigned') }} ({{ plan.unassigned.length }})</h2>
               <button v-if="canEdit" type="button" class="btn btn-sm btn-hover-outline" @click="openPlace(null)">
@@ -596,7 +668,7 @@ async function removeStay(stay: Stay): Promise<void> {
         <PlanMap
           ref="wideMap"
           :document="plan"
-          :selected-day="showStays ? null : viewedDay"
+          :selected-day="section ? null : viewedDay"
           :tile-url="clientConfig.map_tile_url"
           :attribution="clientConfig.map_attribution"
           :can-edit="canEdit"
@@ -608,6 +680,7 @@ async function removeStay(stay: Stay): Promise<void> {
 
     <PlanPlaceDialog ref="placeDialog" :focus="searchFocus" tracks @save="savePlace" />
     <PlanStayDialog ref="stayDialog" :focus="searchFocus" @save="saveStay" />
+    <PlanTransferDialog ref="transferDialog" :focus="searchFocus" @save="saveTransfer" />
     <PlanLegDialog ref="legDialog" @save="saveLeg" />
     <PlanTargetDialog v-if="plan" ref="targetDialog" :days="plan.days" @choose="chooseTarget" />
     <ConfirmDialog ref="confirmDialog" />

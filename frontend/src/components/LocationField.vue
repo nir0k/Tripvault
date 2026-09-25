@@ -22,6 +22,8 @@ export interface LocationModel {
 const props = defineProps<{
   /** Ranks search results near this point first. */
   focus: { lat: number; lng: number } | null
+  /** Names the position when a form holds more than one, such as "From". */
+  legend?: string
 }>()
 const model = defineModel<LocationModel>({ required: true })
 
@@ -179,7 +181,7 @@ defineExpose({ lookUpAddress })
 
 <template>
   <fieldset class="fieldset space-y-2 rounded-box border border-base-300 p-3">
-    <legend class="fieldset-legend">{{ t('location.title') }}</legend>
+    <legend class="fieldset-legend">{{ legend || t('location.title') }}</legend>
 
     <div v-if="geocodingEnabled" class="relative">
       <label class="input w-full">

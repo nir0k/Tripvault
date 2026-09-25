@@ -83,15 +83,16 @@ func (f *fakeTrips) AdminList(context.Context, domain.AdminTripFilter) (domain.T
 // and a leg leaving every element of it. The examples name both, because a leg is
 // found by the name of the element it starts at, which may be a stay.
 type fakeDoc struct {
-	kind     domain.DocumentKind
-	days     []domain.Day
-	places   []domain.Item
-	anchors  []domain.Item
-	stays    []domain.Stay
-	expenses []domain.Expense
-	legs     []domain.Leg
-	intro    string
-	derived  bool
+	kind      domain.DocumentKind
+	days      []domain.Day
+	places    []domain.Item
+	anchors   []domain.Item
+	stays     []domain.Stay
+	transfers []domain.Transfer
+	expenses  []domain.Expense
+	legs      []domain.Leg
+	intro     string
+	derived   bool
 	// translations are the fields written in the report's second language.
 	translations []domain.Translation
 }
@@ -158,7 +159,7 @@ func (f *fakeDocuments) Content(_ context.Context, id uuid.UUID) (domain.Documen
 	return domain.DocumentContent{
 		Document: domain.Document{ID: id, Kind: doc.kind},
 		Days:     doc.days, Items: append(doc.places, doc.anchors...), Stays: doc.stays,
-		Legs: doc.legs, Expenses: doc.expenses,
+		Transfers: doc.transfers, Legs: doc.legs, Expenses: doc.expenses,
 	}, nil
 }
 
@@ -186,6 +187,11 @@ func (f *fakeDocuments) CreateReport(_ context.Context, trip domain.Trip, planID
 			copied := stay
 			copied.ID, copied.DocumentID = uuid.New(), reportID
 			report.stays = append(report.stays, copied)
+		}
+		for _, transfer := range plan.transfers {
+			copied := transfer
+			copied.ID, copied.DocumentID = uuid.New(), reportID
+			report.transfers = append(report.transfers, copied)
 		}
 		for _, expense := range plan.expenses {
 			copied := expense
@@ -243,6 +249,24 @@ func (f *fakeDocuments) UpdatePlace(_ context.Context, place domain.Item) error 
 func (f *fakeDocuments) CreateStay(_ context.Context, stay domain.Stay) error {
 	doc := f.doc(stay.DocumentID)
 	doc.stays = append(doc.stays, stay)
+	return nil
+}
+
+// CreateTransfer stores a booked journey.
+func (f *fakeDocuments) CreateTransfer(_ context.Context, transfer domain.Transfer) error {
+	doc := f.doc(transfer.DocumentID)
+	doc.transfers = append(doc.transfers, transfer)
+	return nil
+}
+
+// UpdateTransfer stores a booked journey as it now stands.
+func (f *fakeDocuments) UpdateTransfer(_ context.Context, transfer domain.Transfer) error {
+	doc := f.doc(transfer.DocumentID)
+	for index := range doc.transfers {
+		if doc.transfers[index].ID == transfer.ID {
+			doc.transfers[index] = transfer
+		}
+	}
 	return nil
 }
 

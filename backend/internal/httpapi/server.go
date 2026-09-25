@@ -104,6 +104,10 @@ type DocumentStore interface {
 	CreateStay(ctx context.Context, stay domain.Stay) error
 	UpdateStay(ctx context.Context, stay domain.Stay) error
 	DeleteStay(ctx context.Context, stay domain.Stay) error
+	Transfer(ctx context.Context, id uuid.UUID) (domain.Transfer, error)
+	CreateTransfer(ctx context.Context, transfer domain.Transfer) error
+	UpdateTransfer(ctx context.Context, transfer domain.Transfer) error
+	DeleteTransfer(ctx context.Context, id uuid.UUID) error
 	Expense(ctx context.Context, id uuid.UUID) (domain.Expense, error)
 	CreateExpense(ctx context.Context, expense domain.Expense) error
 	UpdateExpense(ctx context.Context, expense domain.Expense) error
@@ -465,6 +469,7 @@ func (s *Server) routes() http.Handler {
 				member.Post("/documents/{documentID}/items", s.handleCreateUnassignedPlace)
 				member.Post("/documents/{documentID}/items:move", s.handleMovePlace)
 				member.Post("/documents/{documentID}/stays", s.handleCreateStay)
+				member.Post("/documents/{documentID}/transfers", s.handleCreateTransfer)
 				member.Post("/documents/{documentID}/expenses", s.handleCreateExpense)
 				member.Post("/documents/{documentID}/legs:calculate", s.handleCalculateLegs)
 				member.Post("/documents/{documentID}/legs:retry", s.handleRetryEstimatedLegs)
@@ -481,6 +486,8 @@ func (s *Server) routes() http.Handler {
 				member.Post("/items/{itemID}:copy", s.handleCopyPlace)
 				member.Patch("/stays/{stayID}", s.handleUpdateStay)
 				member.Delete("/stays/{stayID}", s.handleDeleteStay)
+				member.Patch("/transfers/{transferID}", s.handleUpdateTransfer)
+				member.Delete("/transfers/{transferID}", s.handleDeleteTransfer)
 				member.Patch("/expenses/{expenseID}", s.handleUpdateExpense)
 				member.Delete("/expenses/{expenseID}", s.handleDeleteExpense)
 				member.Patch("/legs/{legID}", s.handleUpdateLeg)

@@ -7,7 +7,8 @@ import * as mediaApi from '@/api/media'
 import { getClientConfig } from '@/api/config'
 import { downloadSharedReportPDF } from '@/api/shared'
 import type {
-  ClientConfig, ItemStatus, Leg, Media, PlanDay, PlanItem, TranslationEntry, TranslationTarget, TripDocument,
+  ClientConfig, ItemStatus, Leg, Media, PlanDay, PlanItem, Transfer, TranslationEntry, TranslationTarget,
+  TripDocument,
 } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
@@ -278,6 +279,16 @@ function translatePlace(item: PlanItem): void {
 // translateLeg opens the translation of a journey's note.
 function translateLeg(leg: Leg): void {
   translateDialog.value?.open(t('report.translateLeg'), translateField('leg', leg.id, 'note', t('leg.note'), 500))
+}
+
+// translateTransfer opens the translation of a transfer's two ends and notes.
+function translateTransfer(transfer: Transfer): void {
+  const original = document.value?.transfers.find((each) => each.id === transfer.id) ?? transfer
+  translateDialog.value?.open(`${original.from_name} → ${original.to_name}`, [
+    ...translateField('transfer', transfer.id, 'from_name', t('transfer.fromName'), 200),
+    ...translateField('transfer', transfer.id, 'to_name', t('transfer.toName'), 200),
+    ...translateField('transfer', transfer.id, 'notes_md', t('transfer.notes'), 20000, true),
+  ])
 }
 
 // editPlace opens the form a place is changed through: its own, or the
@@ -730,6 +741,7 @@ function setStatus(item: PlanItem, status: ItemStatus): void {
           :key="day.id"
           :day="day"
           :stays="shown.stays"
+          :transfers="shown.transfers"
           :document-items="shownItems"
           :currency="currency"
           :editing="editing"
@@ -765,6 +777,7 @@ function setStatus(item: PlanItem, status: ItemStatus): void {
           @dismiss-hints="forgetHints"
           @remove-day="removeDay(day)"
           @edit-leg="editLeg"
+          @translate-transfer="translateTransfer"
         />
       </div>
 

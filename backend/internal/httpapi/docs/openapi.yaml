@@ -1584,14 +1584,15 @@ paths:
                     properties:
                       target_type:
                         type: string
-                        enum: [trip, document, day, stay, item, leg]
+                        enum: [trip, document, day, stay, transfer, item, leg]
                       target_id:
                         type: string
                         format: uuid
                         description: The element translated; the trip's own identifier for `trip`.
                       field:
                         type: string
-                        enum: [title, summary, intro_md, summary_md, notes_md, name, description_md, story_md, note]
+                        enum: [title, summary, intro_md, summary_md, notes_md, name, description_md, story_md, note,
+                               from_name, to_name]
                         description: One of the fields the target translates.
                       value:
                         type: string
@@ -1742,6 +1743,38 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/StayRequest"
+      responses:
+        "201":
+          $ref: "#/components/responses/DocumentChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/documents/{documentID}/transfers:
+    post:
+      tags: [Documents]
+      summary: Add a transfer
+      description: |
+        A booked journey between two places - a flight, a train, a bus, a ferry,
+        a transfer. It belongs to the whole document and is shown in the day
+        it departs on and the day it arrives on, without taking part in the
+        day's schedule.
+      operationId: createTransfer
+      parameters:
+        - $ref: "#/components/parameters/DocumentID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransferRequest"
       responses:
         "201":
           $ref: "#/components/responses/DocumentChanged"
@@ -2122,6 +2155,48 @@ paths:
       operationId: deleteStay
       parameters:
         - $ref: "#/components/parameters/StayID"
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/transfers/{transferID}:
+    patch:
+      tags: [Documents]
+      summary: Change a transfer
+      operationId: updateTransfer
+      parameters:
+        - $ref: "#/components/parameters/TransferID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransferRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      tags: [Documents]
+      summary: Delete a transfer
+      operationId: deleteTransfer
+      parameters:
+        - $ref: "#/components/parameters/TransferID"
       responses:
         "200":
           $ref: "#/components/responses/DocumentChanged"
@@ -2892,6 +2967,13 @@ components:
         format: uuid
     LegID:
       name: legID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TransferID:
+      name: transferID
       in: path
       required: true
       schema:
@@ -3914,6 +3996,10 @@ components:
         added straight into the report.
       enum: [planned, visited, skipped, unplanned]
 
+    TransferKind:
+      type: string
+      enum: [flight, train, bus, ferry, transfer, other]
+
     StayKind:
       type: string
       enum: [hotel, apartment, hostel, camping, friends, other]
@@ -4342,10 +4428,80 @@ components:
           type: [string, "null"]
           format: uuid
 
+    Transfer:
+      type: object
+      description: A booked journey between two places, by the date it departs.
+      required: [id, kind, name, from_name, from_address, from_lat, from_lng, to_name, to_address, to_lat, to_lng,
+                 departure_date, departure_time, arrival_date, arrival_time, booking_ref, url, notes_md,
+                 planned_cost_amount, cost_per_person, actual_cost_amount, source_transfer_id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: "#/components/schemas/TransferKind"
+        name:
+          type: string
+          description: The carrier or the number, such as "Icelandair FI 204"; may be empty.
+        from_name:
+          type: string
+          maxLength: 200
+        from_address:
+          type: string
+        from_lat:
+          type: [number, "null"]
+        from_lng:
+          type: [number, "null"]
+        to_name:
+          type: string
+          maxLength: 200
+        to_address:
+          type: string
+        to_lat:
+          type: [number, "null"]
+        to_lng:
+          type: [number, "null"]
+        departure_date:
+          type: string
+          format: date
+        departure_time:
+          oneOf:
+            - $ref: "#/components/schemas/ClockTime"
+            - type: "null"
+        arrival_date:
+          type: [string, "null"]
+          format: date
+          description: |
+            Null when the transfer arrives on the day it departs. At most one
+            day before the departure date, which a flight west over the date
+            line may land on.
+        arrival_time:
+          oneOf:
+            - $ref: "#/components/schemas/ClockTime"
+            - type: "null"
+        booking_ref:
+          type: string
+        url:
+          type: string
+        notes_md:
+          type: string
+        planned_cost_amount:
+          $ref: "#/components/schemas/NullableAmount"
+        cost_per_person:
+          type: boolean
+          description: The amounts are per traveller and multiplied in the budget.
+        actual_cost_amount:
+          allOf:
+            - $ref: "#/components/schemas/NullableAmount"
+          description: Report only.
+        source_transfer_id:
+          type: [string, "null"]
+          format: uuid
+
     Document:
       type: object
-      required: [id, trip_id, kind, source_document_id, intro_md, summary_md, days, unassigned, stays, expenses,
-                 nights, stay_summary, pending_legs, estimated_legs, totals, translations, created_at, updated_at]
+      required: [id, trip_id, kind, source_document_id, intro_md, summary_md, days, unassigned, stays, transfers,
+                 expenses, nights, stay_summary, pending_legs, estimated_legs, totals, translations, created_at, updated_at]
       properties:
         id:
           type: string
@@ -4379,6 +4535,11 @@ components:
           description: By check-in date.
           items:
             $ref: "#/components/schemas/Stay"
+        transfers:
+          type: array
+          description: By departure date and time.
+          items:
+            $ref: "#/components/schemas/Transfer"
         expenses:
           type: array
           description: Costs tied to no place, stay or leg, oldest first.
@@ -4423,7 +4584,7 @@ components:
           description: |
             A report's words in its further languages: by language, then by
             the identifier of the element translated (the document, a day, a
-            stay, a place or a leg), then by field. A field missing here is read
+            stay, a transfer, a place or a leg), then by field. A field missing here is read
             in the original. Empty on a plan.
           additionalProperties:
             type: object
@@ -4710,6 +4871,68 @@ components:
             - $ref: "#/components/schemas/NullableAmount"
           description: Report only.
 
+    TransferRequest:
+      type: object
+      additionalProperties: false
+      description: Omitted fields keep their value. A new transfer needs both names and the departure date.
+      properties:
+        kind:
+          $ref: "#/components/schemas/TransferKind"
+        name:
+          type: string
+          maxLength: 200
+        from_name:
+          type: string
+          maxLength: 200
+        from_address:
+          type: string
+        from_lat:
+          type: [number, "null"]
+        from_lng:
+          type: [number, "null"]
+        to_name:
+          type: string
+          maxLength: 200
+        to_address:
+          type: string
+        to_lat:
+          type: [number, "null"]
+        to_lng:
+          type: [number, "null"]
+        departure_date:
+          type: string
+          format: date
+        departure_time:
+          oneOf:
+            - $ref: "#/components/schemas/ClockTime"
+            - type: "null"
+        arrival_date:
+          type: [string, "null"]
+          format: date
+          description: |
+            Null when the transfer arrives on the day it departs. At most one
+            day before the departure date, which a flight west over the date
+            line may land on.
+        arrival_time:
+          oneOf:
+            - $ref: "#/components/schemas/ClockTime"
+            - type: "null"
+        booking_ref:
+          type: string
+        url:
+          type: string
+        notes_md:
+          type: string
+        planned_cost_amount:
+          $ref: "#/components/schemas/NullableAmount"
+        cost_per_person:
+          type: boolean
+          description: The amounts are per traveller and multiplied in the budget.
+        actual_cost_amount:
+          allOf:
+            - $ref: "#/components/schemas/NullableAmount"
+          description: Report only.
+
     ShareLink:
       type: object
       description: A link as its owner sees it afterwards, without its token.
@@ -4879,13 +5102,13 @@ components:
         Every amount is in the trip's currency. `planned` is what the plan
         commits to, the places marked optional included; only `unassigned`, the
         places not on a day yet, is reported separately so it never inflates it.
-        `planned` is the sum of the days, `stays` and `untied`.
+        `planned` is the sum of the days, `stays`, `transfers` and `untied`.
 
         A report's budget carries the same planned amounts - the snapshot it was
         copied with - and `actual` beside each of them. There the overall budget
         is measured against `actual`, since that is what was spent.
       required: [kind, document_id, currency, travelers, budget_amount, planned, unassigned, stays,
-                 untied, actual, per_person, remaining, used_percent, categories, days, entries]
+                 transfers, untied, actual, per_person, remaining, used_percent, categories, days, entries]
       properties:
         kind:
           type: string
@@ -4910,6 +5133,10 @@ components:
           allOf:
             - $ref: "#/components/schemas/Amount"
           description: The part of `planned` spent on accommodation.
+        transfers:
+          allOf:
+            - $ref: "#/components/schemas/Amount"
+          description: The part of `planned` spent on transfers.
         untied:
           allOf:
             - $ref: "#/components/schemas/Amount"
@@ -4977,11 +5204,11 @@ components:
             properties:
               kind:
                 type: string
-                enum: [place, stay, leg, expense]
+                enum: [place, stay, transfer, leg, expense]
               id:
                 type: string
                 format: uuid
-                description: The place, stay, leg or expense carrying the cost.
+                description: The place, stay, transfer, leg or expense carrying the cost.
               label:
                 type: string
               category:

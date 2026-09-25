@@ -28,10 +28,11 @@ type BudgetEntryKind string
 
 // Budget entry kinds.
 const (
-	BudgetPlace   BudgetEntryKind = "place"
-	BudgetStay    BudgetEntryKind = "stay"
-	BudgetLeg     BudgetEntryKind = "leg"
-	BudgetExpense BudgetEntryKind = "expense"
+	BudgetPlace    BudgetEntryKind = "place"
+	BudgetStay     BudgetEntryKind = "stay"
+	BudgetTransfer BudgetEntryKind = "transfer"
+	BudgetLeg      BudgetEntryKind = "leg"
+	BudgetExpense  BudgetEntryKind = "expense"
 )
 
 // BudgetEntry is one line of the budget's expense list.
@@ -40,10 +41,10 @@ type BudgetEntry struct {
 	ID    uuid.UUID
 	Label string
 	// Category is the place's own category, accommodation for a stay and
-	// transport for a leg.
+	// transport for a leg or a transfer.
 	Category CostCategory
-	// DayID is the day the cost belongs to, nil for a stay, an unassigned place
-	// or an expense of the whole trip.
+	// DayID is the day the cost belongs to, nil for a stay, a transfer, an
+	// unassigned place or an expense of the whole trip.
 	DayID *uuid.UUID
 	// Amount is what the cost comes to for the whole group: Unit multiplied by
 	// the travellers when PerPerson is set.
@@ -89,14 +90,16 @@ type Budget struct {
 	Travelers int
 	// Budget is the trip's overall budget, nil when it has none.
 	Budget *Money
-	// Planned is everything the plan commits to: the days, the stays and the
-	// expenses of the whole trip.
+	// Planned is everything the plan commits to: the days, the stays, the
+	// transfers and the expenses of the whole trip.
 	Planned Money
 	// Unassigned holds the places that are not on a day yet.
 	Unassigned Money
-	// Stays and Untied are the parts of Planned that belong to no single day.
-	Stays  Money
-	Untied Money
+	// Stays, Transfers and Untied are the parts of Planned that belong to no
+	// single day.
+	Stays     Money
+	Transfers Money
+	Untied    Money
 	// Actual is everything a report records as spent; zero in a plan.
 	Actual Money
 	// PerPerson is the spending divided over the travellers: Planned in a plan,
@@ -209,6 +212,15 @@ func BuildBudget(trip Trip, content DocumentContent) Budget {
 		addEntry(&budget, categories, nil, entry)
 		budget.Stays += entry.Amount
 	}
+	for _, transfer := range content.Transfers {
+		entry, ok := transferEntry(transfer, travelers, report)
+		if !ok {
+			continue
+		}
+		budget.Entries = append(budget.Entries, entry)
+		addEntry(&budget, categories, nil, entry)
+		budget.Transfers += entry.Amount
+	}
 	for _, expense := range DayExpenses(content.Expenses, nil) {
 		entry, ok := expenseEntry(expense, report)
 		if !ok {
@@ -316,6 +328,28 @@ func stayEntry(stay Stay, report bool) (BudgetEntry, bool) {
 		Unit:     moneyOrZero(stay.PlannedCost),
 		Actual:   actualOf(stay.ActualCost, report),
 	}, true
+}
+
+// transferEntry turns a transfer that carries a cost into an entry. A ticket
+// is usually priced per head, so the per-person flag applies as on a place.
+func transferEntry(transfer Transfer, travelers int, report bool) (BudgetEntry, bool) {
+	if !hasCost(transfer.PlannedCost, transfer.ActualCost, report) {
+		return BudgetEntry{}, false
+	}
+	entry := BudgetEntry{
+		Kind:      BudgetTransfer,
+		ID:        transfer.ID,
+		Label:     transfer.FromName + " → " + transfer.ToName,
+		Category:  CostTransport,
+		Amount:    transfer.PlannedCostTotal(travelers),
+		Unit:      moneyOrZero(transfer.PlannedCost),
+		PerPerson: transfer.CostPerPerson,
+	}
+	if report && transfer.ActualCost != nil {
+		actual := transfer.ActualCostTotal(travelers)
+		entry.Actual = &actual
+	}
+	return entry, true
 }
 
 // legEntry turns a leg that carries a cost into an entry.

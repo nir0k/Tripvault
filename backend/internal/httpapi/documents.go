@@ -270,6 +270,7 @@ type documentResponse struct {
 	Days             []dayResponse       `json:"days"`
 	Unassigned       []itemResponse      `json:"unassigned"`
 	Stays            []stayResponse      `json:"stays"`
+	Transfers        []transferResponse  `json:"transfers"`
 	Expenses         []expenseResponse   `json:"expenses"`
 	Nights           []nightResponse     `json:"nights"`
 	StaySummary      staySummaryResponse `json:"stay_summary"`
@@ -429,6 +430,7 @@ func newDocumentResponse(content domain.DocumentContent, trip domain.TripSummary
 		Days:             make([]dayResponse, 0, len(content.Days)),
 		Unassigned:       []itemResponse{},
 		Stays:            make([]stayResponse, 0, len(content.Stays)),
+		Transfers:        make([]transferResponse, 0, len(content.Transfers)),
 		Expenses:         make([]expenseResponse, 0, len(content.Expenses)),
 		Nights:           []nightResponse{},
 		Translations:     newTranslationsResponse(content.Translations),
@@ -517,6 +519,9 @@ func newDocumentResponse(content domain.DocumentContent, trip domain.TripSummary
 	}
 	for _, stay := range content.Stays {
 		response.Stays = append(response.Stays, newStayResponse(stay))
+	}
+	for _, transfer := range content.Transfers {
+		response.Transfers = append(response.Transfers, newTransferResponse(transfer))
 	}
 	for _, expense := range content.Expenses {
 		response.Expenses = append(response.Expenses, newExpenseResponse(expense))

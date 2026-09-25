@@ -14,9 +14,12 @@ import { dayColor, isVisit } from '@/utils/plan'
 // colours on the map mean anything.
 const props = defineProps<{
   days: PlanDay[]
-  /** The selected day's index, or null while the stays are shown. */
+  /** The selected day's index, or null while the stays or the transfers are shown. */
   selected: number | null
+  /** Which of the two lists beside the days is shown, if either. */
+  section: 'stays' | 'transfers' | null
   staysCount: number
+  transfersCount: number
   missingNights: number
   canEdit: boolean
   draggable: boolean
@@ -25,6 +28,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [index: number]
   selectStays: []
+  selectTransfers: []
   add: []
   reorder: [dayIds: string[]]
   dropPlace: [itemId: string, dayId: string]
@@ -110,11 +114,19 @@ function placeCount(day: PlanDay): number {
       <button
         type="button"
         class="btn btn-sm flex-1 justify-between lg:w-full lg:flex-none"
-        :class="selected === null ? 'btn-primary' : 'btn-hover-outline'"
+        :class="section === 'stays' ? 'btn-primary' : 'btn-hover-outline'"
         @click="emit('selectStays')"
       >
         <span>{{ t('stay.title') }} ({{ staysCount }})</span>
         <span v-if="missingNights > 0" class="badge badge-warning badge-sm">{{ t('stay.missingShort', missingNights) }}</span>
+      </button>
+      <button
+        type="button"
+        class="btn btn-sm flex-1 justify-between lg:w-full lg:flex-none"
+        :class="section === 'transfers' ? 'btn-primary' : 'btn-hover-outline'"
+        @click="emit('selectTransfers')"
+      >
+        <span>{{ t('transfer.title') }} ({{ transfersCount }})</span>
       </button>
     </div>
   </nav>

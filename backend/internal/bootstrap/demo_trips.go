@@ -22,7 +22,7 @@ func icelandTrip() demoTrip {
 		Summary: "Four days along route 1, from Reykjavík to Vík and back. Waterfalls, black sand " +
 			"and one very windy afternoon.",
 		Start: "2026-06-20", End: "2026-06-23", Timezone: "Atlantic/Reykjavik",
-		Currency: "EUR", Travelers: 2, Budget: "1800",
+		Currency: "EUR", Travelers: 2, Budget: "2600",
 
 		Stays: []demoStay{{
 			Name: "Guesthouse Hraun", Kind: domain.StayApartment,
@@ -38,6 +38,21 @@ func icelandTrip() demoTrip {
 			BookingRef: "VSV-20260622", URL: "https://example.com/vik-sea-view",
 			Contacts: "stay@example.com", Notes: "Breakfast from 07:30. Ask for a room facing the sea.",
 			Cost: "410", ActualCost: "430",
+		}},
+
+		Transfers: []demoTransfer{{
+			Kind: domain.TransferFlight, Name: "Icelandair FI 205",
+			From: "Copenhagen airport", FromLat: 55.6180, FromLng: 12.6508,
+			To: "Keflavík airport", ToLat: 63.9850, ToLng: -22.6056,
+			Departure: "2026-06-20", DepartAt: "08:10", ArriveAt: "09:50",
+			BookingRef: "FI-7QK2LD", Notes: "One checked bag each. Seats 14A and 14B.",
+			Cost: "210", PerPerson: true, ActualCost: "210",
+		}, {
+			Kind: domain.TransferFlight, Name: "Icelandair FI 204",
+			From: "Keflavík airport", FromLat: 63.9850, FromLng: -22.6056,
+			To: "Copenhagen airport", ToLat: 55.6180, ToLng: 12.6508,
+			Departure: "2026-06-23", DepartAt: "16:40", ArriveAt: "21:55",
+			BookingRef: "FI-7QK2LD", Cost: "190", PerPerson: true, ActualCost: "190",
 		}},
 
 		Days: []demoDay{{
@@ -248,7 +263,7 @@ func lisbonTrip() demoTrip {
 		Title:   "Lisbon in spring",
 		Summary: "Three days of tiles, hills and too much coffee. Nothing booked yet except the flights.",
 		Start:   "2027-04-16", End: "2027-04-18", Timezone: "Europe/Lisbon",
-		Currency: "EUR", Travelers: 3, Budget: "1400",
+		Currency: "EUR", Travelers: 3, Budget: "2000",
 
 		Stays: []demoStay{{
 			Name: "Alfama rooms", Kind: domain.StayApartment,
@@ -258,6 +273,21 @@ func lisbonTrip() demoTrip {
 			Contacts: "+351 900 000 111",
 			Notes:    "Third floor, no lift. Ask about the luggage room for the last morning.",
 			Cost:     "480",
+		}},
+
+		Transfers: []demoTransfer{{
+			Kind: domain.TransferFlight, Name: "TAP TP 755",
+			From: "Berlin airport", FromLat: 52.3667, FromLng: 13.5033,
+			To: "Lisbon airport", ToLat: 38.7742, ToLng: -9.1342,
+			Departure: "2027-04-16", DepartAt: "07:55", ArriveAt: "11:20",
+			BookingRef: "TP-X4R81M", Notes: "Hand luggage only.",
+			Cost: "145", PerPerson: true,
+		}, {
+			Kind: domain.TransferShuttle, Name: "Aerobus",
+			From: "Lisbon airport", FromLat: 38.7742, FromLng: -9.1342,
+			To: "Alfama rooms", ToLat: 38.7118, ToLng: -9.1300,
+			Departure: "2027-04-16", DepartAt: "11:50", ArriveAt: "12:30",
+			Cost: "4", PerPerson: true,
 		}},
 
 		Days: []demoDay{{

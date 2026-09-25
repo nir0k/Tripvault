@@ -83,6 +83,13 @@ func sampleReport(t *testing.T) Report {
 		ActualCost: &actual, Address: "Þórsgata 26", NotesMD: "Breakfast until ten.",
 	}
 
+	departure, arrival := domain.ClockTime(7*60+40), domain.ClockTime(12*60+55)
+	flight := domain.Transfer{
+		ID: uuid.New(), DocumentID: documentID, Kind: domain.TransferFlight, Name: "FI 204",
+		FromName: "Keflavík", ToName: "Copenhagen", DepartureDate: start,
+		DepartureTime: &departure, ArrivalTime: &arrival, PlannedCost: &planned, CostPerPerson: true,
+	}
+
 	spentOn := start
 	expense := domain.Expense{
 		ID: uuid.New(), DocumentID: documentID, Category: domain.CostFood,
@@ -103,12 +110,13 @@ func sampleReport(t *testing.T) Report {
 		Document: domain.Document{ID: documentID, TripID: trip.ID, Kind: domain.DocumentReport,
 			IntroMD:   "## How it went\n\nBetter than the forecast said.",
 			SummaryMD: "We would go again in winter."},
-		Days:     []domain.Day{firstDay, secondDay},
-		Items:    []domain.Item{museum, harbour, mark},
-		Stays:    []domain.Stay{stay},
-		Legs:     []domain.Leg{leg},
-		Expenses: []domain.Expense{expense},
-		Tracks:   []domain.Track{track},
+		Days:      []domain.Day{firstDay, secondDay},
+		Items:     []domain.Item{museum, harbour, mark},
+		Stays:     []domain.Stay{stay},
+		Transfers: []domain.Transfer{flight},
+		Legs:      []domain.Leg{leg},
+		Expenses:  []domain.Expense{expense},
+		Tracks:    []domain.Track{track},
 	}
 
 	photo := samplePhoto(t)
@@ -384,6 +392,7 @@ func TestEveryLabelIsTranslated(t *testing.T) {
 		{"statuses", english.statuses, russian.statuses},
 		{"modes", english.modes, russian.modes},
 		{"stay kinds", english.stayKinds, russian.stayKinds},
+		{"transfer kinds", english.transferKinds, russian.transferKinds},
 		{"categories", english.categories, russian.categories},
 		{"activities", english.activities, russian.activities},
 	}
@@ -408,6 +417,11 @@ func TestEveryLabelIsTranslated(t *testing.T) {
 	for _, status := range domain.ItemStatuses {
 		if english.statuses[string(status)] == "" {
 			t.Errorf("the status %q has no wording", status)
+		}
+	}
+	for _, kind := range domain.TransferKinds {
+		if english.transferKinds[string(kind)] == "" {
+			t.Errorf("the transfer kind %q has no wording", kind)
 		}
 	}
 	for _, activity := range domain.ActivityTypes {

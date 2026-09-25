@@ -232,6 +232,14 @@ func writeDay(doc *document, text labels, report Report, day domain.Day, index i
 	legs := legsOf(report.Content.Legs, day.ID)
 	stays := staysOf(report, day)
 
+	// A flight or a train that leaves or lands this day frames it, so it is
+	// written before the places.
+	if day.Date != nil {
+		for _, transfer := range domain.TransfersOnDate(report.Content.Transfers, *day.Date) {
+			writeTransfer(doc, text, report, transfer)
+		}
+	}
+
 	// A day without a stay to start from opens with the journey in from the
 	// day before, which says where it started: that place is pages back.
 	if leg := domain.OpeningLeg(report.Content.Legs, domain.DayItems(report.Content.Items, &day.ID)); leg != nil {
@@ -378,6 +386,48 @@ func writeStay(doc *document, text labels, report Report, stay domain.Stay) {
 
 	if stay.NotesMD != "" {
 		writeMarkdown(doc, stay.NotesMD)
+	}
+}
+
+// writeTransfer writes a booked journey: how and where it went, when it left
+// and arrived, and what it cost.
+func writeTransfer(doc *document, text labels, report Report, transfer domain.Transfer) {
+	doc.space(1)
+	doc.subheading(text.transferKinds[string(transfer.Kind)] + ": " +
+		transfer.FromName + " " + arrowMark + " " + transfer.ToName)
+
+	parts := []string{}
+	if transfer.Name != "" {
+		parts = append(parts, transfer.Name)
+	}
+	// endOf reads one end of the journey: its time, and its date when it is
+	// another day than the one being written.
+	endOf := func(format string, date time.Time, clock *domain.ClockTime, sameDay bool) {
+		when := ""
+		if !sameDay {
+			when = text.date(date)
+		}
+		if clock != nil {
+			when = strings.TrimSpace(when + " " + text.clock(int(*clock)))
+		}
+		if when != "" {
+			parts = append(parts, fmt.Sprintf(format, when))
+		}
+	}
+	sameDay := transfer.Arrival().Equal(transfer.DepartureDate)
+	endOf(text.departs, transfer.DepartureDate, transfer.DepartureTime, sameDay)
+	endOf(text.arrives, transfer.Arrival(), transfer.ArrivalTime, sameDay)
+	travelers := report.Trip.Travelers
+	if transfer.ActualCost != nil {
+		parts = append(parts, money(transfer.ActualCostTotal(travelers), report.Trip.Currency))
+	} else if transfer.PlannedCost != nil {
+		parts = append(parts, money(transfer.PlannedCostTotal(travelers), report.Trip.Currency))
+	}
+	if len(parts) > 0 {
+		doc.note(strings.Join(parts, separator))
+	}
+	if transfer.NotesMD != "" {
+		writeMarkdown(doc, transfer.NotesMD)
 	}
 }
 

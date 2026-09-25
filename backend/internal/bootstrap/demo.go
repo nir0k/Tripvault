@@ -47,6 +47,8 @@ type DocumentStore interface {
 	UpdatePlace(ctx context.Context, place domain.Item) error
 	CreateStay(ctx context.Context, stay domain.Stay) error
 	UpdateStay(ctx context.Context, stay domain.Stay) error
+	CreateTransfer(ctx context.Context, transfer domain.Transfer) error
+	UpdateTransfer(ctx context.Context, transfer domain.Transfer) error
 	CreateExpense(ctx context.Context, expense domain.Expense) error
 	UpdateExpense(ctx context.Context, expense domain.Expense) error
 	UpdateLeg(ctx context.Context, leg domain.Leg) error
@@ -107,6 +109,27 @@ type demoStay struct {
 	ActualCost string
 }
 
+// demoTransfer is a booked journey of an example plan. Name identifies it when
+// the report's actual cost is filled in, so it must be unique within a trip.
+type demoTransfer struct {
+	Kind       domain.TransferKind
+	Name       string
+	From, To   string
+	FromLat    float64
+	FromLng    float64
+	ToLat      float64
+	ToLng      float64
+	Departure  string
+	DepartAt   string
+	Arrival    string
+	ArriveAt   string
+	BookingRef string
+	Notes      string
+	Cost       string
+	PerPerson  bool
+	ActualCost string
+}
+
 // demoExpense is a cost of an example plan that belongs to no place.
 type demoExpense struct {
 	Note     string
@@ -150,6 +173,7 @@ type demoTrip struct {
 	Budget    string
 	Days      []demoDay
 	Stays     []demoStay
+	Transfers []demoTransfer
 	Expenses  []demoExpense
 	Legs      []demoLeg
 	// Ideas are the plan's unassigned places.
@@ -441,8 +465,8 @@ func writeDemoShareLink(ctx context.Context, trips TripStore, tripID, owner uuid
 	return nil
 }
 
-// writePlan fills a plan: the words of each day, the stays, the places, the
-// separate expenses, the unassigned ideas and the legs' own figures.
+// writePlan fills a plan: the words of each day, the stays, the transfers, the
+// places, the separate expenses, the unassigned ideas and the legs' own figures.
 func writePlan(ctx context.Context, documents DocumentStore, planID uuid.UUID, demo demoTrip) error {
 	content, err := documents.Content(ctx, planID)
 	if err != nil {
@@ -468,6 +492,11 @@ func writePlan(ctx context.Context, documents DocumentStore, planID uuid.UUID, d
 	// between the elements of each day.
 	for _, stay := range demo.Stays {
 		if err := writeStay(ctx, documents, planID, stay); err != nil {
+			return err
+		}
+	}
+	for _, transfer := range demo.Transfers {
+		if err := writeTransfer(ctx, documents, planID, transfer); err != nil {
 			return err
 		}
 	}
@@ -532,6 +561,60 @@ func writePlace(ctx context.Context, documents DocumentStore, documentID uuid.UU
 		return err
 	}
 	return documents.CreatePlace(ctx, normalized, nil)
+}
+
+// writeTransfer adds one booked journey.
+func writeTransfer(ctx context.Context, documents DocumentStore, documentID uuid.UUID, demo demoTransfer) error {
+	departure, err := domain.ParseDate("departure_date", demo.Departure)
+	if err != nil {
+		return err
+	}
+	transfer := domain.Transfer{
+		ID: uuid.Must(uuid.NewV7()), DocumentID: documentID, Kind: demo.Kind, Name: demo.Name,
+		FromName: demo.From, ToName: demo.To, DepartureDate: departure, BookingRef: demo.BookingRef,
+		NotesMD: demo.Notes, CostPerPerson: demo.PerPerson,
+	}
+	if demo.Arrival != "" {
+		arrival, err := domain.ParseDate("arrival_date", demo.Arrival)
+		if err != nil {
+			return err
+		}
+		transfer.ArrivalDate = &arrival
+	}
+	if demo.FromLat != 0 || demo.FromLng != 0 {
+		lat, lng := demo.FromLat, demo.FromLng
+		transfer.FromLat, transfer.FromLng = &lat, &lng
+	}
+	if demo.ToLat != 0 || demo.ToLng != 0 {
+		lat, lng := demo.ToLat, demo.ToLng
+		transfer.ToLat, transfer.ToLng = &lat, &lng
+	}
+	for _, at := range []struct {
+		field  string
+		value  string
+		target **domain.ClockTime
+	}{{"departure_time", demo.DepartAt, &transfer.DepartureTime}, {"arrival_time", demo.ArriveAt, &transfer.ArrivalTime}} {
+		if at.value == "" {
+			continue
+		}
+		clock, err := domain.ParseClockTime(at.field, at.value)
+		if err != nil {
+			return err
+		}
+		*at.target = &clock
+	}
+	if demo.Cost != "" {
+		amount, err := domain.ParseMoney("planned_cost_amount", demo.Cost)
+		if err != nil {
+			return err
+		}
+		transfer.PlannedCost = &amount
+	}
+	normalized, err := transfer.Normalize(domain.DocumentPlan)
+	if err != nil {
+		return err
+	}
+	return documents.CreateTransfer(ctx, normalized)
 }
 
 // writeStay adds one place to sleep.
@@ -748,8 +831,8 @@ func writeReport(ctx context.Context, documents DocumentStore, reportID uuid.UUI
 	return nil
 }
 
-// writeActualCosts fills in what the report's stays and separate expenses really
-// cost. Without this the report's total would count only the places, and the
+// writeActualCosts fills in what the report's stays, transfers and separate
+// expenses really cost. Without this the report's total would count only the places, and the
 // comparison with the plan would be nonsense: the accommodation and the car hire
 // are most of what a trip costs.
 func writeActualCosts(ctx context.Context, documents DocumentStore, content domain.DocumentContent,
@@ -775,6 +858,31 @@ func writeActualCosts(ctx context.Context, documents DocumentStore, content doma
 			return err
 		}
 		if err := documents.UpdateStay(ctx, normalized); err != nil {
+			return err
+		}
+	}
+
+	spentOnTransfer := map[string]string{}
+	for _, transfer := range demo.Transfers {
+		if transfer.ActualCost != "" {
+			spentOnTransfer[transfer.Name] = transfer.ActualCost
+		}
+	}
+	for _, transfer := range content.Transfers {
+		spent, ok := spentOnTransfer[transfer.Name]
+		if !ok {
+			continue
+		}
+		amount, err := domain.ParseMoney("actual_cost_amount", spent)
+		if err != nil {
+			return err
+		}
+		transfer.ActualCost = &amount
+		normalized, err := transfer.Normalize(domain.DocumentReport)
+		if err != nil {
+			return err
+		}
+		if err := documents.UpdateTransfer(ctx, normalized); err != nil {
 			return err
 		}
 	}

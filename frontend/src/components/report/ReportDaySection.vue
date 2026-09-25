@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { ItemStatus, Leg, Media, PlanDay, PlanItem, Stay } from '@/api/types'
+import type { ItemStatus, Leg, Media, PlanDay, PlanItem, Stay, Transfer } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import MediaGallery from '@/components/media/MediaGallery.vue'
 import MediaHints from '@/components/media/MediaHints.vue'
 import MediaUploader from '@/components/media/MediaUploader.vue'
+import TransferRow from '@/components/plan/TransferRow.vue'
 import EditableMarkdown from '@/components/report/EditableMarkdown.vue'
 import ReportLegLine from '@/components/report/ReportLegLine.vue'
 import ReportPlaceCard from '@/components/report/ReportPlaceCard.vue'
@@ -37,6 +38,8 @@ const props = defineProps<{
   hints?: MediaHint[]
   /** The document's stays, which name the journey that starts at one. */
   stays?: Stay[]
+  /** The document's transfers; those leaving or arriving on the day's date are shown. */
+  transfers?: Transfer[]
   /** The elements of every day, which name the journey in from the day before. */
   documentItems?: PlanItem[]
   /** Whether the day may be deleted; a document keeps at least one day. */
@@ -71,6 +74,7 @@ const emit = defineEmits<{
   dismissHints: []
   removeDay: []
   editLeg: [leg: Leg]
+  translateTransfer: [transfer: Transfer]
 }>()
 
 const { t, locale } = useI18n()
@@ -111,6 +115,12 @@ function legFrom(leg: Leg): string | undefined {
   }
   return own ? undefined : from.name || undefined
 }
+
+// dayTransfers are the flights and trains that leave or arrive on the day's
+// date; a day without a date has none.
+const dayTransfers = computed(() => (props.transfers ?? []).filter((transfer) =>
+  props.day.date !== null
+  && (transfer.departure_date === props.day.date || (transfer.arrival_date ?? transfer.departure_date) === props.day.date)))
 
 const date = computed(() => formatDayDate(props.day.date, locale.value, true))
 const spent = computed(() => formatMoney(props.day.summary.actual_cost, props.currency, locale.value))
@@ -158,6 +168,24 @@ const spent = computed(() => formatMoney(props.day.summary.actual_cost, props.cu
       :rows="6"
       @save="(notes) => emit('notes', notes)"
     />
+
+    <ul v-if="dayTransfers.length > 0" class="space-y-2" :aria-label="t('transfer.title')">
+      <li
+        v-for="transfer in dayTransfers"
+        :key="transfer.id"
+        class="flex items-start gap-2 rounded-box border border-base-300 p-3"
+      >
+        <TransferRow :transfer="transfer" :currency="currency" :date="day.date" class="flex-1" />
+        <button
+          v-if="editing && text.translating"
+          type="button"
+          class="btn btn-ghost btn-xs"
+          @click="emit('translateTransfer', transfer)"
+        >
+          {{ t('report.translate') }}
+        </button>
+      </li>
+    </ul>
 
     <div v-if="shown.length > 0" class="space-y-3">
       <template v-for="item in shown" :key="item.id">
