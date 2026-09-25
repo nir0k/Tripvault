@@ -935,6 +935,8 @@
     "favoriteFull": "This day or place already shows seven photographs.",
     "favoriteTooMany": "A day or a place shows at most seven photographs.",
     "selectPicture": "Pick this photograph",
+    "selectSection": "Pick every photograph of {name}",
+    "selectAll": "Pick all",
     "confirmDeleteSelected": "Delete this photograph? It disappears from every gallery it hangs in. | Delete {count} photographs? They disappear from every gallery they hang in.",
     "clearSelection": "Clear the selection",
     "linkAction": "Where to show",

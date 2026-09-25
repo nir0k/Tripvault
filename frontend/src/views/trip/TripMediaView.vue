@@ -59,7 +59,9 @@ const error = ref('')
 // Filing a whole afternoon under one day picture by picture is no way to spend
 // an evening, so every tile carries a circle to pick it out with. There is no
 // mode to switch on: while nothing is picked a tile opens, and once something
-// is, a tile joins the selection instead.
+// is, a tile joins the selection instead. As in Google Photos, the circle beside
+// a day or a place picks all of its pictures, and Shift picks every tile between
+// the one picked last and the one clicked.
 const selected = ref(new Set<string>())
 
 const confirmDialog = useTemplateRef<InstanceType<typeof ConfirmDialog>>('confirmDialog')
@@ -337,13 +339,97 @@ const selectedMedia = computed(() => [...new Map(order.value
   .filter((picture) => selected.value.has(picture.id))
   .map((picture) => [picture.id, picture])).values()])
 
-// pick puts a picture into the selection, or takes it out again.
-function pick(picture: Media): void {
-  if (selected.value.has(picture.id)) {
-    selected.value.delete(picture.id)
-  } else {
-    selected.value.add(picture.id)
+// anchor is the tile picked last, where a range picked with Shift starts.
+const anchor = ref<number | null>(null)
+
+// pick puts a picture into the selection, or takes it out again. With Shift
+// held, as in Google Photos, it picks every tile from the one picked last to
+// this one instead, in the order the page lays them out.
+function pick(tile: Tile, event?: MouseEvent): void {
+  const from = anchor.value
+  anchor.value = tile.index
+  if (event?.shiftKey && from !== null) {
+    const [first, last] = from < tile.index ? [from, tile.index] : [tile.index, from]
+    order.value.slice(first, last + 1).forEach((picture) => selected.value.add(picture.id))
+    return
   }
+  if (selected.value.has(tile.picture.id)) {
+    selected.value.delete(tile.picture.id)
+  } else {
+    selected.value.add(tile.picture.id)
+  }
+}
+
+// onTileClick opens a picture while nothing is picked, and joins it to the
+// selection once something is - or at once, when Shift is held.
+function onTileClick(tile: Tile, event: MouseEvent): void {
+  if (selected.value.size > 0 || event.shiftKey) {
+    pick(tile, event)
+  } else {
+    open(tile)
+  }
+}
+
+// allTiles lists the pictures of a section or of one of its groups: every one
+// of them, not only those laid out so far.
+function allTiles(key: string): Tile[] {
+  for (const section of sections.value) {
+    if (section.key === key) {
+      return section.groups.flatMap((group) => group.tiles)
+    }
+    const group = section.groups.find((each) => each.key === key)
+    if (group) {
+      return group.tiles
+    }
+  }
+  return []
+}
+
+// coverage says how much of a section or a group is picked, for the circle
+// beside its heading.
+function coverage(key: string): 'none' | 'some' | 'all' {
+  const tiles = allTiles(key)
+  const picked = tiles.filter((tile) => selected.value.has(tile.picture.id)).length
+  if (picked === 0) {
+    return 'none'
+  }
+  return picked === tiles.length ? 'all' : 'some'
+}
+
+// pickAll picks every picture of a section or a group, as the circle beside a
+// date does in Google Photos; when all of them are picked already it takes
+// them out again.
+function pickAll(key: string): void {
+  const tiles = allTiles(key)
+  const everything = coverage(key) === 'all'
+  for (const tile of tiles) {
+    if (everything) {
+      selected.value.delete(tile.picture.id)
+    } else {
+      selected.value.add(tile.picture.id)
+    }
+  }
+  anchor.value = null
+}
+
+// pickEverything picks every picture the page shows.
+function pickEverything(): void {
+  order.value.forEach((picture) => selected.value.add(picture.id))
+}
+
+// clearSelection lets go of every picked picture.
+function clearSelection(): void {
+  selected.value.clear()
+  anchor.value = null
+}
+
+// coverageClass paints the circle beside a heading: filled when its whole
+// section is picked, outlined when part of it is.
+function coverageClass(state: 'none' | 'some' | 'all'): string {
+  if (state === 'all') {
+    return 'border-primary bg-primary text-primary-content'
+  }
+  return state === 'some' ? 'border-primary text-primary' : 'border-base-content/40 text-base-content/60'
 }
 
 // tooManyForReport says whether more pictures are picked than a day or a place
@@ -413,7 +499,7 @@ function setSelectedFavorite(): void {
     if (linked.length > 0) {
       await mediaApi.setMediaFavorites(linked.map((picture) => picture.id), true)
     }
-    selected.value.clear()
+    clearSelection()
   }).then((ok) => {
     if (ok) {
       favoriteLoose(loose)
@@ -433,7 +519,7 @@ function setSelectedPrivacy(isPrivate: boolean): void {
       updated.push(await mediaApi.updateMedia(picture.id, { is_private: isPrivate }))
     }
     replaceMedia(updated)
-    selected.value.clear()
+    clearSelection()
   }, false)
 }
 
@@ -453,7 +539,7 @@ async function removeSelected(): Promise<void> {
     for (const picture of pictures) {
       await mediaApi.deleteMedia(picture.id)
     }
-    selected.value.clear()
+    clearSelection()
   })
 }
 
@@ -486,7 +572,7 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
         : undefined
       await mediaApi.setMediaLinks(update.target, update.targetId, update.mediaIds, favorites)
     }
-    selected.value.clear()
+    clearSelection()
   })
 }
 </script>
@@ -524,20 +610,45 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
       </p>
 
       <section v-for="section in laidOut" :key="section.key" class="space-y-3">
-        <h2 class="border-b border-base-300 pb-1 text-base font-semibold">{{ section.label }}</h2>
+        <h2 class="flex items-center gap-2 border-b border-base-300 pb-1 text-base font-semibold">
+          <button
+            v-if="canEdit"
+            type="button"
+            class="flex size-5 shrink-0 items-center justify-center rounded-full border"
+            :class="coverageClass(coverage(section.key))"
+            :aria-label="t('media.selectSection', { name: section.label })"
+            :aria-pressed="coverage(section.key) === 'all'"
+            @click="pickAll(section.key)"
+          >
+            <AppIcon v-if="coverage(section.key) !== 'none'" name="check" class="size-3.5!" />
+          </button>
+          {{ section.label }}
+        </h2>
         <div v-for="group in section.groups" :key="group.key" class="space-y-2">
           <h3 v-if="group.label" class="flex items-center gap-1 text-sm font-medium text-base-content/70">
+            <button
+              v-if="canEdit"
+              type="button"
+              class="me-1 flex size-4 shrink-0 items-center justify-center rounded-full border"
+              :class="coverageClass(coverage(group.key))"
+              :aria-label="t('media.selectSection', { name: group.label })"
+              :aria-pressed="coverage(group.key) === 'all'"
+              @click="pickAll(group.key)"
+            >
+              <AppIcon v-if="coverage(group.key) !== 'none'" name="check" class="size-3!" />
+            </button>
             <AppIcon :name="group.icon" class="size-4!" />
             {{ group.label }}
           </h3>
-          <ul class="grid grid-cols-4 gap-2 sm:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 2xl:grid-cols-12">
+          <!-- Shift picks a range of tiles, which must not also select their text. -->
+          <ul class="grid grid-cols-4 gap-2 select-none sm:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 2xl:grid-cols-12">
             <li v-for="tile in group.tiles" :key="tile.picture.id" class="group relative">
               <button
                 type="button"
                 class="block w-full overflow-hidden rounded-box border border-base-300"
                 :class="selected.has(tile.picture.id) ? 'ring-2 ring-primary' : ''"
                 :aria-label="tile.picture.original_name"
-                @click="selected.size > 0 ? pick(tile.picture) : open(tile)"
+                @click="onTileClick(tile, $event)"
               >
                 <MediaImage :id="tile.picture.id" :alt="tile.picture.original_name" :size="320" square />
               </button>
@@ -553,7 +664,7 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
                   : 'bg-base-100/80 text-base-content/60'"
                 :aria-label="t('media.selectPicture')"
                 :aria-pressed="selected.has(tile.picture.id)"
-                @click="pick(tile.picture)"
+                @click="pick(tile, $event)"
               >
                 <AppIcon name="check" class="size-4!" />
               </button>
@@ -683,7 +794,10 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
           <AppIcon name="trash" />
           {{ t('media.remove') }}
         </button>
-        <button type="button" class="btn btn-ghost btn-sm" @click="selected.clear()">
+        <button type="button" class="btn btn-ghost btn-sm" :disabled="selected.size === order.length" @click="pickEverything">
+          {{ t('media.selectAll') }}
+        </button>
+        <button type="button" class="btn btn-ghost btn-sm" @click="clearSelection">
           {{ t('media.clearSelection') }}
         </button>
       </div>
