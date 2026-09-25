@@ -407,7 +407,9 @@ defineExpose({ locate })
 </script>
 
 <template>
-  <div ref="frame" class="relative h-full min-h-80 overflow-hidden rounded-box border border-base-300 bg-base-200">
+  <div ref="frame" class="relative isolate h-full min-h-80 overflow-hidden rounded-box border border-base-300 bg-base-200">
+    <!-- isolate keeps Leaflet's panes, stacked in the hundreds, inside the map,
+         so the page's floating buttons stay above it while it scrolls past. -->
     <div ref="container" class="absolute inset-0" :aria-label="t('map.label')" role="region"></div>
 
     <div class="absolute top-2 right-2 left-14 z-[1000] flex flex-wrap justify-end gap-1">

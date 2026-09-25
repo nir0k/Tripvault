@@ -14,6 +14,8 @@ declare module 'vue-router' {
     wide?: boolean
     /** The section a page belongs to: the plans or the reports. */
     kind?: DocumentKind
+    /** A page of the trip a read-only link opens, read through the link. */
+    shared?: boolean
   }
 }
 
@@ -29,10 +31,15 @@ export const router = createRouter({
     {
       // A read-only link: https://<host>/s#token=<token>. The fragment never
       // reaches the server, so the address itself carries no credential into a log.
+      // The link opens the same pages a member reads - the document and its
+      // photographs - with everything that changes the trip left out.
       path: '/s',
-      name: 'shared',
       component: () => import('@/views/SharedView.vue'),
-      meta: { public: true, bare: true },
+      meta: { public: true, bare: true, shared: true },
+      children: [
+        { path: '', name: 'shared', component: () => import('@/views/SharedDocumentView.vue') },
+        { path: 'media', name: 'shared-media', component: () => import('@/views/trip/TripMediaView.vue') },
+      ],
     },
     {
       path: '/change-password',

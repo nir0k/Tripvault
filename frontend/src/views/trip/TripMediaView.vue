@@ -2,7 +2,6 @@
 import { computed, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import * as documentsApi from '@/api/documents'
 import * as mediaApi from '@/api/media'
 import { MEDIA_FAVORITE_LIMIT } from '@/api/media'
 import { updateTrip } from '@/api/trips'
@@ -14,6 +13,7 @@ import MediaLinkDialog from '@/components/media/MediaLinkDialog.vue'
 import MediaUploader from '@/components/media/MediaUploader.vue'
 import MediaViewer from '@/components/media/MediaViewer.vue'
 import { useDropdownGroup } from '@/composables/useDropdown'
+import { useProgressive } from '@/composables/useProgressive'
 import { useTripStore } from '@/stores/trip'
 import { errorMessage } from '@/utils/errors'
 import { formatDayDate } from '@/utils/format'
@@ -31,6 +31,13 @@ import { isVisit, itemIcon } from '@/utils/plan'
 // favourite of this day" or "of this place". A picture that hangs nowhere has
 // no place to be a favourite of yet, and asking for it opens the choice of
 // where it belongs. A plan has no favourites at all.
+//
+// A read-only link opens this page too, with nothing on it that changes the
+// trip. A link reads no list of the trip's files, only its document, so there
+// the page shows what the document files - which is all a link may see anyway.
+//
+// A trip of a few thousand photographs is laid out a batch at a time as the
+// page is scrolled, and the viewer still walks all of them.
 
 type Filter = 'all' | 'private' | 'unlinked'
 
@@ -58,6 +65,7 @@ const selected = ref(new Set<string>())
 const confirmDialog = useTemplateRef<InstanceType<typeof ConfirmDialog>>('confirmDialog')
 const linkDialog = useTemplateRef<InstanceType<typeof MediaLinkDialog>>('linkDialog')
 const viewer = useTemplateRef<InstanceType<typeof MediaViewer>>('viewer')
+const more = useTemplateRef<HTMLElement>('more')
 
 const trip = computed(() => store.trip)
 const canEdit = computed(() => trip.value?.role === 'owner' || trip.value?.role === 'editor')
@@ -66,7 +74,11 @@ const isReport = computed(() => trip.value?.kind === 'report')
 const document = computed(() => documents.value[0] ?? null)
 
 // The filter lives in the address, as the other choices of the application do.
+// A link sees neither private files nor the ones filed nowhere, so it has none.
 const filter = computed<Filter>(() => {
+  if (store.shared) {
+    return 'all'
+  }
   const requested = route.query.show
   return FILTERS.find((each) => each === requested) ?? 'all'
 })
@@ -214,9 +226,9 @@ async function load(quiet = false): Promise<void> {
   loading.value = !quiet
   error.value = ''
   try {
-    items.value = await mediaApi.listMedia(current.id)
     const ids = [current.plan_id, current.report_id].filter((id): id is string => id !== null)
-    documents.value = await Promise.all(ids.map((id) => documentsApi.getDocument(id)))
+    documents.value = await Promise.all(ids.map((id) => store.readDocument(id)))
+    items.value = store.shared ? filedMedia(documents.value) : await mediaApi.listMedia(current.id)
   } catch (err) {
     error.value = errorMessage(err, t, te)
   } finally {
@@ -284,6 +296,34 @@ async function remove(picture: Media): Promise<void> {
   }
   await apply(() => mediaApi.deleteMedia(picture.id))
 }
+
+// filedMedia lists each picture the documents file somewhere once, which is
+// what a link reads instead of the trip's own list of files.
+function filedMedia(each: TripDocument[]): Media[] {
+  const found = new Map<string, Media>()
+  const add = (pictures: Media[]): void => pictures.forEach((picture) => found.set(picture.id, picture))
+  for (const current of each) {
+    for (const day of current.days) {
+      add(day.media)
+      day.items.forEach((item) => add(item.media))
+    }
+    current.unassigned.forEach((item) => add(item.media))
+  }
+  return [...found.values()]
+}
+
+// limit is how many tiles are laid out so far; the rest follow as the page is
+// scrolled towards them.
+const limit = useProgressive(more, () => order.value.length)
+
+// laidOut is what of the sections is on the page: the tiles numbered below the
+// limit, and the groups and sections they fill.
+const laidOut = computed<Section[]>(() => sections.value.flatMap((section) => {
+  const groups = section.groups
+    .map((group) => ({ ...group, tiles: group.tiles.filter((tile) => tile.index < limit.value) }))
+    .filter((group) => group.tiles.length > 0)
+  return groups.length > 0 ? [{ ...section, groups }] : []
+}))
 
 // open shows a picture full size, counting from the whole page rather than from
 // its group, so the arrows walk the trip in order.
@@ -456,7 +496,7 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
     <header class="flex flex-wrap items-center justify-between gap-3">
       <h1 class="text-xl font-bold">{{ t('media.tripGallery') }}</h1>
       <div class="flex flex-wrap items-center gap-3">
-        <div role="tablist" class="tabs tabs-border tabs-sm w-fit">
+        <div v-if="!store.shared" role="tablist" class="tabs tabs-border tabs-sm w-fit">
           <button
             v-for="each in FILTERS"
             :key="each"
@@ -483,7 +523,7 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
         {{ items.length === 0 ? t('media.tripEmpty') : t('media.noMatches') }}
       </p>
 
-      <section v-for="section in sections" :key="section.key" class="space-y-3">
+      <section v-for="section in laidOut" :key="section.key" class="space-y-3">
         <h2 class="border-b border-base-300 pb-1 text-base font-semibold">{{ section.label }}</h2>
         <div v-for="group in section.groups" :key="group.key" class="space-y-2">
           <h3 v-if="group.label" class="flex items-center gap-1 text-sm font-medium text-base-content/70">
@@ -597,6 +637,11 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
           </ul>
         </div>
       </section>
+
+      <!-- The end of what is laid out; coming near it lays out the next batch. -->
+      <div v-if="limit < order.length" ref="more" class="flex justify-center py-4" aria-hidden="true">
+        <span class="loading loading-spinner loading-sm opacity-60"></span>
+      </div>
 
       <div
         v-if="canEdit && selected.size > 0"

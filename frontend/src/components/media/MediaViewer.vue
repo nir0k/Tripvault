@@ -144,6 +144,84 @@ function step(by: number): void {
   }
 }
 
+// How far a finger has to carry the picture before letting go turns the page;
+// a shorter drag springs back.
+const SWIPE_THRESHOLD = 60
+
+// A swipe is followed with the picture under the finger. The gesture belongs to
+// one pointer: a second finger means a pinch, which the browser zooms instead.
+const dragX = ref(0)
+const dragging = ref(false)
+let swipePointer: number | null = null
+let swipeStartX = 0
+let swipeStartY = 0
+// A swipe that ends over one of the edge zones would have its release taken for
+// a tap and turn the page a second time, so clicks are ignored for a moment.
+let swallowClicksUntil = 0
+
+// onPointerDown starts following a finger; a mouse clicks the zones instead.
+function onPointerDown(event: PointerEvent): void {
+  if (event.pointerType === 'mouse' || props.items.length < 2) {
+    return
+  }
+  if (swipePointer !== null) {
+    cancelSwipe()
+    return
+  }
+  swipePointer = event.pointerId
+  swipeStartX = event.clientX
+  swipeStartY = event.clientY
+}
+
+// onPointerMove carries the picture once the finger moves more sideways than
+// up or down; a vertical move is left to the page.
+function onPointerMove(event: PointerEvent): void {
+  if (event.pointerId !== swipePointer) {
+    return
+  }
+  const dx = event.clientX - swipeStartX
+  const dy = event.clientY - swipeStartY
+  if (!dragging.value) {
+    if (Math.abs(dx) < 10 || Math.abs(dx) <= Math.abs(dy)) {
+      return
+    }
+    dragging.value = true
+  }
+  dragX.value = dx
+}
+
+// onPointerUp turns the page when the picture was carried far enough.
+function onPointerUp(event: PointerEvent): void {
+  if (event.pointerId !== swipePointer) {
+    return
+  }
+  const dx = dragX.value
+  const swiped = dragging.value
+  cancelSwipe()
+  if (swiped) {
+    swallowClicksUntil = performance.now() + 400
+    if (Math.abs(dx) >= SWIPE_THRESHOLD) {
+      step(dx < 0 ? 1 : -1)
+    }
+  }
+}
+
+// cancelSwipe lets go of the gesture and puts the picture back.
+function cancelSwipe(): void {
+  swipePointer = null
+  dragging.value = false
+  dragX.value = 0
+}
+
+// tap turns the page from an edge zone, unless the tap is the end of a swipe
+// that has already done so.
+function tap(by: number): void {
+  if (performance.now() < swallowClicksUntil) {
+    return
+  }
+  step(by)
+}
+
 defineExpose({ open, close })
 </script>
 
@@ -187,30 +265,48 @@ defineExpose({ open, close })
         </div>
       </header>
 
-      <div ref="stage" class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-base-200">
+      <!-- A finger swipes the picture sideways; up and down, and a pinch, stay
+           the browser's. -->
+      <div
+        ref="stage"
+        class="relative flex min-h-0 flex-1 touch-pan-y touch-pinch-zoom items-center justify-center overflow-hidden bg-base-200 select-none"
+        @pointerdown="onPointerDown"
+        @pointermove="onPointerMove"
+        @pointerup="onPointerUp"
+        @pointercancel="cancelSwipe"
+      >
         <img
           v-if="url && current"
           :src="url"
           :alt="current.original_name"
           class="max-h-full max-w-full object-contain"
+          :class="{ 'transition-transform duration-200': !dragging }"
+          :style="{ transform: dragX ? `translateX(${dragX}px)` : undefined }"
+          draggable="false"
         />
         <span v-else-if="loading" class="loading loading-spinner loading-lg opacity-70"></span>
+        <!-- Each outer third of the stage turns the page, so a tap anywhere near
+             an edge does it rather than only on the small round button there. -->
         <template v-if="items.length > 1">
           <button
             type="button"
-            class="btn btn-circle btn-sm absolute start-2 top-1/2 -translate-y-1/2"
+            class="group absolute inset-y-0 start-0 flex w-1/3 items-center justify-start ps-2"
             :aria-label="t('media.previous')"
-            @click="step(-1)"
+            @click="tap(-1)"
           >
-            <AppIcon name="chevronLeft" />
+            <span class="btn btn-circle btn-sm pointer-events-none opacity-70 group-hover:opacity-100">
+              <AppIcon name="chevronLeft" />
+            </span>
           </button>
           <button
             type="button"
-            class="btn btn-circle btn-sm absolute end-2 top-1/2 -translate-y-1/2"
+            class="group absolute inset-y-0 end-0 flex w-1/3 items-center justify-end pe-2"
             :aria-label="t('media.next')"
-            @click="step(1)"
+            @click="tap(1)"
           >
-            <AppIcon name="chevronRight" />
+            <span class="btn btn-circle btn-sm pointer-events-none opacity-70 group-hover:opacity-100">
+              <AppIcon name="chevronRight" />
+            </span>
           </button>
         </template>
       </div>

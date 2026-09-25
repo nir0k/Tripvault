@@ -739,8 +739,7 @@
     "opened": "Opened once, last on {time} | Opened {n} times, last on {time}"
   },
   "shared": {
-    "readOnly": "Shared for reading",
-    "nothingToShow": "There is nothing to read behind this link yet."
+    "readOnly": "Shared for reading"
   },
   "costCategories": {
     "accommodation": "Accommodation",
@@ -821,7 +820,8 @@
     "estimatesPending": "One leg is a straight-line estimate rather than a road route. | {count} legs are straight-line estimates rather than road routes.",
     "retryEstimates": "Calculate them",
     "recalculate": "Recalculate",
-    "recalculateHint": "Ask the routing service again for this leg, ignoring the saved route."
+    "recalculateHint": "Ask the routing service again for this leg, ignoring the saved route.",
+    "noRouteHint": "A point may be too far from any road. Move it closer to a road or a car park, or choose another way to travel."
   },
   "map": {
     "label": "Map of the plan",

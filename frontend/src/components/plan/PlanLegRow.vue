@@ -38,6 +38,9 @@ const flightEstimate = computed(() => props.leg.mode === 'flight' && !props.leg.
 const manual = computed(() => props.leg.manual_distance || props.leg.manual_duration)
 // Without a provider a retry cannot help, and the page already explains why.
 const retryable = computed(() => props.leg.source === 'estimate' && props.leg.error !== 'provider_disabled')
+// A road the provider did not find is usually a pin too far from one, which
+// only the person editing can move.
+const noRoute = computed(() => props.leg.source === 'estimate' && props.leg.error === 'no_route')
 </script>
 
 <template>
@@ -80,5 +83,6 @@ const retryable = computed(() => props.leg.source === 'estimate' && props.leg.er
       <button type="button" class="btn btn-ghost btn-xs" @click="emit('edit')">{{ t('plan.edit') }}</button>
     </template>
     <p v-if="retryable && leg.error" class="basis-full pl-3 text-xs">{{ t(`leg.errors.${leg.error}`) }}</p>
+    <p v-if="canEdit && noRoute" class="basis-full pl-3 text-xs">{{ t('leg.noRouteHint') }}</p>
   </div>
 </template>

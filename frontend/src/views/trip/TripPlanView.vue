@@ -201,7 +201,7 @@ async function load(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    plan.value = await documentsApi.getDocument(planId)
+    plan.value = await store.readDocument(planId)
   } catch (err) {
     error.value = errorMessage(err, t, te)
   } finally {

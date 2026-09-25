@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, useTemplateRef } from 'vue'
+import { computed, ref, useTemplateRef, watch } from 'vue'
 import { mediaFilePath, mediaThumbnailPath, type MediaSize } from '@/api/media'
 import { useMediaBase, useMediaUrl } from '@/composables/useMediaUrl'
 import { useVisible } from '@/composables/useVisible'
@@ -25,10 +25,15 @@ const props = withDefaults(defineProps<{
 
 const base = useMediaBase()
 const root = useTemplateRef<HTMLElement>('root')
-const visible = useVisible(root)
+// The picture is wanted while it is near the screen. One scrolled past before
+// its turn in the loading queue comes leaves the queue, so a reader flicking
+// through a long gallery gets what is in front of them first rather than
+// everything they passed; once it has arrived it stays.
+const near = useVisible(root, { once: false })
+const arrived = ref(false)
 
 const path = computed(() => {
-  if (!visible.value || !props.id) {
+  if ((!near.value && !arrived.value) || !props.id) {
     return null
   }
   return props.size === null
@@ -38,6 +43,15 @@ const path = computed(() => {
 // The picture's own place on the page orders it in the loading queue, so a
 // gallery fills from the first tile to the last.
 const { url, loading } = useMediaUrl(path, { element: root })
+watch(url, (shown) => {
+  if (shown) {
+    arrived.value = true
+  }
+})
+// Another picture or size is a new load, which waits for the screen again.
+watch(() => [props.id, props.size], () => {
+  arrived.value = false
+})
 
 // A tile keeps its shape before its picture arrives, so a gallery does not jump
 // about as the pictures load: the parent's box where the picture fills it, a

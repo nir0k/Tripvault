@@ -176,7 +176,8 @@ func TestORSClient(t *testing.T) {
 		t.Errorf("route: %+v %v", route, err)
 	}
 	if gotAuth != "secret-key" || gotPath != "/openrouteservice/v2/directions/driving-car" ||
-		!strings.Contains(gotBody, `"coordinates":[[-21.9426,64.1466],[-19.006,63.4186]]`) {
+		!strings.Contains(gotBody, `"coordinates":[[-21.9426,64.1466],[-19.006,63.4186]]`) ||
+		!strings.Contains(gotBody, `"radiuses":[5000,5000]`) {
 		t.Errorf("request: auth=%q path=%q body=%s", gotAuth, gotPath, gotBody)
 	}
 

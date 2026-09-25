@@ -101,6 +101,12 @@ var orsProfiles = map[string]string{
 // allows (2004).
 var orsNoRouteCodes = map[int]bool{2004: true, 2009: true, 2010: true}
 
+// orsSnapRadiusM is how far from a point openrouteservice may look for a road
+// to start or end on. Its own default is 350 metres, which a pin on a waterfall
+// or a viewpoint often misses, turning a short drive into "no route"; OSRM and
+// Valhalla snap to the nearest road wherever it is.
+const orsSnapRadiusM = 5000
+
 // Route - asks openrouteservice for the route between two points.
 //
 // Arguments:
@@ -114,6 +120,7 @@ var orsNoRouteCodes = map[int]bool{2004: true, 2009: true, 2010: true}
 func (o *ORS) Route(ctx context.Context, profile string, from, to domain.Point) (Route, error) {
 	body, err := json.Marshal(map[string]any{
 		"coordinates":  [][2]float64{{from.Lng, from.Lat}, {to.Lng, to.Lat}},
+		"radiuses":     []int{orsSnapRadiusM, orsSnapRadiusM},
 		"instructions": false,
 	})
 	if err != nil {

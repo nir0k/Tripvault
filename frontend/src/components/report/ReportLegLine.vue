@@ -31,6 +31,8 @@ const duration = computed(() =>
 // A figure drawn as a straight line or guessed is said to be one.
 const estimate = computed(() => props.leg.source === 'estimate' || props.leg.source === 'missing_coordinates')
 const pending = computed(() => props.leg.source === 'pending' && !duration.value && !distance.value)
+// Why a road was not found, told only to the person who can move the pin.
+const noRoute = computed(() => props.editing && props.leg.source === 'estimate' && props.leg.error === 'no_route')
 </script>
 
 <template>
@@ -55,5 +57,6 @@ const pending = computed(() => props.leg.source === 'pending' && !duration.value
     <span v-if="estimate && (duration || distance)" class="badge badge-ghost badge-xs">{{ t('leg.estimate') }}</span>
     <span v-if="leg.note" class="italic">· {{ leg.note }}</span>
     <AppIcon v-if="editing" name="pencil" class="size-3.5! opacity-60" />
+    <span v-if="noRoute" class="basis-full text-xs">{{ t('leg.errors.no_route') }} {{ t('leg.noRouteHint') }}</span>
   </component>
 </template>

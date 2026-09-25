@@ -5,6 +5,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import * as documentsApi from '@/api/documents'
 import * as mediaApi from '@/api/media'
 import { getClientConfig } from '@/api/config'
+import { downloadSharedReportPDF } from '@/api/shared'
 import type {
   ClientConfig, ItemStatus, Leg, Media, PlanDay, PlanItem, TranslationEntry, TranslationTarget, TripDocument,
 } from '@/api/types'
@@ -30,6 +31,7 @@ import { mediaHint, type MediaHint } from '@/utils/mediaHints'
 import { tripRoute } from '@/utils/tripRoutes'
 import { isVisit } from '@/utils/plan'
 import { revealElement } from '@/utils/reveal'
+import { activeUnits } from '@/utils/units'
 import {
   translatableTexts, translateDocument, translationOf, translationProgress,
 } from '@/utils/translate'
@@ -49,7 +51,7 @@ import {
 // editing in a language other than the original writes a translation: only the
 // words can be changed then, each beside the original it is made from.
 
-const { t, te } = useI18n()
+const { t, te, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const store = useTripStore()
@@ -158,7 +160,7 @@ async function load(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    document.value = await documentsApi.getDocument(id)
+    document.value = await store.readDocument(id)
   } catch (err) {
     error.value = errorMessage(err, t, te)
   } finally {
@@ -340,7 +342,8 @@ function toggleSkipped(): void {
 
 // exportPDF saves the report as a file. Photographs are asked for unless the
 // reader turned them off, which is the difference between a small file and a
-// large one.
+// large one. A link has no account behind it for the server to take the
+// language and the units from, so those travel with its request.
 async function exportPDF(photos: boolean): Promise<void> {
   const tripId = trip.value?.id
   if (!tripId || exporting.value) {
@@ -349,7 +352,11 @@ async function exportPDF(photos: boolean): Promise<void> {
   exporting.value = true
   error.value = ''
   try {
-    await documentsApi.downloadReportPDF(tripId, photos, contentLang.value || undefined)
+    if (store.shared) {
+      await downloadSharedReportPDF(locale.value, activeUnits.value, photos, contentLang.value || undefined)
+    } else {
+      await documentsApi.downloadReportPDF(tripId, photos, contentLang.value || undefined)
+    }
   } catch (err) {
     error.value = errorMessage(err, t, te)
   } finally {
@@ -422,7 +429,7 @@ async function applyMedia(change: () => Promise<void>): Promise<void> {
     // would take the report off the screen for a moment and the reader would
     // find themselves at the top of the page, far from the picture they were
     // working on.
-    document.value = await documentsApi.getDocument(id)
+    document.value = await store.readDocument(id)
   } catch (err) {
     error.value = errorMessage(err, t, te)
   } finally {
