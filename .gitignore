@@ -20,6 +20,9 @@ tmp/
 CLAUDE.md
 AGENTS.md
 
+# The product specification is kept locally, outside the repository.
+docs/tz-trip-planner.md
+
 # Build artefacts and dependencies.
 bin/
 frontend/dist/
