@@ -9,6 +9,7 @@ import { distanceBetween, mediaHint, takenDate } from '@/utils/mediaHints'
 import { mediaLinkUpdates } from '@/utils/mediaLinks'
 import { decodePolyline } from '@/utils/polyline'
 import { generatePassword } from '@/utils/password'
+import { exifSegment, withExif } from '@/utils/picture'
 import { resolveTheme } from '@/utils/theme'
 import {
   readingLanguage, translatableTexts, translateDocument, translateTrip, translationProgress,
@@ -401,5 +402,43 @@ describe('media links', () => {
       { target: 'day', targetId: 'gone', attach: true },
       { target: 'item', targetId: 'gone', attach: true },
     ])).toEqual([])
+  })
+})
+
+describe('EXIF of a shrunk picture', () => {
+  // A JPEG start marker, an APP1 EXIF segment whose first directory holds an
+  // orientation of 6 in little-endian order, and the start of the picture data.
+  const tiff = [
+    0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00, // "II", 42, first directory at 8
+    0x01, 0x00, // one entry
+    0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, // orientation SHORT 6
+    0x00, 0x00, 0x00, 0x00, // no next directory
+  ]
+  const payload = [0x45, 0x78, 0x69, 0x66, 0x00, 0x00, ...tiff]
+  const app1 = [0xff, 0xe1, 0x00, payload.length + 2, ...payload]
+  const original = new Uint8Array([0xff, 0xd8, ...app1, 0xff, 0xda, 0x00, 0x02])
+
+  it('copies the segment and marks the copy upright', () => {
+    const segment = exifSegment(original)
+    expect(segment).not.toBeNull()
+    expect(segment!.length).toBe(app1.length)
+    // The orientation value sits 8 bytes into its entry, after the header.
+    const orientationAt = 4 + 6 + 10 + 8
+    expect(segment![orientationAt]).toBe(1)
+    // The original is left as it was.
+    expect(original[2 + orientationAt]).toBe(6)
+  })
+
+  it('puts the segment right after the start marker', () => {
+    const canvasJpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x02, 0xff, 0xd9])
+    const joined = withExif(canvasJpeg, exifSegment(original)!)
+    expect([...joined.subarray(0, 4)]).toEqual([0xff, 0xd8, 0xff, 0xe1])
+    expect([...joined.subarray(joined.length - 6)]).toEqual([0xff, 0xe0, 0x00, 0x02, 0xff, 0xd9])
+    expect(exifSegment(joined)).not.toBeNull()
+  })
+
+  it('finds nothing in a file without EXIF or that is not a JPEG', () => {
+    expect(exifSegment(new Uint8Array([0xff, 0xd8, 0xff, 0xda, 0x00, 0x02]))).toBeNull()
+    expect(exifSegment(new Uint8Array([0x89, 0x50, 0x4e, 0x47]))).toBeNull()
   })
 })
