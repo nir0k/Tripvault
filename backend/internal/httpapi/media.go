@@ -10,6 +10,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -145,6 +146,13 @@ func (s *Server) galleryOf(ctx context.Context, tripID uuid.UUID, includePrivate
 			result.favorites[link.MediaID] = struct{}{}
 		}
 	}
+	// A gallery reads in the order its pictures were taken, whatever order
+	// they were linked in.
+	for _, pictures := range result.byTarget {
+		sort.SliceStable(pictures, func(a, b int) bool {
+			return domain.MediaBefore(pictures[a].item, pictures[b].item)
+		})
+	}
 	return result, nil
 }
 
@@ -176,7 +184,7 @@ func (s *Server) checkCover(ctx context.Context, tripID uuid.UUID, cover *uuid.U
 	return nil
 }
 
-// handleListMedia returns every file of a trip, newest first.
+// handleListMedia returns every file of a trip in the order they were taken.
 func (s *Server) handleListMedia(w http.ResponseWriter, r *http.Request) {
 	trip, ok := s.tripFor(w, r, domain.ActionView)
 	if !ok {
@@ -187,6 +195,7 @@ func (s *Server) handleListMedia(w http.ResponseWriter, r *http.Request) {
 		s.writeDomainError(w, r, "list media", err)
 		return
 	}
+	domain.SortMedia(items)
 	// The links are read as well, so the gallery of the whole trip can show
 	// which files the report already shows somewhere.
 	links, err := s.media.LinksOfTrip(r.Context(), trip.ID)

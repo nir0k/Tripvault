@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -165,4 +166,37 @@ func ParseMediaTarget(value string) (MediaTarget, error) {
 //   - true when the file may be served through that link.
 func (m Media) VisibleTo(includePrivate bool) bool {
 	return !m.IsPrivate || includePrivate
+}
+
+// MediaBefore - reports whether one picture comes before another in a gallery.
+//
+// Every gallery - a day's, a place's, the trip's own list - reads in the order
+// the pictures were taken, which is the order the trip happened in. A picture
+// whose camera recorded no time follows those that did, in the order it was
+// uploaded; the identifier breaks the last ties, so the order never shuffles.
+//
+// Arguments:
+//   - a, b: the two pictures.
+//
+// Returns:
+//   - true when a comes first.
+func MediaBefore(a, b Media) bool {
+	if (a.TakenAt == nil) != (b.TakenAt == nil) {
+		return a.TakenAt != nil
+	}
+	if a.TakenAt != nil && !a.TakenAt.Equal(*b.TakenAt) {
+		return a.TakenAt.Before(*b.TakenAt)
+	}
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		return a.CreatedAt.Before(b.CreatedAt)
+	}
+	return a.ID.String() < b.ID.String()
+}
+
+// SortMedia - puts pictures in gallery order, as MediaBefore defines it.
+//
+// Arguments:
+//   - items: the pictures, sorted in place.
+func SortMedia(items []Media) {
+	sort.SliceStable(items, func(a, b int) bool { return MediaBefore(items[a], items[b]) })
 }

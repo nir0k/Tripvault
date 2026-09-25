@@ -32,8 +32,6 @@ const props = defineProps<{
   hideSkipped: boolean
   /** The trip the day belongs to, which is what pictures are uploaded against. */
   tripId?: string
-  /** Dragging pictures into order needs a pointer and room. */
-  draggable?: boolean
   /** What the pictures just uploaded here say about where they belong. */
   hints?: MediaHint[]
   /** The document's stays, which name the journey that starts at one. */
@@ -56,14 +54,12 @@ const emit = defineEmits<{
   remove: [item: PlanItem]
   add: [kind: 'place' | 'activity']
   uploaded: [media: Media[]]
-  reorderMedia: [mediaIds: string[]]
   cover: [media: Media | null]
   privacy: [media: Media, isPrivate: boolean]
   favoriteMedia: [media: Media, isFavorite: boolean]
   unlinkMedia: [media: Media]
   removeMedia: [media: Media]
   uploadedToPlace: [item: PlanItem, media: Media[]]
-  reorderPlaceMedia: [item: PlanItem, mediaIds: string[]]
   placeCover: [item: PlanItem, media: Media | null]
   favoritePlaceMedia: [item: PlanItem, media: Media, isFavorite: boolean]
   unlinkPlaceMedia: [item: PlanItem, media: Media]
@@ -201,14 +197,12 @@ const spent = computed(() => formatMoney(props.day.summary.actual_cost, props.cu
           :currency="currency"
           :editing="editing"
           :trip-id="tripId"
-          :draggable="draggable"
           @status="(status) => emit('status', item, status)"
           @rate="(rating) => emit('rate', item, rating)"
           @story="(story) => emit('story', item, story)"
           @edit="emit('edit', item)"
           @remove="emit('remove', item)"
           @uploaded="(media) => emit('uploadedToPlace', item, media)"
-          @reorder-media="(ids) => emit('reorderPlaceMedia', item, ids)"
           @cover="(media) => emit('placeCover', item, media)"
           @privacy="(media, isPrivate) => emit('privacy', media, isPrivate)"
           @favorite-media="(media, isFavorite) => emit('favoritePlaceMedia', item, media, isFavorite)"
@@ -249,11 +243,9 @@ const spent = computed(() => formatMoney(props.day.summary.actual_cost, props.cu
       :items="day.media"
       :can-edit="structural"
       :cover-id="day.cover_media_id"
-      :draggable="draggable"
       :trip-id="tripId"
       prefer-favorites
       :can-favorite="structural"
-      @reorder="(ids) => emit('reorderMedia', ids)"
       @cover="(media) => emit('cover', media)"
       @privacy="(media, isPrivate) => emit('privacy', media, isPrivate)"
       @favorite="(media, isFavorite) => emit('favoriteMedia', media, isFavorite)"

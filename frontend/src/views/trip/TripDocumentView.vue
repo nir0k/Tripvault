@@ -88,8 +88,6 @@ const sourcePlan = computed(() => {
   return source ? tripRoute({ id: source, kind: 'plan' }) : null
 })
 
-// Dragging pictures into order needs a pointer and room; a phone uses the menu.
-const wideEnoughToDrag = useMediaQuery('(min-width: 1024px) and (pointer: fine)')
 // With room for it the trip column holds the days, as it does for the plan.
 const wideNav = useMediaQuery('(min-width: 1024px)')
 
@@ -520,11 +518,6 @@ async function attachMediaToPlace(item: PlanItem, media: Media[]): Promise<void>
   forgetHints()
 }
 
-// setDayMediaOrder stores the order the pictures were dragged into.
-function setDayMediaOrder(day: PlanDay, mediaIds: string[]): void {
-  void applyMedia(() => mediaApi.setMediaLinks('day', day.id, mediaIds))
-}
-
 // unlinkDayMedia takes a picture out of a day, leaving the file itself alone.
 function unlinkDayMedia(day: PlanDay, media: Media): void {
   const ids = day.media.filter((item) => item.id !== media.id).map((item) => item.id)
@@ -558,11 +551,6 @@ async function addPlaceMedia(item: PlanItem, media: Media[]): Promise<void> {
   const ids = [...item.media.map((picture) => picture.id), ...media.map((picture) => picture.id)]
   await applyMedia(() => mediaApi.setMediaLinks('item', item.id, ids))
   readHints(media, item.day_id, item.id)
-}
-
-// setPlaceMediaOrder stores the order the pictures of a place were dragged into.
-function setPlaceMediaOrder(item: PlanItem, mediaIds: string[]): void {
-  void applyMedia(() => mediaApi.setMediaLinks('item', item.id, mediaIds))
 }
 
 // unlinkPlaceMedia takes a picture off a place, leaving the file itself alone.
@@ -747,7 +735,6 @@ function setStatus(item: PlanItem, status: ItemStatus): void {
           :editing="editing"
           :hide-skipped="hideSkipped"
           :trip-id="trip?.id"
-          :draggable="wideEnoughToDrag"
           :hints="hintsDayId === day.id ? hints : []"
           :removable="shown.days.length > 1"
           @title="(title) => saveDayText(day, 'title', title)"
@@ -759,7 +746,6 @@ function setStatus(item: PlanItem, status: ItemStatus): void {
           @remove="removePlace"
           @add="(kind) => openPlace(day.id, null, kind)"
           @uploaded="(media) => addDayMedia(day, media)"
-          @reorder-media="(ids) => setDayMediaOrder(day, ids)"
           @cover="(media) => setDayCover(day, media)"
           @privacy="(media, isPrivate) => setMediaPrivacy(media, isPrivate)"
           @favorite-media="(media, isFavorite) => setDayMediaFavorite(day, media, isFavorite)"
@@ -767,7 +753,6 @@ function setStatus(item: PlanItem, status: ItemStatus): void {
           @unlink-media="(media) => unlinkDayMedia(day, media)"
           @remove-media="(media) => removeMedia(media)"
           @uploaded-to-place="(item, media) => addPlaceMedia(item, media)"
-          @reorder-place-media="(item, ids) => setPlaceMediaOrder(item, ids)"
           @place-cover="(item, media) => setPlaceCover(item, media)"
           @unlink-place-media="(item, media) => unlinkPlaceMedia(item, media)"
           @import-place-track="importPlaceTrack"

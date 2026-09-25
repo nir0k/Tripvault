@@ -24,8 +24,6 @@ const props = defineProps<{
   editing: boolean
   /** The trip the place belongs to, which is what pictures are uploaded against. */
   tripId?: string
-  /** Dragging pictures into order needs a pointer and room. */
-  draggable?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -35,7 +33,6 @@ const emit = defineEmits<{
   edit: []
   remove: []
   uploaded: [media: Media[]]
-  reorderMedia: [mediaIds: string[]]
   cover: [media: Media | null]
   privacy: [media: Media, isPrivate: boolean]
   favoriteMedia: [media: Media, isFavorite: boolean]
@@ -196,11 +193,9 @@ function rate(stars: number): void {
       :items="item.media"
       :can-edit="structural"
       :cover-id="item.cover_media_id"
-      :draggable="draggable"
       :trip-id="tripId"
       prefer-favorites
       :can-favorite="structural"
-      @reorder="(ids) => emit('reorderMedia', ids)"
       @cover="(media) => emit('cover', media)"
       @privacy="(media, isPrivate) => emit('privacy', media, isPrivate)"
       @favorite="(media, isFavorite) => emit('favoriteMedia', media, isFavorite)"

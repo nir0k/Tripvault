@@ -105,7 +105,8 @@ func (r *MediaRepository) Get(ctx context.Context, id uuid.UUID) (domain.Media, 
 		 FROM media m WHERE m.id = $1`, id), "get media")
 }
 
-// ListByTrip - lists a trip's files, newest first.
+// ListByTrip - lists a trip's files in the order they were taken, those
+// without a time last in the order they were uploaded.
 //
 // Arguments:
 //   - ctx: context bounding the query.
@@ -115,7 +116,8 @@ func (r *MediaRepository) Get(ctx context.Context, id uuid.UUID) (domain.Media, 
 //   - the files, which is an empty slice for a trip without any.
 func (r *MediaRepository) ListByTrip(ctx context.Context, tripID uuid.UUID) ([]domain.Media, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT `+mediaColumns+` FROM media m WHERE m.trip_id = $1 ORDER BY m.created_at DESC, m.id`, tripID)
+		`SELECT `+mediaColumns+` FROM media m WHERE m.trip_id = $1
+		 ORDER BY m.taken_at NULLS LAST, m.created_at, m.id`, tripID)
 	if err != nil {
 		return nil, fmt.Errorf("list media: %w", err)
 	}
@@ -470,7 +472,8 @@ func favoriteColumn(target domain.MediaTarget) (string, error) {
 //   - tripID: the trip.
 //
 // Returns:
-//   - the links, ordered by target and position.
+//   - the links, in the order their pictures were taken; the position a link
+//     was written with no longer orders anything.
 func (r *MediaRepository) LinksOfTrip(ctx context.Context, tripID uuid.UUID) ([]domain.MediaLink, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT l.media_id, coalesce(l.trip_id, l.day_id, l.item_id),
@@ -479,7 +482,7 @@ func (r *MediaRepository) LinksOfTrip(ctx context.Context, tripID uuid.UUID) ([]
 		        l.position, l.is_favorite
 		 FROM media_links l JOIN media m ON m.id = l.media_id
 		 WHERE m.trip_id = $1
-		 ORDER BY l.position, l.media_id`, tripID)
+		 ORDER BY m.taken_at NULLS LAST, m.created_at, m.id`, tripID)
 	if err != nil {
 		return nil, fmt.Errorf("list media links: %w", err)
 	}

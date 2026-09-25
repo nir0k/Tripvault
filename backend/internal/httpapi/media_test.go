@@ -683,7 +683,7 @@ func waitFor(t *testing.T, what string, done func() bool) {
 }
 
 // TestSetMediaLinksBuildsAGallery checks a day shows exactly the files it is
-// given, in order, and refuses a file of another trip.
+// given, in the order they were taken, and refuses a file of another trip.
 func TestSetMediaLinksBuildsAGallery(t *testing.T) {
 	s, trips, catalogue, _ := newMediaServer(domain.RoleEditor)
 	first := uploadedIDs(t, upload(t, s, trips.trip.ID.String(), "a.png", picture(t, 10, 10), false))[0]
@@ -698,6 +698,26 @@ func TestSetMediaLinksBuildsAGallery(t *testing.T) {
 	links := catalogue.links[dayID]
 	if len(links) != 2 || links[0].MediaID.String() != second.ID || links[1].MediaID.String() != first.ID {
 		t.Errorf("the gallery is %+v, want the two files in the order they were given", links)
+	}
+
+	// However they were linked, the day shows its pictures in the order they
+	// were taken.
+	earlier, later := time.Date(2026, 6, 20, 9, 0, 0, 0, time.UTC), time.Date(2026, 6, 20, 17, 0, 0, 0, time.UTC)
+	for id, taken := range map[string]time.Time{first.ID: later, second.ID: earlier} {
+		item := catalogue.items[uuid.MustParse(id)]
+		item.TakenAt = &taken
+		catalogue.items[item.ID] = item
+	}
+	body = `{"target_type":"day","target_id":"` + dayID.String() + `","media_ids":["` + first.ID + `","` + second.ID + `"]}`
+	if recorder := send(s, http.MethodPut, "/api/v1/media-links", "good", body); recorder.Code != http.StatusNoContent {
+		t.Fatalf("relink the gallery: %d %s", recorder.Code, recorder.Body.String())
+	}
+	pictures, err := s.galleryOf(context.Background(), trips.trip.ID, true)
+	if err != nil {
+		t.Fatalf("read the gallery: %v", err)
+	}
+	if shown := pictures.of(dayID); len(shown) != 2 || shown[0].ID != second.ID || shown[1].ID != first.ID {
+		t.Errorf("the day shows %+v, want the picture taken first to come first", shown)
 	}
 
 	// A file of another trip has nothing to do with this day.

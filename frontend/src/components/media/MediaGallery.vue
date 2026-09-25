@@ -2,7 +2,6 @@
 import { computed, useTemplateRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
-import { VueDraggable } from 'vue-draggable-plus'
 import { MEDIA_FAVORITE_LIMIT } from '@/api/media'
 import type { Media } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
@@ -17,8 +16,11 @@ import { tripRoute } from '@/utils/tripRoutes'
 // viewer, however, always walks every picture of the gallery.
 //
 // While the report is being edited each tile also carries what can be done with
-// it: the order, the cover, whether it is private, which pictures the report
+// it: the cover, whether it is private, which pictures the report
 // shows, and taking it out of the gallery or off the service altogether.
+//
+// The pictures come in the order they were taken, which the server keeps; there
+// is no order of one's own to drag them into.
 //
 // A day or a place may hold far more pictures than a report wants to print, so
 // the report shows the favourites it was given - and while it was given none,
@@ -29,8 +31,6 @@ const props = withDefaults(defineProps<{
   canEdit?: boolean
   /** The picture this day or place is shown by, out of these. */
   coverId?: string | null
-  /** Dragging needs a pointer and room; a phone uses the menu instead. */
-  draggable?: boolean
   /** How many tiles are laid out before the last cell leads to the rest. */
   limit?: number
   /** The trip whose gallery the last cell leads to; without it the cell is quiet. */
@@ -42,7 +42,6 @@ const props = withDefaults(defineProps<{
 }>(), {
   canEdit: false,
   coverId: null,
-  draggable: false,
   limit: MEDIA_FAVORITE_LIMIT,
   tripId: '',
   preferFavorites: false,
@@ -50,7 +49,6 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  reorder: [mediaIds: string[]]
   cover: [media: Media | null]
   privacy: [media: Media, isPrivate: boolean]
   favorite: [media: Media, isFavorite: boolean]
@@ -77,30 +75,12 @@ const hidden = computed(() => Math.max(props.items.length - shown.value.length, 
 // full says whether the report already shows as many pictures here as it has
 // room for, which is when it stops offering to add another.
 const full = computed(() => favorites.value.length >= MEDIA_FAVORITE_LIMIT)
-
-// onReorder reports the order the tiles were dragged into. Only the laid-out
-// tiles can be dragged, so the pictures that are not keep their places behind
-// them in the gallery.
-function onReorder(list: Media[]): void {
-  const laidOut = new Set(shown.value.map((item) => item.id))
-  const rest = props.items.filter((item) => !laidOut.has(item.id)).map((item) => item.id)
-  emit('reorder', [...list.map((item) => item.id), ...rest])
-}
 </script>
 
 <template>
   <div class="space-y-2">
-    <VueDraggable
-      :model-value="shown"
-      :disabled="!canEdit || !draggable"
-      :animation="150"
-      ghost-class="opacity-40"
-      draggable=".tile"
-      tag="ul"
-      class="grid grid-cols-4 gap-2 sm:grid-cols-6 lg:grid-cols-8"
-      @update:model-value="onReorder"
-    >
-      <li v-for="(item, index) in shown" :key="item.id" class="tile group relative">
+    <ul class="grid grid-cols-4 gap-2 sm:grid-cols-6 lg:grid-cols-8">
+      <li v-for="(item, index) in shown" :key="item.id" class="group relative">
         <button
           type="button"
           class="block w-full overflow-hidden rounded-box border border-base-300"
@@ -187,7 +167,7 @@ function onReorder(list: Media[]): void {
           <span class="px-1 text-center text-xs opacity-70">{{ t('media.showAll') }}</span>
         </component>
       </li>
-    </VueDraggable>
+    </ul>
 
     <MediaViewer ref="viewer" :items="props.items" />
   </div>
