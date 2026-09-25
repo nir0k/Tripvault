@@ -51,7 +51,7 @@ func icelandTrip() demoTrip {
 			Kind: domain.TransferFlight, Name: "Icelandair FI 204",
 			From: "Keflavík airport", FromLat: 63.9850, FromLng: -22.6056,
 			To: "Copenhagen airport", ToLat: 55.6180, ToLng: 12.6508,
-			Departure: "2026-06-23", DepartAt: "16:40", ArriveAt: "21:55",
+			Departure: "2026-06-23", DepartAt: "17:40", ArriveAt: "22:55",
 			BookingRef: "FI-7QK2LD", Cost: "190", PerPerson: true, ActualCost: "190",
 		}},
 
@@ -263,7 +263,7 @@ func lisbonTrip() demoTrip {
 		Title:   "Lisbon in spring",
 		Summary: "Three days of tiles, hills and too much coffee. Nothing booked yet except the flights.",
 		Start:   "2027-04-16", End: "2027-04-18", Timezone: "Europe/Lisbon",
-		Currency: "EUR", Travelers: 3, Budget: "2000",
+		Currency: "EUR", Travelers: 3, Budget: "1400",
 
 		Stays: []demoStay{{
 			Name: "Alfama rooms", Kind: domain.StayApartment,
@@ -366,7 +366,6 @@ func lisbonTrip() demoTrip {
 		},
 
 		Expenses: []demoExpense{
-			{Note: "Flights, three of us", Category: domain.CostTransport, Amount: "420"},
 			{Note: "Transport passes", Category: domain.CostTransport, Amount: "40"},
 			{Note: "Coffee and pastries, daily", Category: domain.CostFood, Amount: "60"},
 			{Note: "Tiles to take home", Category: domain.CostShopping, Amount: "50", Day: 1},

@@ -38,11 +38,14 @@ function when(date: string, time: string | null): string {
 }
 
 const departs = computed(() => when(props.transfer.departure_date, props.transfer.departure_time))
-const arrives = computed(() =>
-  // An arrival on the day of departure with no time of its own says nothing new.
-  arrivalDate.value === props.transfer.departure_date && !props.transfer.arrival_time
-    ? ''
-    : when(arrivalDate.value, props.transfer.arrival_time))
+const arrives = computed(() => {
+  if (arrivalDate.value !== props.transfer.departure_date) {
+    return when(arrivalDate.value, props.transfer.arrival_time)
+  }
+  // An arrival on the day of departure needs no date of its own: the
+  // departure already said it.
+  return formatTimeOfDay(props.transfer.arrival_time)
+})
 
 const cost = computed(() => {
   const amount = formatMoney(props.transfer.planned_cost_amount, props.currency, locale.value)

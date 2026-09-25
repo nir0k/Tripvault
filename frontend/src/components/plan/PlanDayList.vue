@@ -105,7 +105,7 @@ function placeCount(day: PlanDay): number {
       </li>
     </VueDraggable>
 
-    <div class="flex gap-2 lg:flex-col">
+    <div class="flex flex-wrap gap-2 lg:flex-col">
       <button v-if="canEdit" type="button" class="btn btn-ghost btn-sm justify-start lg:w-full" @click="emit('add')">
         <AppIcon name="plus" />
         {{ t('plan.addDay') }}
