@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -22,11 +24,6 @@ import (
 	"github.com/nir0k/tripvault/backend/internal/staticmap"
 	"github.com/nir0k/tripvault/backend/internal/telemetry"
 )
-
-// thumbnailWorkers bounds how many previews are rendered at the same time.
-// Each one holds a decoded picture in memory, so the limit is about memory
-// rather than about how fast a gallery loads.
-const thumbnailWorkers = 4
 
 // Options configures the HTTP server.
 type Options struct {
@@ -140,6 +137,7 @@ type MediaStore interface {
 	Create(ctx context.Context, item domain.Media, quota int64) error
 	Get(ctx context.Context, id uuid.UUID) (domain.Media, error)
 	ListByTrip(ctx context.Context, tripID uuid.UUID) ([]domain.Media, error)
+	ListAll(ctx context.Context) ([]domain.Media, error)
 	Update(ctx context.Context, id uuid.UUID, changes domain.MediaChanges) (domain.Media, error)
 	Delete(ctx context.Context, id uuid.UUID) (string, error)
 	UsedBytes(ctx context.Context, tripID uuid.UUID) (int64, error)
@@ -238,13 +236,24 @@ type Server struct {
 	trackMaxBytes  int64
 	// thumbnails bounds how many previews are rendered at once, because each
 	// one holds a decoded picture in memory.
-	thumbnails   chan struct{}
-	routing      Router
-	routingStats RoutingStats
-	routingDaily int
-	geocoder     Geocoder
-	geocodeStats RoutingStats
-	geocodeDaily int
+	thumbnails chan struct{}
+	// previewWorkers is how many workers render the previews of queued uploads.
+	previewWorkers int
+	// uploads carries fresh uploads to the background workers that render
+	// their previews; renders holds the renderings in flight, by storage key.
+	uploads         *uploadQueue
+	rendersMu       sync.Mutex
+	renders         map[string]*previewRender
+	previewsRunning atomic.Bool
+	backfillWanted  atomic.Bool
+	backfillRunning atomic.Bool
+	progress        previewProgress
+	routing         Router
+	routingStats    RoutingStats
+	routingDaily    int
+	geocoder        Geocoder
+	geocodeStats    RoutingStats
+	geocodeDaily    int
 	// routingProvider and geocodingProvider are the configured service names.
 	routingProvider   string
 	geocodingProvider string
@@ -290,6 +299,7 @@ func NewServer(opts Options, logger *slog.Logger, deps Dependencies) *Server {
 	if workContext == nil {
 		workContext = context.Background()
 	}
+	previewWorkers, renderings := renderWorkers(runtime.GOMAXPROCS(0))
 	s := &Server{
 		opts:           opts,
 		logger:         logger,
@@ -303,7 +313,10 @@ func NewServer(opts Options, logger *slog.Logger, deps Dependencies) *Server {
 		mediaMaxBytes:  deps.MediaMaxBytes,
 		mediaTripQuota: deps.MediaTripQuota,
 		trackMaxBytes:  deps.TrackMaxBytes,
-		thumbnails:     make(chan struct{}, thumbnailWorkers),
+		previewWorkers: previewWorkers,
+		thumbnails:     make(chan struct{}, renderings),
+		uploads:        newUploadQueue(),
+		renders:        make(map[string]*previewRender),
 		routing:        deps.Routing,
 		routingStats:   deps.RoutingStats,
 		routingDaily:   deps.RoutingDailyLimit,
@@ -481,6 +494,7 @@ func (s *Server) routes() http.Handler {
 					admin.Patch("/admin/users/{userID}", s.handleUpdateUser)
 					admin.Post("/admin/users/{userID}/reset-password", s.handleResetPassword)
 					admin.Get("/admin/status", s.handleStatus)
+					admin.Get("/admin/previews", s.handlePreviewStatus)
 
 					// Backups copy the whole service, so they are the
 					// administrator's business alone. A build whose backup
@@ -525,6 +539,8 @@ func (s *Server) handleMethodNotAllowed(w http.ResponseWriter, r *http.Request) 
 }
 
 // Run - serves HTTP until the context is cancelled, then shuts down gracefully.
+// It also starts rendering previews in the background, until the work context
+// ends.
 //
 // Arguments:
 //   - ctx: cancelling it starts a graceful shutdown bounded by ShutdownTimeout.
@@ -533,6 +549,7 @@ func (s *Server) handleMethodNotAllowed(w http.ResponseWriter, r *http.Request) 
 //   - nil after a clean shutdown, or an error if the listener failed or
 //     in-flight requests did not finish in time.
 func (s *Server) Run(ctx context.Context) error {
+	s.startPreviewWork()
 	serveErr := make(chan error, 1)
 	go func() {
 		s.logger.Info("http server listening", slog.String("addr", s.opts.Addr))

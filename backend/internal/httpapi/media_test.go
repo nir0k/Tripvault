@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -58,6 +59,14 @@ func (f *fakeMedia) ListByTrip(_ context.Context, tripID uuid.UUID) ([]domain.Me
 		if item.TripID == tripID {
 			items = append(items, item)
 		}
+	}
+	return items, nil
+}
+
+func (f *fakeMedia) ListAll(context.Context) ([]domain.Media, error) {
+	items := make([]domain.Media, 0, len(f.items))
+	for _, item := range f.items {
+		items = append(items, item)
 	}
 	return items, nil
 }
@@ -188,8 +197,10 @@ func (f *fakeMedia) TripOfTarget(_ context.Context, _ domain.MediaTarget, target
 	return tripID, nil
 }
 
-// memoryFiles is the byte store in memory, standing in for the disk.
+// memoryFiles is the byte store in memory, standing in for the disk. Its lock
+// lets the background preview workers share it with the test.
 type memoryFiles struct {
+	mu    sync.Mutex
 	files map[string][]byte
 }
 
@@ -198,11 +209,15 @@ func (m *memoryFiles) Put(_ context.Context, key string, r io.Reader) (int64, er
 	if err != nil {
 		return 0, err
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.files[key] = data
 	return int64(len(data)), nil
 }
 
 func (m *memoryFiles) Open(_ context.Context, key string) (io.ReadCloser, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	data, ok := m.files[key]
 	if !ok {
 		return nil, media.ErrNotFound
@@ -211,8 +226,22 @@ func (m *memoryFiles) Open(_ context.Context, key string) (io.ReadCloser, error)
 }
 
 func (m *memoryFiles) Delete(_ context.Context, key string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	delete(m.files, key)
 	return nil
+}
+
+// hasPreviews says whether every preview width of a file is in the store.
+func (m *memoryFiles) hasPreviews(storageKey string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, width := range media.Sizes {
+		if _, ok := m.files[media.PreviewKey(storageKey, width)]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // newMediaServer builds a server whose token "good" reads the trip with role,
@@ -508,6 +537,11 @@ func TestPreviewIsKeptAndGoesWithItsFile(t *testing.T) {
 	if _, ok := files.files[key]; !ok {
 		t.Fatal("the rendered preview was not kept in the store")
 	}
+	// The original was decoded for one width, and every other width was
+	// rendered from that one decode.
+	if !files.hasPreviews(catalogue.items[id].StorageKey) {
+		t.Error("a preview asked for at one width did not keep the others")
+	}
 
 	// The kept preview is what the next reader gets, not a new render.
 	files.files[key] = []byte("kept preview")
@@ -520,6 +554,125 @@ func TestPreviewIsKeptAndGoesWithItsFile(t *testing.T) {
 	}
 	if len(files.files) != 0 {
 		t.Errorf("the store still holds %d objects of a deleted file", len(files.files))
+	}
+}
+
+// TestBackgroundRendersPreviews checks a running server renders the previews of
+// a picture stored before it started without being asked, and those of a fresh
+// upload before anybody opens the gallery.
+func TestBackgroundRendersPreviews(t *testing.T) {
+	s, trips, catalogue, files := newMediaServer(domain.RoleEditor)
+	s.workContext = t.Context()
+
+	older := domain.Media{ID: uuid.New(), TripID: trips.trip.ID, StorageKey: "older.png", Status: domain.MediaReady}
+	catalogue.items[older.ID] = older
+	files.files[older.StorageKey] = picture(t, 300, 200)
+
+	s.startPreviewWork()
+	waitFor(t, "previews of a picture stored earlier", func() bool {
+		return files.hasPreviews(older.StorageKey) && !s.backfillRunning.Load()
+	})
+
+	stored := uploadedIDs(t, upload(t, s, trips.trip.ID.String(), "wide.png", picture(t, 600, 300), false))[0]
+	key := catalogue.items[uuid.MustParse(stored.ID)].StorageKey
+	waitFor(t, "previews of a fresh upload", func() bool {
+		return files.hasPreviews(key)
+	})
+
+	// The progress is the administrators' business alone.
+	if recorder := send(s, http.MethodGet, "/api/v1/admin/previews", "good", ""); recorder.Code != http.StatusForbidden {
+		t.Fatalf("the preview progress read by an editor: %d", recorder.Code)
+	}
+	s.auth.(*fakeAuth).user.IsAdmin = true
+	var status previewStatusResponse
+	waitFor(t, "the upload's wave to end", func() bool {
+		recorder := send(s, http.MethodGet, "/api/v1/admin/previews", "good", "")
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("read the preview progress: %d %s", recorder.Code, recorder.Body.String())
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &status); err != nil {
+			t.Fatalf("decode the preview progress: %v", err)
+		}
+		return !status.Active
+	})
+	// The walk and the upload were two waves: the upload arrived at an idle
+	// background, so the bar measures it alone.
+	if !status.Background || status.Total != 1 || status.Done != 1 || status.StartedAt == nil {
+		t.Errorf("the last wave is %+v, want one file done", status)
+	}
+	if status.Rendered != 2 || status.Failed != 0 || status.Rendering != 0 || status.Queued != 0 {
+		t.Errorf("the counters are %+v, want two files rendered and nothing left", status)
+	}
+	if status.Backfill.Running || status.Backfill.Checked != 1 || status.Backfill.Total != 1 {
+		t.Errorf("the walk is %+v, want it over after one file", status.Backfill)
+	}
+}
+
+// TestUploadQueueKeepsEveryUpload checks an import faster than the rendering
+// loses nothing: every upload waits its turn, however many there are, and the
+// progress counts each one until the last is done.
+func TestUploadQueueKeepsEveryUpload(t *testing.T) {
+	s, trips, catalogue, files := newMediaServer(domain.RoleEditor)
+	s.workContext = t.Context()
+	// The workers are held back until everything is uploaded, as they are when
+	// a small server falls behind an import.
+	s.previewsRunning.Store(true)
+
+	const uploads = 300
+	for i := range uploads {
+		recorder := upload(t, s, trips.trip.ID.String(), "photo.png", picture(t, 8+i%5, 8), false)
+		if recorder.Code != http.StatusCreated {
+			t.Fatalf("upload %d: %d %s", i, recorder.Code, recorder.Body.String())
+		}
+	}
+	if queued := s.uploads.length(); queued != uploads {
+		t.Fatalf("%d uploads are queued, want all %d", queued, uploads)
+	}
+
+	for range s.previewWorkers {
+		go s.renderQueuedPreviews()
+	}
+	waitFor(t, "every upload's previews", func() bool {
+		s.progress.mu.Lock()
+		defer s.progress.mu.Unlock()
+		return s.progress.waveDone == s.progress.waveTotal
+	})
+	if s.progress.waveTotal != uploads || s.progress.rendered != uploads {
+		t.Errorf("the wave counted %d files and rendered %d, want %d", s.progress.waveTotal, s.progress.rendered, uploads)
+	}
+	for _, item := range catalogue.items {
+		if !files.hasPreviews(item.StorageKey) {
+			t.Errorf("%s has no previews", item.StorageKey)
+		}
+	}
+}
+
+// TestRenderWorkersFollowTheProcessors checks the background takes half the
+// processors and the renderings leave room above it, down to a single one.
+func TestRenderWorkersFollowTheProcessors(t *testing.T) {
+	for _, tc := range []struct{ processors, background, total int }{
+		{1, 1, 3},
+		{2, 1, 3},
+		{4, 2, 4},
+		{16, 8, 10},
+	} {
+		background, total := renderWorkers(tc.processors)
+		if background != tc.background || total != tc.total {
+			t.Errorf("%d processors gave %d workers and %d renderings, want %d and %d",
+				tc.processors, background, total, tc.background, tc.total)
+		}
+	}
+}
+
+// waitFor polls a condition the background is expected to make true.
+func waitFor(t *testing.T, what string, done func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !done() {
+		if time.Now().After(deadline) {
+			t.Fatalf("gave up waiting for %s", what)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

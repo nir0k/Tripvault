@@ -176,7 +176,21 @@
       "cache": "Route cache",
       "cacheValue": "{entries} routes, {hits} reuses"
     },
-    "geocodingTitle": "Place search"
+    "geocodingTitle": "Place search",
+    "previews": {
+      "title": "Photo previews",
+      "progress": "{done} of {total} files processed",
+      "ready": "All previews are ready",
+      "onRequest": "Rendered on request only",
+      "backfill": "Checking stored photos",
+      "backfillValue": "{checked} of {total}",
+      "queued": "Uploads in the queue",
+      "rendering": "Rendering now",
+      "rendered": "Rendered",
+      "failed": "Could not be rendered",
+      "lastWave": "Last batch started",
+      "sinceStart": "Counted since the service started."
+    }
   },
   "users": {
     "title": "Users",

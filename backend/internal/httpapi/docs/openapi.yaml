@@ -2384,6 +2384,29 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /api/v1/admin/previews:
+    get:
+      tags: [Administration]
+      summary: Preview rendering progress
+      description: >
+        How the background rendering of photo previews is going. Work comes in
+        waves - a batch of uploads, the walk over stored files at start-up or
+        after a restore - and the progress describes the current wave, or the
+        last one when none is running. Every figure is kept in memory and starts
+        again when the service restarts, so the page may poll this cheaply.
+      operationId: getPreviewStatus
+      responses:
+        "200":
+          description: The progress.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PreviewStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /api/v1/admin/backup-configs:
     get:
       tags: [Backups]
@@ -3369,6 +3392,50 @@ components:
           $ref: "#/components/schemas/ProviderStatus"
         geocoding:
           $ref: "#/components/schemas/ProviderStatus"
+
+    PreviewStatus:
+      type: object
+      required: [background, active, total, done, started_at, queued, rendering, backfill, rendered, failed]
+      properties:
+        background:
+          type: boolean
+          description: False when previews are rendered only when first asked for.
+        active:
+          type: boolean
+          description: Whether a wave of work is under way.
+        total:
+          type: integer
+          description: Files handed to the background in the current or last wave.
+        done:
+          type: integer
+          description: Files of that wave the background is done with, whatever came of them.
+        started_at:
+          type: [string, "null"]
+          format: date-time
+          description: When that wave began; null before the first one.
+        queued:
+          type: integer
+          description: Uploads waiting for their previews.
+        rendering:
+          type: integer
+          description: Files being decoded right now, for any reader or for the background.
+        backfill:
+          type: object
+          required: [running, checked, total]
+          description: The walk over stored files that renders the previews they lack.
+          properties:
+            running:
+              type: boolean
+            checked:
+              type: integer
+            total:
+              type: integer
+        rendered:
+          type: integer
+          description: Files whose previews were rendered since the service started.
+        failed:
+          type: integer
+          description: Files that could not be rendered since the service started, such as damaged pictures.
 
     BackupConfigInput:
       type: object

@@ -93,6 +93,30 @@ export interface ServiceStatus {
   geocoding: ProviderStatus
 }
 
+/**
+ * PreviewStatus is how the background rendering of photo previews is going.
+ * Work comes in waves - a batch of uploads, the walk over stored files at
+ * start-up or after a restore - and total, done and started_at describe the
+ * current wave, or the last one while active is false. Every figure starts
+ * again when the service restarts.
+ */
+export interface PreviewStatus {
+  /** False when previews are rendered only when first asked for. */
+  background: boolean
+  active: boolean
+  total: number
+  done: number
+  started_at: string | null
+  /** Uploads waiting for their previews. */
+  queued: number
+  /** Files being decoded right now. */
+  rendering: number
+  backfill: { running: boolean; checked: number; total: number }
+  /** Files rendered and files that could not be, since the service started. */
+  rendered: number
+  failed: number
+}
+
 /** GeoPlace is one place search or reverse lookup result. */
 export interface GeoPlace {
   name: string

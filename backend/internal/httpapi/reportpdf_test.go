@@ -107,6 +107,11 @@ func (f *fakePDFMedia) ListByTrip(context.Context, uuid.UUID) ([]domain.Media, e
 	return f.items, nil
 }
 
+// ListAll returns the catalogue, which holds one trip.
+func (f *fakePDFMedia) ListAll(context.Context) ([]domain.Media, error) {
+	return f.items, nil
+}
+
 // LinksOfTrip returns where each file is shown.
 func (f *fakePDFMedia) LinksOfTrip(context.Context, uuid.UUID) ([]domain.MediaLink, error) {
 	return f.links, nil

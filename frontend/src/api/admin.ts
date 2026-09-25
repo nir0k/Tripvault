@@ -1,5 +1,5 @@
 import { http } from './client'
-import type { AdminUser, ListResponse, ServiceStatus } from './types'
+import type { AdminUser, ListResponse, PreviewStatus, ServiceStatus } from './types'
 
 export interface NewUser {
   email: string
@@ -37,4 +37,9 @@ export async function resetPassword(id: string, password: string): Promise<void>
 /** getStatus reads the service state. */
 export async function getStatus(): Promise<ServiceStatus> {
   return (await http.get<ServiceStatus>('/api/v1/admin/status')).data
+}
+
+/** getPreviewStatus reads how the rendering of photo previews is going. */
+export async function getPreviewStatus(): Promise<PreviewStatus> {
+  return (await http.get<PreviewStatus>('/api/v1/admin/previews')).data
 }

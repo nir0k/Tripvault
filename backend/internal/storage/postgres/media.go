@@ -135,6 +135,38 @@ func (r *MediaRepository) ListByTrip(ctx context.Context, tripID uuid.UUID) ([]d
 	return items, nil
 }
 
+// ListAll - lists every stored file of every trip, newest first.
+//
+// It is what the service walks at start-up to render the previews nobody has
+// asked for yet, and newest first puts the trips being worked on at the front.
+//
+// Arguments:
+//   - ctx: context bounding the query.
+//
+// Returns:
+//   - the files, which is an empty slice for an instance without any.
+func (r *MediaRepository) ListAll(ctx context.Context) ([]domain.Media, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+mediaColumns+` FROM media m ORDER BY m.created_at DESC, m.id`)
+	if err != nil {
+		return nil, fmt.Errorf("list all media: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]domain.Media, 0)
+	for rows.Next() {
+		media, err := scanMedia(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan media: %w", err)
+		}
+		items = append(items, media)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list all media: %w", err)
+	}
+	return items, nil
+}
+
 // Update - changes what can be changed about a stored file.
 //
 // Arguments:

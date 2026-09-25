@@ -1,23 +1,48 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getStatus } from '@/api/admin'
-import type { ServiceStatus } from '@/api/types'
+import { getPreviewStatus, getStatus } from '@/api/admin'
+import type { PreviewStatus, ServiceStatus } from '@/api/types'
+import PreviewStatusCard from '@/components/PreviewStatusCard.vue'
 import ProviderStatusCard from '@/components/ProviderStatusCard.vue'
 import { errorMessage } from '@/utils/errors'
 
 const { t, te } = useI18n()
 const status = ref<ServiceStatus | null>(null)
+const previews = ref<PreviewStatus | null>(null)
 const error = ref('')
 const frontendVersion = import.meta.env.VITE_APP_VERSION ?? 'dev'
+
+// The previews are polled while a wave of rendering runs, so the bar moves
+// instead of standing where it was when the page opened.
+const pollInterval = 3000
+let poll: ReturnType<typeof setTimeout> | undefined
+
+// refreshPreviews reads the preview progress and keeps reading it while work
+// is under way. A failed read ends the polling rather than repeating the error.
+async function refreshPreviews(): Promise<void> {
+  try {
+    previews.value = await getPreviewStatus()
+  } catch (err) {
+    error.value = errorMessage(err, t, te)
+    return
+  }
+  if (previews.value.active) {
+    poll = setTimeout(() => void refreshPreviews(), pollInterval)
+  }
+}
 
 onMounted(async () => {
   try {
     status.value = await getStatus()
   } catch (err) {
     error.value = errorMessage(err, t, te)
+    return
   }
+  await refreshPreviews()
 })
+
+onBeforeUnmount(() => clearTimeout(poll))
 </script>
 
 <template>
@@ -45,6 +70,7 @@ onMounted(async () => {
     <div v-if="status" class="grid gap-6 lg:grid-cols-2">
       <ProviderStatusCard :title="t('status.routing.title')" :status="status.routing" />
       <ProviderStatusCard :title="t('status.geocodingTitle')" :status="status.geocoding" />
+      <PreviewStatusCard v-if="previews" :status="previews" />
     </div>
   </section>
 </template>

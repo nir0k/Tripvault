@@ -176,7 +176,21 @@
       "cache": "Кэш маршрутов",
       "cacheValue": "маршрутов: {entries}, повторных использований: {hits}"
     },
-    "geocodingTitle": "Поиск мест"
+    "geocodingTitle": "Поиск мест",
+    "previews": {
+      "title": "Превью фотографий",
+      "progress": "Обработано файлов: {done} из {total}",
+      "ready": "Все превью готовы",
+      "onRequest": "Только по запросу",
+      "backfill": "Проверка загруженных фото",
+      "backfillValue": "{checked} из {total}",
+      "queued": "Загрузок в очереди",
+      "rendering": "Рендерится сейчас",
+      "rendered": "Отрендерено",
+      "failed": "Не удалось отрендерить",
+      "lastWave": "Последняя пачка начата",
+      "sinceStart": "Счётчики с момента запуска сервиса."
+    }
   },
   "users": {
     "title": "Пользователи",

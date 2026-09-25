@@ -286,6 +286,7 @@ func (s *Server) handleUploadMedia(w http.ResponseWriter, r *http.Request) {
 		}
 		used += item.Size
 		stored = append(stored, newMediaResponse(item))
+		s.queuePreviews(item)
 	}
 
 	if len(stored) == 0 {
@@ -685,11 +686,11 @@ func (s *Server) writeMediaFile(w http.ResponseWriter, r *http.Request, item dom
 	}
 }
 
-// writeMediaThumbnail serves a preview of the requested width. A preview is
-// rendered the first time it is asked for and kept in the store, so the
-// original - often megabytes of camera output - is decoded once per width
-// rather than once per reader; a browser then keeps what it has seen under the
-// ETag.
+// writeMediaThumbnail serves a preview of the requested width. Previews are
+// rendered in the background after an upload and kept in the store; one still
+// missing is rendered here, every width at once, so the original - often
+// megabytes of camera output - is decoded once rather than once per width or
+// per reader. A browser then keeps what it has seen under the ETag.
 func (s *Server) writeMediaThumbnail(w http.ResponseWriter, r *http.Request, item domain.Media) {
 	size := media.Sizes[1]
 	if raw := r.URL.Query().Get("size"); raw != "" {
@@ -710,8 +711,21 @@ func (s *Server) writeMediaThumbnail(w http.ResponseWriter, r *http.Request, ite
 
 	preview, ok := s.storedPreview(r.Context(), item, size)
 	if !ok {
-		preview, ok = s.renderPreview(w, r, item, size)
-		if !ok {
+		previews, err := s.previewsFor(r.Context(), item)
+		switch {
+		case err == nil:
+			preview = previews[size]
+		case errors.Is(err, media.ErrNotFound):
+			s.writeError(w, r, http.StatusNotFound, "not_found", "Resource not found")
+			return
+		case errors.Is(err, media.ErrNoThumbnail):
+			s.writeError(w, r, http.StatusUnsupportedMediaType, "no_preview",
+				"No preview can be made of this kind of file")
+			return
+		case r.Context().Err() != nil:
+			return
+		default:
+			s.internalError(w, r, "render preview", err)
 			return
 		}
 	}
@@ -743,83 +757,6 @@ func (s *Server) storedPreview(ctx context.Context, item domain.Media, size int)
 		return nil, false
 	}
 	return data, true
-}
-
-// renderPreview decodes the original, renders the preview and keeps it in the
-// store for the next reader. It writes the error response itself and reports
-// whether there is a preview to send.
-//
-// Arguments:
-//   - w: the response, written only on failure.
-//   - r: the request, whose context bounds the work.
-//   - item: the file to render.
-//   - size: the preview width, one of media.Sizes.
-//
-// Returns:
-//   - the JPEG of the preview.
-//   - false when an error response has been written instead.
-func (s *Server) renderPreview(w http.ResponseWriter, r *http.Request, item domain.Media, size int) ([]byte, bool) {
-	// Decoding a picture costs memory, so only a few run at a time; the rest
-	// wait rather than pile up.
-	select {
-	case s.thumbnails <- struct{}{}:
-		defer func() { <-s.thumbnails }()
-	case <-r.Context().Done():
-		return nil, false
-	}
-
-	file, err := s.mediaFiles.Open(r.Context(), item.StorageKey)
-	if err != nil {
-		if errors.Is(err, media.ErrNotFound) {
-			s.writeError(w, r, http.StatusNotFound, "not_found", "Resource not found")
-			return nil, false
-		}
-		s.internalError(w, r, "open media", err)
-		return nil, false
-	}
-	data, err := io.ReadAll(io.LimitReader(file, s.mediaMaxBytes))
-	_ = file.Close()
-	if err != nil {
-		s.internalError(w, r, "read media", err)
-		return nil, false
-	}
-	preview, err := media.Thumbnail(data, size)
-	if err != nil {
-		if errors.Is(err, media.ErrNoThumbnail) {
-			s.writeError(w, r, http.StatusUnsupportedMediaType, "no_preview",
-				"No preview can be made of this kind of file")
-			return nil, false
-		}
-		s.internalError(w, r, "render preview", err)
-		return nil, false
-	}
-
-	s.keepPreview(r.Context(), item, size, preview)
-	return preview, true
-}
-
-// keepPreview stores a rendered preview. Failing to keep it costs only a
-// render next time, so it is logged rather than returned.
-//
-// The file may be deleted while its preview is being rendered, and a preview
-// stored after that deletion would keep a copy of a removed photograph on the
-// disk. So the original is looked for once the preview is in place, and the
-// preview goes again when the original is gone: whichever of the two removals
-// runs last clears it.
-func (s *Server) keepPreview(ctx context.Context, item domain.Media, size int, preview []byte) {
-	key := media.PreviewKey(item.StorageKey, size)
-	if _, err := s.mediaFiles.Put(ctx, key, bytes.NewReader(preview)); err != nil {
-		s.logger.Warn("store preview failed", "error", err, "media_id", item.ID.String())
-		return
-	}
-	original, err := s.mediaFiles.Open(ctx, item.StorageKey)
-	if err == nil {
-		_ = original.Close()
-		return
-	}
-	if err := s.mediaFiles.Delete(ctx, key); err != nil {
-		s.logger.Warn("delete orphaned preview failed", "error", err, "media_id", item.ID.String())
-	}
 }
 
 // writeMediaError maps the failures of an upload onto responses; anything else

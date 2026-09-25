@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
 	"image/draw"
 	"image/jpeg"
 	_ "image/png" // registers the PNG decoder
+	"slices"
 
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp" // registers the WebP decoder
@@ -67,15 +69,14 @@ func Dimensions(data []byte) (int, int, error) {
 
 // Thumbnail - renders a preview of a picture, no wider than the given size.
 //
-// The picture is turned the way its EXIF orientation says before it is scaled:
-// a camera stores the frame as the sensor saw it and records which way up it
-// was, so a preview that ignores the tag comes out on its side. A picture
-// already narrower than the requested width is scaled up to nothing - it is
-// returned at its own size.
+// The picture is turned the way its EXIF orientation says: a camera stores the
+// frame as the sensor saw it and records which way up it was, so a preview that
+// ignores the tag comes out on its side. A picture already narrower than the
+// requested width is scaled up to nothing - it is returned at its own size.
 //
 // Arguments:
 //   - data: the file's bytes.
-//   - width: the requested width, one of Sizes.
+//   - width: the requested width in pixels.
 //
 // Returns:
 //   - a JPEG of the preview.
@@ -84,6 +85,42 @@ func Thumbnail(data []byte, width int) ([]byte, error) {
 	if width <= 0 {
 		return nil, ErrNoThumbnail
 	}
+	previews, err := render(data, []int{width})
+	if err != nil {
+		return nil, err
+	}
+	return previews[width], nil
+}
+
+// Previews - renders a picture at every width in Sizes.
+//
+// Decoding the original is most of the cost of a preview, so it is decoded once
+// and every width is scaled from the one above it rather than from the
+// original. The previews follow the rules of Thumbnail.
+//
+// Arguments:
+//   - data: the file's bytes.
+//
+// Returns:
+//   - a JPEG for every width in Sizes, keyed by that width.
+//   - ErrNoThumbnail when the file cannot be decoded, or another error.
+func Previews(data []byte) (map[int][]byte, error) {
+	return render(data, Sizes)
+}
+
+// render decodes a picture once and writes a JPEG of it at each width, the
+// widest first, so that each narrower one is scaled from the one before it.
+// Sizes mostly halve from one to the next, and a half is exactly what shrink
+// makes, so most of them never reach the slower filter.
+//
+// Arguments:
+//   - data: the file's bytes.
+//   - widths: the requested widths, all above zero.
+//
+// Returns:
+//   - a JPEG for every requested width, keyed by that width.
+//   - ErrNoThumbnail when the file cannot be decoded, or another error.
+func render(data []byte, widths []int) (map[int][]byte, error) {
 	config, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil, ErrNoThumbnail
@@ -91,64 +128,205 @@ func Thumbnail(data []byte, width int) ([]byte, error) {
 	if config.Width <= 0 || config.Height <= 0 || config.Width*config.Height > maxPixels {
 		return nil, ErrNoThumbnail
 	}
-
 	source, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, ErrNoThumbnail
 	}
+	orientation := ReadMetadata(data).Orientation
+
+	ordered := slices.Clone(widths)
+	slices.Sort(ordered)
+	slices.Reverse(ordered)
 
 	bounds := source.Bounds()
-	target := width
-	if bounds.Dx() < target {
-		target = bounds.Dx()
-	}
-	height := bounds.Dy() * target / max(bounds.Dx(), 1)
-	scaled := image.NewRGBA(image.Rect(0, 0, max(target, 1), max(height, 1)))
-	xdraw.CatmullRom.Scale(scaled, scaled.Bounds(), source, bounds, draw.Src, nil)
+	current := source
+	previews := make(map[int][]byte, len(ordered))
+	for _, width := range ordered {
+		target := max(min(width, bounds.Dx()), 1)
+		height := max(bounds.Dy()*target/max(bounds.Dx(), 1), 1)
+		scaled := scale(shrink(current, target), target, height)
+		current = scaled
 
-	oriented := orient(scaled, ReadMetadata(data).Orientation)
-
-	var out bytes.Buffer
-	if err := jpeg.Encode(&out, oriented, &jpeg.Options{Quality: thumbnailQuality}); err != nil {
-		return nil, fmt.Errorf("encode preview: %w", err)
+		var out bytes.Buffer
+		if err := jpeg.Encode(&out, orient(scaled, orientation), &jpeg.Options{Quality: thumbnailQuality}); err != nil {
+			return nil, fmt.Errorf("encode preview: %w", err)
+		}
+		previews[width] = out.Bytes()
 	}
-	return out.Bytes(), nil
+	return previews, nil
+}
+
+// scale resizes a picture to the given size. It is only ever asked to shrink by
+// less than half - shrink has done the rest - and over so short a step a
+// bilinear filter loses nothing a sharper and far slower one would keep. A
+// picture already of that size is only brought into the pixel layout the rest
+// of the rendering works on.
+func scale(source image.Image, width, height int) *image.RGBA {
+	bounds := source.Bounds()
+	if bounds.Dx() == width && bounds.Dy() == height {
+		return toRGBA(source)
+	}
+	scaled := image.NewRGBA(image.Rect(0, 0, width, height))
+	xdraw.ApproxBiLinear.Scale(scaled, scaled.Bounds(), source, bounds, draw.Src, nil)
+	return scaled
+}
+
+// toRGBA returns a picture as RGBA pixels starting at the origin, converting it
+// when it is stored any other way.
+func toRGBA(source image.Image) *image.RGBA {
+	if rgba, ok := source.(*image.RGBA); ok && rgba.Rect.Min == (image.Point{}) {
+		return rgba
+	}
+	bounds := source.Bounds()
+	rgba := image.NewRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
+	draw.Draw(rgba, rgba.Bounds(), source, bounds.Min, draw.Src)
+	return rgba
+}
+
+// shrink brings a picture close to the width it is about to be scaled to by
+// averaging whole blocks of its pixels.
+//
+// The filter that makes the previews reads more of the source the further it
+// scales down, and from a camera's frame to a gallery tile that is most of the
+// time a preview takes. Averaging is the cheapest way to shrink without
+// aliasing, so it takes the picture to no less than the width asked for and
+// leaves the last, small step to the filter. A picture less than twice that
+// width is returned as it is.
+//
+// Arguments:
+//   - source: the picture to shrink.
+//   - width: the width it is about to be scaled to.
+//
+// Returns:
+//   - the averaged picture, or the source itself when it is small enough.
+func shrink(source image.Image, width int) image.Image {
+	bounds := source.Bounds()
+	factor := bounds.Dx() / max(width, 1)
+	if factor < 2 {
+		return source
+	}
+	outWidth := bounds.Dx() / factor
+	outHeight := max((bounds.Dy()*outWidth+bounds.Dx()/2)/bounds.Dx(), 1)
+	columns := blockEdges(bounds.Min.X, bounds.Dx(), outWidth)
+	rows := blockEdges(bounds.Min.Y, bounds.Dy(), outHeight)
+
+	if frame, ok := source.(*image.YCbCr); ok {
+		return averageYCbCr(frame, columns, rows)
+	}
+	return averageRGBA(toRGBA(source), blockEdges(0, bounds.Dx(), outWidth), blockEdges(0, bounds.Dy(), outHeight))
+}
+
+// blockEdges splits a run of pixels into count blocks as even as integers
+// allow, so no pixel at the edge is left out.
+//
+// Arguments:
+//   - start: the first pixel of the run.
+//   - length: the number of pixels in the run.
+//   - count: the number of blocks.
+//
+// Returns:
+//   - count+1 edges; block i spans [edges[i], edges[i+1]).
+func blockEdges(start, length, count int) []int {
+	edges := make([]int, count+1)
+	for i := range edges {
+		edges[i] = start + i*length/count
+	}
+	return edges
+}
+
+// averageYCbCr averages blocks of a decoded JPEG straight from its planes, so
+// the full frame is never converted to RGB, and converts each average instead.
+func averageYCbCr(frame *image.YCbCr, columns, rows []int) *image.RGBA {
+	out := image.NewRGBA(image.Rect(0, 0, len(columns)-1, len(rows)-1))
+	for j := range len(rows) - 1 {
+		for i := range len(columns) - 1 {
+			var sumY, sumCb, sumCr, count int
+			for y := rows[j]; y < rows[j+1]; y++ {
+				yi := frame.YOffset(columns[i], y)
+				for x := columns[i]; x < columns[i+1]; x++ {
+					ci := frame.COffset(x, y)
+					sumY += int(frame.Y[yi])
+					sumCb += int(frame.Cb[ci])
+					sumCr += int(frame.Cr[ci])
+					yi++
+					count++
+				}
+			}
+			r, g, b := color.YCbCrToRGB(uint8(sumY/count), uint8(sumCb/count), uint8(sumCr/count))
+			o := out.PixOffset(i, j)
+			out.Pix[o], out.Pix[o+1], out.Pix[o+2], out.Pix[o+3] = r, g, b, 0xff
+		}
+	}
+	return out
+}
+
+// averageRGBA averages blocks of an RGBA picture whose pixels start at the
+// origin.
+func averageRGBA(source *image.RGBA, columns, rows []int) *image.RGBA {
+	out := image.NewRGBA(image.Rect(0, 0, len(columns)-1, len(rows)-1))
+	for j := range len(rows) - 1 {
+		for i := range len(columns) - 1 {
+			var sum [4]int
+			count := 0
+			for y := rows[j]; y < rows[j+1]; y++ {
+				p := source.PixOffset(columns[i], y)
+				for x := columns[i]; x < columns[i+1]; x++ {
+					sum[0] += int(source.Pix[p])
+					sum[1] += int(source.Pix[p+1])
+					sum[2] += int(source.Pix[p+2])
+					sum[3] += int(source.Pix[p+3])
+					p += 4
+					count++
+				}
+			}
+			o := out.PixOffset(i, j)
+			for c := range 4 {
+				out.Pix[o+c] = uint8(sum[c] / count)
+			}
+		}
+	}
+	return out
 }
 
 // orient turns a picture the way an EXIF orientation value says. Values below 2
-// and above 8 mean "as stored", and so does anything unknown.
+// and above 8 mean "as stored", and so does anything unknown. The pixels are
+// moved as whole four-byte words, because going through colours one pixel at a
+// time costs more than the scaling before it.
 func orient(source *image.RGBA, orientation int) image.Image {
 	if orientation < 2 || orientation > 8 {
 		return source
 	}
-	bounds := source.Bounds()
-	width, height := bounds.Dx(), bounds.Dy()
+	width, height := source.Rect.Dx(), source.Rect.Dy()
 	// The four values from 5 up turn the picture a quarter, so the preview
 	// swaps its sides.
+	outWidth, outHeight := width, height
 	if orientation >= 5 {
-		width, height = height, width
+		outWidth, outHeight = height, width
 	}
-	out := image.NewRGBA(image.Rect(0, 0, width, height))
-	for y := range bounds.Dy() {
-		for x := range bounds.Dx() {
+	out := image.NewRGBA(image.Rect(0, 0, outWidth, outHeight))
+	for y := range height {
+		from := source.PixOffset(source.Rect.Min.X, source.Rect.Min.Y+y)
+		for x := range width {
 			var tx, ty int
 			switch orientation {
 			case 2:
-				tx, ty = bounds.Dx()-1-x, y
+				tx, ty = width-1-x, y
 			case 3:
-				tx, ty = bounds.Dx()-1-x, bounds.Dy()-1-y
+				tx, ty = width-1-x, height-1-y
 			case 4:
-				tx, ty = x, bounds.Dy()-1-y
+				tx, ty = x, height-1-y
 			case 5:
 				tx, ty = y, x
 			case 6:
-				tx, ty = bounds.Dy()-1-y, x
+				tx, ty = height-1-y, x
 			case 7:
-				tx, ty = bounds.Dy()-1-y, bounds.Dx()-1-x
+				tx, ty = height-1-y, width-1-x
 			case 8:
-				tx, ty = y, bounds.Dx()-1-x
+				tx, ty = y, width-1-x
 			}
-			out.Set(tx, ty, source.At(bounds.Min.X+x, bounds.Min.Y+y))
+			to := ty*out.Stride + tx*4
+			copy(out.Pix[to:to+4], source.Pix[from:from+4])
+			from += 4
 		}
 	}
 	return out

@@ -115,6 +115,86 @@ func TestThumbnailFitsTheRequestedWidth(t *testing.T) {
 	}
 }
 
+// TestPreviewsRenderEveryWidthFromOneDecode checks a camera-sized JPEG comes
+// back at every offered width with its proportions kept, and that averaging a
+// flat picture down leaves its colour where it was.
+func TestPreviewsRenderEveryWidthFromOneDecode(t *testing.T) {
+	picture := image.NewRGBA(image.Rect(0, 0, 3001, 2001))
+	fill := color.RGBA{R: 200, G: 90, B: 40, A: 255}
+	for y := range 2001 {
+		for x := range 3001 {
+			picture.SetRGBA(x, y, fill)
+		}
+	}
+	var encoded bytes.Buffer
+	if err := jpeg.Encode(&encoded, picture, &jpeg.Options{Quality: 95}); err != nil {
+		t.Fatalf("encode jpeg: %v", err)
+	}
+
+	previews, err := Previews(encoded.Bytes())
+	if err != nil {
+		t.Fatalf("render previews: %v", err)
+	}
+	for _, size := range Sizes {
+		preview, err := jpeg.Decode(bytes.NewReader(previews[size]))
+		if err != nil {
+			t.Fatalf("decode the %d preview: %v", size, err)
+		}
+		bounds := preview.Bounds()
+		if bounds.Dx() != size || bounds.Dy() != 2001*size/3001 {
+			t.Errorf("the %d preview is %dx%d", size, bounds.Dx(), bounds.Dy())
+		}
+		r, g, b, _ := preview.At(bounds.Dx()/2, bounds.Dy()/2).RGBA()
+		got := [3]int{int(r >> 8), int(g >> 8), int(b >> 8)}
+		want := [3]int{int(fill.R), int(fill.G), int(fill.B)}
+		for c := range got {
+			if got[c]-want[c] > 6 || want[c]-got[c] > 6 {
+				t.Errorf("the %d preview is %v in the middle, want about %v", size, got, want)
+				break
+			}
+		}
+	}
+
+	if _, err := Previews([]byte("not a picture")); err != ErrNoThumbnail {
+		t.Errorf("a file that is not a picture gave %v, want ErrNoThumbnail", err)
+	}
+}
+
+// TestOrientMatchesTheEXIFMeaning checks every orientation against the plain
+// definition of where a pixel goes, on a picture whose sides differ so a turn
+// the wrong way cannot pass.
+func TestOrientMatchesTheEXIFMeaning(t *testing.T) {
+	const width, height = 5, 3
+	source := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := range height {
+		for x := range width {
+			source.SetRGBA(x, y, color.RGBA{R: uint8(x), G: uint8(y), A: 255})
+		}
+	}
+	// where says at which point of the turned picture the pixel (x, y) lands.
+	where := map[int]func(x, y int) (int, int){
+		1: func(x, y int) (int, int) { return x, y },
+		2: func(x, y int) (int, int) { return width - 1 - x, y },
+		3: func(x, y int) (int, int) { return width - 1 - x, height - 1 - y },
+		4: func(x, y int) (int, int) { return x, height - 1 - y },
+		5: func(x, y int) (int, int) { return y, x },
+		6: func(x, y int) (int, int) { return height - 1 - y, x },
+		7: func(x, y int) (int, int) { return height - 1 - y, width - 1 - x },
+		8: func(x, y int) (int, int) { return y, width - 1 - x },
+	}
+	for orientation, move := range where {
+		turned := orient(source, orientation)
+		for y := range height {
+			for x := range width {
+				tx, ty := move(x, y)
+				if got := turned.At(tx, ty); got != source.At(x, y) {
+					t.Errorf("orientation %d moved (%d,%d) elsewhere: %v at (%d,%d)", orientation, x, y, got, tx, ty)
+				}
+			}
+		}
+	}
+}
+
 // TestHasSizeAcceptsOfferedWidthsOnly keeps the preview sizes a closed set, so
 // a request cannot ask the service to render an arbitrary size.
 func TestHasSizeAcceptsOfferedWidthsOnly(t *testing.T) {

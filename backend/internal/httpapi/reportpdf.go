@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"html"
-	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -18,7 +17,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/nir0k/tripvault/backend/internal/domain"
-	"github.com/nir0k/tripvault/backend/internal/media"
 	"github.com/nir0k/tripvault/backend/internal/pdf"
 	"github.com/nir0k/tripvault/backend/internal/staticmap"
 )
@@ -346,7 +344,8 @@ func reportPictures(gallery []shown) []domain.Media {
 // photoPreview returns a photograph at the width the document draws pictures
 // at. It is the same preview the gallery asks for: the one kept in the store
 // when there is one, or a fresh one, rendered from the original and kept for
-// the next reader - so a report is slow to export only the first time. The
+// the next reader, with every other width - so a report is slow to export only
+// the first time, and only for pictures the background has not reached yet. The
 // result is a JPEG whatever the file was uploaded as, which is also what keeps
 // WebP out of a format that cannot carry it.
 func (s *Server) photoPreview(ctx context.Context, item domain.Media) ([]byte, error) {
@@ -357,30 +356,11 @@ func (s *Server) photoPreview(ctx context.Context, item domain.Media) ([]byte, e
 		return preview, nil
 	}
 
-	// Decoding a picture costs memory, so it waits its turn with every other
-	// preview being rendered.
-	select {
-	case s.thumbnails <- struct{}{}:
-		defer func() { <-s.thumbnails }()
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-
-	reader, err := s.mediaFiles.Open(ctx, item.StorageKey)
+	previews, err := s.previewsFor(ctx, item)
 	if err != nil {
 		return nil, err
 	}
-	original, err := io.ReadAll(reader)
-	_ = reader.Close()
-	if err != nil {
-		return nil, err
-	}
-	preview, err := media.Thumbnail(original, pdfPhotoWidth)
-	if err != nil {
-		return nil, err
-	}
-	s.keepPreview(ctx, item, pdfPhotoWidth, preview)
-	return preview, nil
+	return previews[pdfPhotoWidth], nil
 }
 
 // pdfFilename turns a trip's title into a filename a browser will save happily.
