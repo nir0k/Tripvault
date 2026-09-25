@@ -32,11 +32,9 @@ const dialog = useTemplateRef<HTMLDialogElement>('dialog')
 const locationField = useTemplateRef<InstanceType<typeof LocationField>>('locationField')
 const editing = ref<PlanItem | null>(null)
 const error = ref('')
-// A new place takes its category's visit time unless the person set one.
-const visitTouched = ref(false)
 const form = reactive({
   kind: 'place' as 'place' | 'activity', activityType: 'hike' as ActivityType,
-  name: '', category: 'other' as PlaceCategory, visitMinutes: 30, desiredTime: '', isOptional: false,
+  name: '', category: 'other' as PlaceCategory, visitMinutes: '' as number | '', desiredTime: '', isOptional: false,
   address: '', lat: '', lng: '', url: '', bookingRef: '', cost: '', perPerson: false,
   costCategory: '' as CostCategory | '', description: '', osmRef: '',
 })
@@ -64,13 +62,13 @@ function open(item: PlanItem | null, position: { lat: number; lng: number } | nu
   kind: 'place' | 'activity' = 'place'): void {
   editing.value = item
   error.value = ''
-  visitTouched.value = item !== null
   Object.assign(form, {
     kind: item?.kind === 'activity' ? 'activity' : item ? 'place' : kind,
     activityType: item?.activity_type ?? 'hike',
     name: item?.name ?? '',
     category: item?.category ?? 'other',
-    visitMinutes: item?.visit_minutes ?? 30,
+    // A place without time spent there shows an empty field rather than a zero.
+    visitMinutes: item?.visit_minutes || '',
     desiredTime: item?.desired_time ?? '',
     isOptional: item?.is_optional ?? false,
     address: item?.address ?? '',
@@ -128,9 +126,9 @@ function submit(): void {
     planned_cost_amount: normalizeAmount(form.cost),
     cost_per_person: form.perPerson,
     description_md: form.description,
-  }
-  if (visitTouched.value) {
-    fields.visit_minutes = form.visitMinutes
+    // An empty field means no time at the place: the schedule passes straight
+    // through it.
+    visit_minutes: form.visitMinutes === '' ? 0 : form.visitMinutes,
   }
   if (form.costCategory) {
     fields.cost_category = form.costCategory
@@ -162,8 +160,7 @@ defineExpose({ open, close, fail })
             min="0"
             max="1440"
             class="input w-full"
-            :placeholder="visitTouched ? t('place.visitMinutes') : t('place.visitDefault')"
-            @input="visitTouched = true"
+            :placeholder="t('place.visitMinutes')"
           />
         </label>
         <label class="floating-label">

@@ -540,7 +540,6 @@
     "name": "Название",
     "category": "Категория",
     "visitMinutes": "Минут на точке",
-    "visitDefault": "По категории",
     "desiredTime": "Прибыть к",
     "optional": "опционально",
     "optionalField": "Опционально",

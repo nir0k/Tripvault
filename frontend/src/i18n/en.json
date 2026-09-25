@@ -540,7 +540,6 @@
     "name": "Name",
     "category": "Category",
     "visitMinutes": "Minutes at the place",
-    "visitDefault": "By category",
     "desiredTime": "Arrive by",
     "optional": "optional",
     "optionalField": "Optional",
