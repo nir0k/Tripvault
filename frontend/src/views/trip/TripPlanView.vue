@@ -5,10 +5,12 @@ import { useRoute, useRouter } from 'vue-router'
 import * as documentsApi from '@/api/documents'
 import { ApiError } from '@/api/client'
 import { getClientConfig } from '@/api/config'
+import { listMembers } from '@/api/trips'
 import type {
-  ClientConfig, Leg, PlanDay, PlanItem, RemovedDay, RouteOption, Stay, Transfer, TravelMode, TripDocument,
+  ClientConfig, Leg, PlanDay, PlanItem, RemovedDay, RouteOption, Stay, Transfer, TravelMode, TripDocument, TripMember,
 } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
+import BackToTop from '@/components/BackToTop.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import PlanDayList from '@/components/plan/PlanDayList.vue'
 import PlanDayPanel from '@/components/plan/PlanDayPanel.vue'
@@ -16,11 +18,14 @@ import PlanLegDialog from '@/components/plan/PlanLegDialog.vue'
 import PlanMap from '@/components/plan/PlanMap.vue'
 import PlanPlaceDialog from '@/components/plan/PlanPlaceDialog.vue'
 import PlanPlaceList from '@/components/plan/PlanPlaceList.vue'
+import PlaceCostDialog from '@/components/plan/PlaceCostDialog.vue'
+import PlaceTimeDialog from '@/components/plan/PlaceTimeDialog.vue'
 import PlanStayDialog from '@/components/plan/PlanStayDialog.vue'
 import PlanStays from '@/components/plan/PlanStays.vue'
 import PlanTransferDialog from '@/components/plan/PlanTransferDialog.vue'
 import PlanTransfers from '@/components/plan/PlanTransfers.vue'
 import PlanTargetDialog from '@/components/plan/PlanTargetDialog.vue'
+import EditableMarkdown from '@/components/report/EditableMarkdown.vue'
 import { useLegCalculation } from '@/composables/useLegCalculation'
 import { useMediaQuery } from '@/composables/useMediaQuery'
 import { useTripStore } from '@/stores/trip'
@@ -43,6 +48,15 @@ const placeDay = ref<string | null>(null)
 
 const confirmDialog = useTemplateRef<InstanceType<typeof ConfirmDialog>>('confirmDialog')
 const placeDialog = useTemplateRef<InstanceType<typeof PlanPlaceDialog>>('placeDialog')
+const timeDialog = useTemplateRef<InstanceType<typeof PlaceTimeDialog>>('timeDialog')
+// timeItem is the place whose times the time form is open for.
+const timeItem = ref<PlanItem | null>(null)
+const costDialog = useTemplateRef<InstanceType<typeof PlaceCostDialog>>('costDialog')
+// costItem is the place whose cost the cost form is open for.
+const costItem = ref<PlanItem | null>(null)
+// members are the people of the trip who may pay a cost and share it, read
+// when the cost form is first opened.
+const members = ref<TripMember[]>([])
 const stayDialog = useTemplateRef<InstanceType<typeof PlanStayDialog>>('stayDialog')
 const transferDialog = useTemplateRef<InstanceType<typeof PlanTransferDialog>>('transferDialog')
 const targetDialog = useTemplateRef<InstanceType<typeof PlanTargetDialog>>('targetDialog')
@@ -364,6 +378,80 @@ async function savePlace(fields: documentsApi.PlaceFields, item: PlanItem | null
   }
 }
 
+// createAt stores an element begun on a tile of a day, or of the unassigned list
+// when dayId is null, at its position there.
+async function createAt(dayId: string | null, position: number, fields: documentsApi.PlaceFields): Promise<boolean> {
+  const current = plan.value
+  return current ? apply(() => documentsApi.createPlace(current.id, dayId, fields, position)) : false
+}
+
+// updateItem stores a change made on a place's card.
+function updateItem(item: PlanItem, fields: documentsApi.PlaceFields): void {
+  void apply(() => documentsApi.updatePlace(item.id, fields))
+}
+
+// importTrack attaches a route chosen on an activity's card, replacing the one it had.
+function importTrack(item: PlanItem, file: File): void {
+  void apply(() => documentsApi.importItemTrack(item.id, file))
+}
+
+// removeTrack takes an activity's route away.
+function removeTrack(item: PlanItem): void {
+  void apply(() => documentsApi.deleteItemTrack(item.id))
+}
+
+// openTime opens the time form of a place.
+function openTime(item: PlanItem): void {
+  timeItem.value = item
+  timeDialog.value?.open(item)
+}
+
+// saveTime stores the times from the time form.
+async function saveTime(fields: documentsApi.PlaceFields): Promise<void> {
+  const item = timeItem.value
+  if (!item) {
+    return
+  }
+  if (await apply(() => documentsApi.updatePlace(item.id, fields))) {
+    timeDialog.value?.close()
+  } else {
+    timeDialog.value?.fail(error.value)
+    error.value = ''
+  }
+}
+
+// openCost opens the cost form of a place, reading the trip's members first
+// so the form can name who pays and who shares.
+async function openCost(item: PlanItem): Promise<void> {
+  const current = trip.value
+  if (!current) {
+    return
+  }
+  try {
+    members.value = await listMembers(current.id)
+  } catch (err) {
+    error.value = errorMessage(err, t, te)
+    return
+  }
+  costItem.value = item
+  await nextTick()
+  costDialog.value?.open(item)
+}
+
+// saveCost stores the cost from the cost form.
+async function saveCost(fields: documentsApi.PlaceFields): Promise<void> {
+  const item = costItem.value
+  if (!item) {
+    return
+  }
+  if (await apply(() => documentsApi.updatePlace(item.id, fields))) {
+    costDialog.value?.close()
+  } else {
+    costDialog.value?.fail(error.value)
+    error.value = ''
+  }
+}
+
 // removePlace deletes a place after confirmation.
 async function removePlace(item: PlanItem): Promise<void> {
   if (await confirmDialog.value?.ask(t('plan.confirmDeletePlace', { name: item.name }), { danger: true })) {
@@ -480,9 +568,9 @@ function transfersOn(day: PlanDay): Transfer[] {
     transfer.departure_date === date || (transfer.arrival_date ?? transfer.departure_date) === date)
 }
 
-// openTransfer opens the transfer form; asked from a day, it departs that day.
-function openTransfer(transfer: Transfer | null, fromDay: PlanDay | null = null): void {
-  transferDialog.value?.open(transfer, fromDay?.date ?? '')
+// openTransfer opens the transfer form, empty for a new transfer.
+function openTransfer(transfer: Transfer | null): void {
+  transferDialog.value?.open(transfer)
 }
 
 // saveTransfer creates or changes a transfer from the form.
@@ -614,6 +702,16 @@ async function removeStay(stay: Stay): Promise<void> {
           />
 
           <template v-else>
+            <!-- The words for the whole trip, read before its days. -->
+            <EditableMarkdown
+              :source="plan.intro_md"
+              :editing="canEdit"
+              :placeholder="t('plan.introPlaceholder')"
+              :add-label="t('plan.addIntro')"
+              :rows="6"
+              @save="(intro) => plan && apply(() => documentsApi.updateDocument(plan!.id, { intro_md: intro }))"
+            />
+
             <div
               v-for="(each, index) in plan.days"
               :id="dayAnchor(index)"
@@ -629,18 +727,22 @@ async function removeStay(stay: Stay): Promise<void> {
                 :can-edit="canEdit"
                 :draggable="wide"
                 :collapsed="collapsed.has(each.id)"
+                :focus="searchFocus"
+                :create="(position, fields) => createAt(each.id, position, fields)"
                 @locate="locateItem"
                 @toggle="toggleDay(each.id)"
                 @update="(changes) => apply(() => documentsApi.updateDay(each.id, changes))"
                 @duplicate="apply(() => documentsApi.duplicateDay(each.id), { tripChanged: true })"
                 @remove="removeDay(each)"
-                @add-place="openPlace(each.id)"
-                @add-activity="openPlace(each.id, null, 'activity')"
                 @add-stay="openStay(null, each)"
-                @add-transfer="openTransfer(null, each)"
                 @edit-transfer="(transfer) => openTransfer(transfer)"
                 @move="movePlace"
                 @edit="(item) => placeDialog?.open(item)"
+                @update-place="updateItem"
+                @edit-time="openTime"
+                @edit-cost="openCost"
+                @import-track="importTrack"
+                @remove-track="removeTrack"
                 @pick-target="(item, mode) => targetDialog?.open(item, mode)"
                 @remove-place="removePlace"
                 @leg-mode="setLegMode"
@@ -654,10 +756,6 @@ async function removeStay(stay: Stay): Promise<void> {
           <section v-if="!section" class="space-y-3" :aria-label="t('plan.unassigned')">
             <header class="flex flex-wrap items-center justify-between gap-2">
               <h2 class="text-lg font-semibold">{{ t('plan.unassigned') }} ({{ plan.unassigned.length }})</h2>
-              <button v-if="canEdit" type="button" class="btn btn-sm btn-hover-outline" @click="openPlace(null)">
-                <AppIcon name="plus" />
-                {{ t('plan.addIdea') }}
-              </button>
             </header>
             <PlanPlaceList
               :places="plan.unassigned"
@@ -665,13 +763,20 @@ async function removeStay(stay: Stay): Promise<void> {
               :currency="currency"
               :can-edit="canEdit"
               :draggable="wide"
+              :focus="searchFocus"
+              :create="(position, fields) => createAt(null, position, fields)"
               @locate="locateItem"
               @move="movePlace"
               @edit="(item) => placeDialog?.open(item)"
+              @update="updateItem"
+              @edit-time="openTime"
+              @edit-cost="openCost"
+              @import-track="importTrack"
+              @remove-track="removeTrack"
               @pick-target="(item, mode) => targetDialog?.open(item, mode)"
               @remove="removePlace"
             />
-            <p v-if="plan.unassigned.length === 0" class="text-sm text-base-content/60">{{ t('plan.unassignedEmpty') }}</p>
+            <p v-if="plan.unassigned.length === 0 && !canEdit" class="text-sm text-base-content/60">{{ t('plan.unassignedEmpty') }}</p>
           </section>
         </template>
       </div>
@@ -691,10 +796,19 @@ async function removeStay(stay: Stay): Promise<void> {
     </div>
 
     <PlanPlaceDialog ref="placeDialog" :focus="searchFocus" tracks @save="savePlace" />
+    <PlaceTimeDialog ref="timeDialog" @save="saveTime" />
+    <PlaceCostDialog
+      ref="costDialog"
+      :currency="currency"
+      :travelers="trip?.travelers ?? 1"
+      :members="members"
+      @save="saveCost"
+    />
     <PlanStayDialog ref="stayDialog" :focus="searchFocus" @save="saveStay" />
     <PlanTransferDialog ref="transferDialog" :focus="searchFocus" @save="saveTransfer" />
     <PlanLegDialog ref="legDialog" @save="saveLeg" @recalculate="recalculateLegFromForm" />
     <PlanTargetDialog v-if="plan" ref="targetDialog" :days="plan.days" @choose="chooseTarget" />
     <ConfirmDialog ref="confirmDialog" />
+    <BackToTop />
   </div>
 </template>

@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"image"
 	"image/jpeg"
+	"math"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/nir0k/tripvault/backend/internal/domain"
 	"github.com/nir0k/tripvault/backend/internal/staticmap"
 )
 
@@ -86,6 +88,58 @@ func TestDayLayerNumbersThePlaces(t *testing.T) {
 		if marker.label != "" {
 			t.Errorf("the trip's map numbers a place %q", marker.label)
 		}
+	}
+}
+
+// TestDayLayerDrawsTrackAsTrail checks a recorded track is drawn as a trail
+// apart from the journeys, with its start and finish marked, and that the
+// trip's map keeps them.
+func TestDayLayerDrawsTrackAsTrail(t *testing.T) {
+	report := placedReport(t)
+	recorded := []domain.Point{{Lat: 64.1520, Lng: -21.9510}, {Lat: 64.1600, Lng: -21.9300}, {Lat: 64.1650, Lng: -21.9100}}
+	report.Content.Tracks[0].Geometry = domain.EncodePolyline(recorded)
+
+	layer := dayLayer(report.Content, report.Content.Days[0], 0, true)
+	var tracks []mapLine
+	for _, line := range layer.lines {
+		if line.track {
+			tracks = append(tracks, line)
+		}
+	}
+	if len(tracks) != 1 || tracks[0].dashed || len(tracks[0].points) != len(recorded) {
+		t.Fatalf("the tracks are %+v, want the one recording, not dashed", tracks)
+	}
+	if len(linePasses(tracks[0])) != 3 {
+		t.Errorf("a track is drawn in %d strokes, want casing, colour and core", len(linePasses(tracks[0])))
+	}
+	if len(layer.ends) != 2 || layer.ends[0].finish || !layer.ends[1].finish ||
+		layer.ends[1].point != tracks[0].points[len(tracks[0].points)-1] {
+		t.Errorf("the track ends are %+v, want its start and then its finish", layer.ends)
+	}
+	if ends := tripLayer(report.Content).ends; len(ends) != 2 {
+		t.Errorf("the trip's map marks %d track ends, want 2", len(ends))
+	}
+}
+
+// TestArrowsAlongPointToTheFinish checks the arrows along a track are spaced a
+// step apart from half a step in, point the way the path goes, and that a path
+// too short for one gets none.
+func TestArrowsAlongPointToTheFinish(t *testing.T) {
+	// Right along the top for 60 mm, then down for 20.
+	path := []paperPoint{{0, 0}, {60, 0}, {60, 20}}
+	arrows := arrowsAlong(path, 25)
+	if len(arrows) != 3 {
+		t.Fatalf("got %d arrows, want 3: %+v", len(arrows), arrows)
+	}
+	want := []trackArrow{{x: 12.5, y: 0, angle: 0}, {x: 37.5, y: 0, angle: 0}, {x: 60, y: 2.5, angle: math.Pi / 2}}
+	for index, arrow := range arrows {
+		if math.Abs(arrow.x-want[index].x) > 1e-9 || math.Abs(arrow.y-want[index].y) > 1e-9 ||
+			math.Abs(arrow.angle-want[index].angle) > 1e-9 {
+			t.Errorf("arrow %d is %+v, want %+v", index, arrow, want[index])
+		}
+	}
+	if short := arrowsAlong([]paperPoint{{0, 0}, {10, 0}}, 25); len(short) != 0 {
+		t.Errorf("a 10 mm path got %d arrows, want none", len(short))
 	}
 }
 

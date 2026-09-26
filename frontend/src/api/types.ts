@@ -335,9 +335,18 @@ export const PLACE_CATEGORIES: readonly PlaceCategory[] = [
   'sight', 'nature', 'museum', 'food', 'shopping', 'activity', 'transport', 'other',
 ]
 
-export type CostCategory = 'accommodation' | 'transport' | 'food' | 'activities' | 'shopping' | 'other'
+/**
+ * CostCategory is a budget category. The keys are stored and never renamed:
+ * accommodation reads as lodging and food as restaurants and bars.
+ */
+export type CostCategory =
+  | 'accommodation' | 'transport' | 'car_rental' | 'fuel' | 'tolls' | 'food' | 'groceries'
+  | 'sightseeing' | 'activities' | 'shopping' | 'other'
 
-export const COST_CATEGORIES: readonly CostCategory[] = ['accommodation', 'transport', 'food', 'activities', 'shopping', 'other']
+export const COST_CATEGORIES: readonly CostCategory[] = [
+  'accommodation', 'transport', 'car_rental', 'fuel', 'tolls', 'food', 'groceries',
+  'sightseeing', 'activities', 'shopping', 'other',
+]
 
 export type StayKind = 'hotel' | 'apartment' | 'hostel' | 'camping' | 'friends' | 'other'
 
@@ -439,6 +448,13 @@ export interface PlanItem {
   planned_cost_amount: string | null
   cost_per_person: boolean
   cost_category: CostCategory
+  /** What the cost is for, in a few words. */
+  cost_note: string
+  /** The member who pays the cost; null when nobody was named. */
+  paid_by: string | null
+  cost_split: CostSplit
+  /** The members the cost is shared among, in the order they were listed. */
+  cost_shares: CostShare[]
   schedule: Schedule | null
   /** The fields below belong to a report; in a plan they are empty. */
   status: ItemStatus
@@ -613,7 +629,12 @@ export interface Expense {
   planned_amount: string | null
   actual_amount: string | null
   spent_on: string | null
+  /** What the money went on, in a few words. */
   note: string
+  /** Anything longer said about the expense, as plain text. */
+  comment: string
+  /** A link to a booking, a receipt or a shop; empty when there is none. */
+  url: string
 }
 
 export interface Night {
@@ -802,6 +823,42 @@ export interface Budget {
   categories: BudgetCategoryRow[]
   days: BudgetDayRow[]
   entries: BudgetEntry[]
+  /** Where each member stands across the split costs; empty while nothing is split. */
+  balances: MemberBalance[]
+  /** The payments that square the balances, largest first. */
+  settlements: Settlement[]
+}
+
+/**
+ * CostSplit is how a cost is shared among the members of a trip: not at all,
+ * equally among the members listed, or in amounts of each member's own.
+ */
+export type CostSplit = 'none' | 'everyone' | 'individuals'
+
+/** CostShare is one member's part of a split cost; amount is null for an equal split. */
+export interface CostShare {
+  user_id: string
+  amount: string | null
+}
+
+/** MemberBalance is where one member stands across the split costs of a trip. */
+export interface MemberBalance {
+  user_id: string
+  /** Empty for an account that is gone. */
+  name: string
+  paid: string
+  share: string
+  /** What the others owe the member; negative when the member owes them. */
+  net: string
+}
+
+/** Settlement is one payment that squares the members' accounts. */
+export interface Settlement {
+  from_user_id: string
+  from_name: string
+  to_user_id: string
+  to_name: string
+  amount: string
 }
 
 /** RemovedDay is a day with content a change would remove. */

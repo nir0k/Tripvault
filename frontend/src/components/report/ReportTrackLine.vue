@@ -80,7 +80,7 @@ async function download(track: Track): Promise<void> {
     <AppIcon name="map" class="size-4! opacity-70" />
     <template v-if="track">
       <span class="flex items-center gap-1" :title="t('track.distance')">
-        <AppIcon name="ruler" class="size-4! opacity-70" />
+        <AppIcon name="distance" class="size-4! opacity-70" />
         <span class="sr-only">{{ t('track.distance') }}</span>
         {{ formatDistance(track.distance_m, locale, activeUnits) }}
       </span>

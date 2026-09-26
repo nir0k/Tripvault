@@ -119,6 +119,10 @@ type Budget struct {
 	Days []BudgetDay
 	// Entries are the individual costs, day by day and unassigned places last.
 	Entries []BudgetEntry
+	// Balances say where each member stands across the split costs, and
+	// Settlements the payments that square them; both empty while nothing is split.
+	Balances    []MemberBalance
+	Settlements []Settlement
 }
 
 // ItemLabel - names an element of a day. A stay mark carries no name of its
@@ -236,6 +240,8 @@ func BuildBudget(trip Trip, content DocumentContent) Budget {
 			addEntry(&budget, categories, nil, entry)
 		}
 	}
+
+	budget.Balances, budget.Settlements = BuildBalances(content.Items, travelers, report)
 
 	spent := budget.Planned
 	if report {

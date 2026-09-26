@@ -62,7 +62,9 @@ defineExpose({ open, close })
     <div class="modal-box flex max-h-[85dvh] w-[min(96vw,56rem)] max-w-none flex-col gap-3">
       <h2 class="text-lg font-bold">{{ t('media.pickTitle') }}</h2>
 
-      <MediaUploader :trip-id="props.tripId" @uploaded="onUploaded" />
+      <div>
+        <MediaUploader :trip-id="props.tripId" small @uploaded="onUploaded" />
+      </div>
 
       <p v-if="error" role="alert" class="text-sm text-error">{{ error }}</p>
       <div v-else-if="loading" class="flex justify-center py-6"><span class="loading loading-spinner"></span></div>

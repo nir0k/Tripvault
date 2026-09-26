@@ -160,9 +160,9 @@ func icelandTrip() demoTrip {
 		},
 
 		Expenses: []demoExpense{
-			{Note: "Car hire, four days", Category: domain.CostTransport, Amount: "290", ActualCost: "290"},
-			{Note: "Fuel", Category: domain.CostTransport, Amount: "160", ActualCost: "178"},
-			{Note: "Groceries in Hvolsvöllur", Category: domain.CostFood, Amount: "60", Day: 1, ActualCost: "71"},
+			{Note: "Car hire, four days", Category: domain.CostCarRental, Amount: "290", ActualCost: "290"},
+			{Note: "Fuel", Category: domain.CostFuel, Amount: "160", ActualCost: "178"},
+			{Note: "Groceries in Hvolsvöllur", Category: domain.CostGroceries, Amount: "60", Day: 1, ActualCost: "71"},
 			{Note: "Wool jumper, regretted nothing", Category: domain.CostShopping, Amount: "90", Day: 3,
 				ActualCost: "120"},
 		},
@@ -311,6 +311,9 @@ func lisbonTrip() demoTrip {
 				Description:  "Loud and touristy, and still the easiest first dinner. **Go before seven.**",
 				DesiredTime:  "18:30",
 				VisitMinutes: 75, Cost: "25", PerPerson: true, CostCategory: domain.CostFood,
+				CostNote: "Dinner for three",
+				Split: &demoSplit{PaidBy: demoEditor, Shares: []demoShare{
+					{Person: demoOwner}, {Person: demoEditor}, {Person: demoViewer}}},
 			}},
 		}, {
 			Title: "Belém",
@@ -328,6 +331,9 @@ func lisbonTrip() demoTrip {
 				Lat: 38.6975, Lng: -9.2033, Address: "R. de Belém 84, Lisbon",
 				Description:  "Eat them standing at the counter, not sitting in the garden.",
 				VisitMinutes: 30, Cost: "8", CostCategory: domain.CostFood,
+				CostNote: "A box of six and coffee",
+				Split: &demoSplit{PaidBy: demoViewer, Shares: []demoShare{
+					{Person: demoOwner, Amount: "2"}, {Person: demoEditor, Amount: "4"}, {Person: demoViewer, Amount: "2"}}},
 			}, {
 				Name: "Padrão dos Descobrimentos", Category: domain.CategorySight,
 				Lat: 38.6936, Lng: -9.2058, Address: "Av. Brasília, Lisbon",

@@ -25,7 +25,7 @@ const categories = computed(() => costCategoryOptions(t))
 const dialog = useTemplateRef<HTMLDialogElement>('dialog')
 const editing = ref<Expense | null>(null)
 const error = ref('')
-const form = reactive({ dayId: '', category: 'other' as CostCategory, amount: '', note: '' })
+const form = reactive({ dayId: '', category: 'other' as CostCategory, amount: '', note: '', comment: '', url: '' })
 
 /** dayLabel names a day by its number and, when the trip has dates, its date. */
 function dayLabel(day: BudgetDayRow): string {
@@ -43,6 +43,8 @@ function open(expense: Expense | null, dayId: string | null = null): void {
     category: expense?.category ?? 'other',
     amount: expense?.planned_amount ?? '',
     note: expense?.note ?? '',
+    comment: expense?.comment ?? '',
+    url: expense?.url ?? '',
   })
   dialog.value?.showModal()
 }
@@ -64,6 +66,8 @@ function submit(): void {
     category: form.category,
     planned_amount: normalizeAmount(form.amount),
     note: form.note,
+    comment: form.comment,
+    url: form.url.trim(),
   }, editing.value)
 }
 
@@ -101,6 +105,28 @@ defineExpose({ open, close, fail })
           <IconSelect v-model="form.category" :options="categories" :label="t('place.costCategory')" block />
         </label>
       </div>
+
+      <label class="floating-label">
+        <span>{{ t('budget.expenseComment') }}</span>
+        <textarea
+          v-model="form.comment"
+          rows="3"
+          maxlength="2000"
+          class="textarea w-full"
+          :placeholder="t('budget.expenseComment')"
+        ></textarea>
+      </label>
+
+      <label class="floating-label">
+        <span>{{ t('budget.expenseUrl') }}</span>
+        <input
+          v-model="form.url"
+          type="url"
+          maxlength="2000"
+          class="input w-full"
+          :placeholder="t('budget.expenseUrl')"
+        />
+      </label>
 
       <label class="select w-full">
         <span class="label">{{ t('budget.expenseDay') }}</span>

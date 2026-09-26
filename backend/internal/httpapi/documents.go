@@ -21,6 +21,22 @@ type scheduleResponse struct {
 	Late             bool `json:"late"`
 }
 
+// costShareResponse is one member's part of a split cost; amount is null when
+// the cost is split equally.
+type costShareResponse struct {
+	UserID string  `json:"user_id"`
+	Amount *string `json:"amount"`
+}
+
+// newCostShares maps a split's members onto the wire, never as null.
+func newCostShares(shares []domain.CostShare) []costShareResponse {
+	response := make([]costShareResponse, 0, len(shares))
+	for _, share := range shares {
+		response = append(response, costShareResponse{UserID: share.UserID.String(), Amount: formatMoney(share.Amount)})
+	}
+	return response
+}
+
 // itemResponse is a place, an activity or a stay mark.
 type itemResponse struct {
 	ID                string            `json:"id"`
@@ -46,6 +62,12 @@ type itemResponse struct {
 	CostPerPerson     bool              `json:"cost_per_person"`
 	CostCategory      string            `json:"cost_category"`
 	Schedule          *scheduleResponse `json:"schedule"`
+	// CostNote, PaidBy, CostSplit and CostShares say what the cost is for,
+	// which member pays it and how the members share it.
+	CostNote   string              `json:"cost_note"`
+	PaidBy     *string             `json:"paid_by"`
+	CostSplit  string              `json:"cost_split"`
+	CostShares []costShareResponse `json:"cost_shares"`
 	// The fields below are a report's; in a plan they are empty.
 	Status           string  `json:"status"`
 	StoryMD          string  `json:"story_md"`
@@ -253,6 +275,8 @@ type expenseResponse struct {
 	ActualAmount  *string `json:"actual_amount"`
 	SpentOn       *string `json:"spent_on"`
 	Note          string  `json:"note"`
+	Comment       string  `json:"comment"`
+	URL           string  `json:"url"`
 }
 
 // newExpenseResponse maps an expense onto the wire.
@@ -265,6 +289,8 @@ func newExpenseResponse(expense domain.Expense) expenseResponse {
 		ActualAmount:  formatMoney(expense.Actual),
 		SpentOn:       formatDate(expense.SpentOn),
 		Note:          expense.Note,
+		Comment:       expense.Comment,
+		URL:           expense.URL,
 	}
 }
 
@@ -386,6 +412,10 @@ func newItemResponse(item domain.Item, stays map[uuid.UUID]domain.Stay, schedule
 		PlannedCostAmount: formatMoney(item.PlannedCost),
 		CostPerPerson:     item.CostPerPerson,
 		CostCategory:      string(item.CostCategory),
+		CostNote:          item.CostNote,
+		PaidBy:            formatID(item.PaidBy),
+		CostSplit:         string(item.CostSplit),
+		CostShares:        newCostShares(item.CostShares),
 		Status:            string(item.Status),
 		StoryMD:           item.StoryMD,
 		ActualTime:        formatClock(item.ActualTime),
@@ -841,6 +871,13 @@ type placeFields struct {
 	PlannedCostAmount optional[string]  `json:"planned_cost_amount"`
 	CostPerPerson     optional[bool]    `json:"cost_per_person"`
 	CostCategory      optional[string]  `json:"cost_category"`
+	CostNote          optional[string]  `json:"cost_note"`
+	// PaidBy names the member who pays; null names nobody.
+	PaidBy optional[string] `json:"paid_by"`
+	// CostSplit and CostShares say how the cost is shared; the shares replace
+	// the ones the place had.
+	CostSplit  optional[string]           `json:"cost_split"`
+	CostShares optional[[]costShareInput] `json:"cost_shares"`
 	// Difficulty is an activity's, 1 to 5; null takes it away.
 	Difficulty optional[int] `json:"difficulty"`
 	// The fields below are refused on a plan.
@@ -852,6 +889,58 @@ type placeFields struct {
 	ActualCostAmount optional[string] `json:"actual_cost_amount"`
 	// CoverMediaID is the picture the place is shown by; null takes it away.
 	CoverMediaID optional[string] `json:"cover_media_id"`
+}
+
+// costShareInput is one member's part of a split cost as a request gives it.
+type costShareInput struct {
+	UserID string  `json:"user_id"`
+	Amount *string `json:"amount"`
+}
+
+// touchesSplit says whether a change reaches what a split is checked against:
+// the split itself, its payer, or the cost it shares.
+func (f placeFields) touchesSplit() bool {
+	return f.CostSplit.Set || f.CostShares.Set || f.PaidBy.Set || f.PlannedCostAmount.Set ||
+		f.ActualCostAmount.Set || f.CostPerPerson.Set
+}
+
+// applySplit applies a change of payer and of the members a cost is shared
+// among. That they are members of the trip is checked by the handler, which
+// knows the trip.
+func (f placeFields) applySplit(place *domain.Item) error {
+	if f.PaidBy.Set {
+		place.PaidBy = nil
+		if !f.PaidBy.Null && f.PaidBy.Value != "" {
+			id, err := uuid.Parse(f.PaidBy.Value)
+			if err != nil {
+				return domain.NewValidationError("paid_by", "invalid_id", "must be the identifier of a member")
+			}
+			place.PaidBy = &id
+		}
+	}
+	if f.CostSplit.Set {
+		place.CostSplit = domain.CostSplit(f.CostSplit.Value)
+	}
+	if !f.CostShares.Set {
+		return nil
+	}
+	place.CostShares = make([]domain.CostShare, 0, len(f.CostShares.Value))
+	for _, input := range f.CostShares.Value {
+		id, err := uuid.Parse(input.UserID)
+		if err != nil {
+			return domain.NewValidationError("cost_shares", "invalid_id", "must name members by their identifiers")
+		}
+		share := domain.CostShare{UserID: id}
+		if input.Amount != nil {
+			amount, err := domain.ParseMoney("cost_shares", *input.Amount)
+			if err != nil {
+				return err
+			}
+			share.Amount = &amount
+		}
+		place.CostShares = append(place.CostShares, share)
+	}
+	return nil
 }
 
 // applyCover applies a change of cover: an identifier picks a picture, null
@@ -920,9 +1009,9 @@ func applyNullableMoney(field string, change optional[string], target **domain.M
 }
 
 // apply writes the given fields onto a place or an activity and validates the
-// result. A new place without a visit time takes its category's default, a new
-// activity its type's.
-func (f placeFields) apply(place domain.Item, creating bool, kind domain.DocumentKind) (domain.Item, error) {
+// result. A new place without a visit time spends none: how long a visit takes
+// is the planner's to say, not a guess of the service.
+func (f placeFields) apply(place domain.Item, kind domain.DocumentKind) (domain.Item, error) {
 	if err := applyCover(f.CoverMediaID, &place.CoverMediaID); err != nil {
 		return place, err
 	}
@@ -955,13 +1044,8 @@ func (f placeFields) apply(place domain.Item, creating bool, kind domain.Documen
 	if err := applyNullableClock("desired_time", f.DesiredTime, &place.DesiredTime); err != nil {
 		return place, err
 	}
-	switch {
-	case f.VisitMinutes.Set:
+	if f.VisitMinutes.Set {
 		place.VisitMinutes = f.VisitMinutes.Value
-	case creating && place.Kind == domain.ItemActivity:
-		place.VisitMinutes = place.ActivityType.DefaultVisitMinutes()
-	case creating:
-		place.VisitMinutes = domain.PlaceCategory(f.Category.Value).DefaultVisitMinutes()
 	}
 	if f.IsOptional.Set {
 		place.IsOptional = f.IsOptional.Value
@@ -977,6 +1061,12 @@ func (f placeFields) apply(place domain.Item, creating bool, kind domain.Documen
 	}
 	if f.CostCategory.Set {
 		place.CostCategory = domain.CostCategory(f.CostCategory.Value)
+	}
+	if f.CostNote.Set {
+		place.CostNote = f.CostNote.Value
+	}
+	if err := f.applySplit(&place); err != nil {
+		return place, err
 	}
 	if f.Status.Set {
 		place.Status = domain.ItemStatus(f.Status.Value)
@@ -1012,10 +1102,16 @@ func (s *Server) createPlace(w http.ResponseWriter, r *http.Request, document do
 		return
 	}
 	place, err := body.apply(domain.Item{ID: uuid.Must(uuid.NewV7()), DocumentID: document.ID, DayID: dayID},
-		true, document.Kind)
+		document.Kind)
 	if err != nil {
 		s.writeDomainError(w, r, "validate place", err)
 		return
+	}
+	if body.touchesSplit() {
+		if err := s.checkCostSplit(r, document, place, domain.Item{}); err != nil {
+			s.writeDomainError(w, r, "check cost split", err)
+			return
+		}
 	}
 	if err := s.documents.CreatePlace(r.Context(), place, body.Position); err != nil {
 		s.writeDomainError(w, r, "create place", err)
@@ -1044,6 +1140,32 @@ func (s *Server) handleCreateDayPlace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.createPlace(w, r, document, &day.ID)
+}
+
+// checkCostSplit checks a place's split against its trip: the payer and the
+// members sharing the cost must belong to it, and amounts of their own must
+// add up to the cost. Anybody the stored place already named may stay, so a
+// member who left does not make the place impossible to save.
+func (s *Server) checkCostSplit(r *http.Request, document domain.Document, place, stored domain.Item) error {
+	trip, err := s.trips.Get(r.Context(), document.TripID, principalFrom(r.Context()).user.ID)
+	if err != nil {
+		return err
+	}
+	members, err := s.trips.Members(r.Context(), document.TripID)
+	if err != nil {
+		return err
+	}
+	allowed := make(map[uuid.UUID]bool, len(members)+len(stored.CostShares)+1)
+	for _, member := range members {
+		allowed[member.User.ID] = true
+	}
+	if stored.PaidBy != nil {
+		allowed[*stored.PaidBy] = true
+	}
+	for _, share := range stored.CostShares {
+		allowed[share.UserID] = true
+	}
+	return place.CheckCostSplit(allowed, trip.Travelers, document.Kind == domain.DocumentReport)
 }
 
 // placeFor loads the place named in the path and checks its trip may be edited.
@@ -1080,7 +1202,7 @@ func (s *Server) handleUpdatePlace(w http.ResponseWriter, r *http.Request) {
 	if !s.decodeJSON(w, r, &body) {
 		return
 	}
-	updated, err := body.apply(place, false, document.Kind)
+	updated, err := body.apply(place, document.Kind)
 	if err != nil {
 		s.writeDomainError(w, r, "validate place", err)
 		return
@@ -1088,6 +1210,12 @@ func (s *Server) handleUpdatePlace(w http.ResponseWriter, r *http.Request) {
 	if err := s.checkCover(r.Context(), document.TripID, updated.CoverMediaID); err != nil {
 		s.writeDomainError(w, r, "check place cover", err)
 		return
+	}
+	if body.touchesSplit() {
+		if err := s.checkCostSplit(r, document, updated, place); err != nil {
+			s.writeDomainError(w, r, "check cost split", err)
+			return
+		}
 	}
 	if err := s.documents.UpdatePlace(r.Context(), updated); err != nil {
 		s.writeDomainError(w, r, "update place", err)

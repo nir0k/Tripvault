@@ -5,15 +5,17 @@ import type { Media } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import { useUploadsStore, type UploadHandle } from '@/stores/uploads'
 
-// Adding photographs to a day or a place: pick them, or drop them on the panel.
-// The files are handed to the application's upload queue, whose window in the
-// corner (UploadPanel) follows them on their way up, so this panel stays free
-// for the next ones and the page keeps its shape.
+// Adding photographs: a button that opens a window where they are dropped or
+// chosen, with the two choices about how they go up. A page therefore carries
+// one button rather than a panel, however many days and places it lists. The
+// files are handed to the application's upload queue, whose window in the
+// corner (UploadPanel) follows them on their way up, so this window closes as
+// soon as it has them.
 const props = withDefaults(defineProps<{
   tripId: string
-  /** Start as a button and open on a click, for a place among many others. */
-  compact?: boolean
-}>(), { compact: false })
+  /** A small button, for a day or a place among many others. */
+  small?: boolean
+}>(), { small: false })
 
 const emit = defineEmits<{
   uploaded: [media: Media[]]
@@ -23,9 +25,7 @@ const { t } = useI18n()
 const uploads = useUploadsStore()
 
 const field = useTemplateRef<HTMLInputElement>('field')
-// A compact uploader is a button until it is asked for: a report with a dozen
-// places would otherwise be a column of identical panels.
-const open = ref(!props.compact)
+const dialog = useTemplateRef<HTMLDialogElement>('dialog')
 const dragging = ref(false)
 const isPrivate = ref(false)
 const shrink = ref(readShrinkPreference())
@@ -69,8 +69,14 @@ function send(files: File[]): void {
   }
   handles.push(uploads.enqueue(props.tripId, files, { private: isPrivate.value, shrink: shrink.value },
     (media) => emit('uploaded', media)))
-  // A compact panel folds away at once: the window in the corner takes over.
-  open.value = !props.compact
+  // The window in the corner takes over from here.
+  dialog.value?.close()
+}
+
+// open shows the window, with nothing dragged over it yet.
+function open(): void {
+  dragging.value = false
+  dialog.value?.showModal()
 }
 
 // onPick takes the files from the field and empties it, so the same file can be
@@ -81,7 +87,7 @@ function onPick(event: Event): void {
   input.value = ''
 }
 
-// onDrop takes the files dropped on the panel.
+// onDrop takes the files dropped anywhere on the window.
 function onDrop(event: DragEvent): void {
   dragging.value = false
   send(Array.from(event.dataTransfer?.files ?? []))
@@ -95,38 +101,43 @@ function onShrink(event: Event): void {
 </script>
 
 <template>
-  <div class="space-y-2">
-    <button
-      v-if="compact && !open"
-      type="button"
-      class="btn btn-hover-outline btn-sm"
-      @click="open = true"
-    >
-      <AppIcon name="upload" />
-      {{ t('media.add') }}
-    </button>
+  <button
+    type="button"
+    class="btn btn-hover-outline"
+    :class="{ 'btn-sm': small }"
+    @click="open"
+  >
+    <AppIcon name="upload" />
+    {{ t('media.add') }}
+  </button>
 
+  <dialog ref="dialog" class="modal modal-bottom sm:modal-middle">
     <div
-      v-if="open"
-      class="flex flex-col items-center gap-2 rounded-box border border-dashed px-4 py-6 text-center"
-      :class="dragging ? 'border-primary bg-primary/5' : 'border-base-300'"
+      class="modal-box flex flex-col gap-4"
       @dragover.prevent="dragging = true"
-      @dragleave="dragging = false"
+      @dragleave.self="dragging = false"
       @drop.prevent="onDrop"
     >
-      <span class="text-primary"><AppIcon name="upload" /></span>
-      <p class="text-sm text-base-content/70">{{ t('media.dropHint') }}</p>
-      <input
-        ref="field"
-        type="file"
-        accept="image/jpeg,image/png,image/webp"
-        multiple
-        class="hidden"
-        @change="onPick"
-      />
-      <button type="button" class="btn btn-sm btn-hover-outline" @click="field?.click()">
-        {{ t('media.choose') }}
-      </button>
+      <h2 class="text-lg font-bold">{{ t('media.add') }}</h2>
+
+      <div
+        class="flex flex-col items-center gap-3 rounded-box border-2 border-dashed px-4 py-10 text-center transition-colors"
+        :class="dragging ? 'border-primary bg-primary/5' : 'border-base-300'"
+      >
+        <span class="text-primary"><AppIcon name="upload" /></span>
+        <p class="text-sm text-base-content/70">{{ t('media.dropHint') }}</p>
+        <input
+          ref="field"
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          multiple
+          class="hidden"
+          @change="onPick"
+        />
+        <button type="button" class="btn btn-primary btn-sm" @click="field?.click()">
+          {{ t('media.choose') }}
+        </button>
+      </div>
 
       <div class="flex flex-wrap items-center justify-center gap-4">
         <label class="label cursor-pointer gap-2 text-sm">
@@ -138,6 +149,13 @@ function onShrink(event: Event): void {
           <span>{{ t('media.uploadPrivate') }}</span>
         </label>
       </div>
+
+      <div class="modal-action mt-0">
+        <button type="button" class="btn btn-ghost" @click="dialog?.close()">{{ t('common.cancel') }}</button>
+      </div>
     </div>
-  </div>
+    <form method="dialog" class="modal-backdrop">
+      <button type="submit">{{ t('common.close') }}</button>
+    </form>
+  </dialog>
 </template>

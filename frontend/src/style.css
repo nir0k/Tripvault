@@ -132,6 +132,55 @@
 .map-distance::before {
   display: none;
 }
+/* The ends of a recorded track: a ring in the day's colour where it starts, a
+   dark disc with a flag where it finishes. */
+.map-track-start,
+.map-track-finish {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+}
+.map-track-start {
+  border: 3px solid var(--pin);
+  background: #ffffff;
+  box-shadow: 0 0 0 1.5px #1f2937;
+}
+.map-track-finish {
+  border: 2px solid var(--pin);
+  background: #1f2937;
+  color: #ffffff;
+}
+.map-track-finish svg {
+  height: 11px;
+  width: 11px;
+}
+/* An arrow along a track, pointing the way it was travelled. */
+.map-track-arrow {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  filter: drop-shadow(0 0 1px #1f2937);
+}
+.map-track-arrow svg {
+  height: 12px;
+  width: 12px;
+}
+/* A track's distance leads with a hiker, so it is not read as a leg's. */
+.map-track-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.map-track-label svg {
+  height: 11px;
+  width: 11px;
+}
 /* A marker's popup: a fixed width, so the picture that arrives after it opens
    fills a box already there instead of moving the popup about. Leaflet draws
    the popup white in either theme, so the colours are fixed too. */
@@ -184,6 +233,15 @@
 .markdown code {
   font-family: ui-monospace, monospace;
   font-size: 0.9em;
+}
+
+/* The grey line an empty rich text editor shows until something is written. */
+.rich-text p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
 }
 
 /*

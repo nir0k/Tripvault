@@ -4,23 +4,28 @@ import { useI18n } from 'vue-i18n'
 import type { Leg, TravelMode } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import IconSelect from '@/components/IconSelect.vue'
+import PlanInsertButton from '@/components/plan/PlanInsertButton.vue'
 import { TRAVEL_MODE_ICONS } from '@/components/icons'
 import { formatDistance, formatMoney } from '@/utils/format'
 import { activeUnits } from '@/utils/units'
 import { formatDuration, travelModeOptions } from '@/utils/plan'
 
 // The journey to the element below it: mode, distance, time and how they were
-// obtained.
+// obtained. The gap before it is where a new element goes between the two it
+// joins, so it carries the "+" that puts one there.
 const props = defineProps<{
   leg: Leg
   currency: string
   canEdit: boolean
+  /** Offer to put a new place or activity where the leg is. */
+  insertable?: boolean
 }>()
 
 const emit = defineEmits<{
   mode: [mode: TravelMode]
   edit: []
   retry: []
+  insert: [kind: 'place' | 'activity']
 }>()
 
 const { t, locale } = useI18n()
@@ -45,7 +50,12 @@ const noRoute = computed(() => props.leg.source === 'estimate' && props.leg.erro
 </script>
 
 <template>
-  <div class="flex flex-wrap items-center gap-x-2 gap-y-1 py-1 pl-4 text-sm text-base-content/70 sm:pl-16" :data-leg-id="leg.id">
+  <div
+    class="group relative flex flex-wrap items-center gap-x-2 gap-y-1 py-1 text-sm text-base-content/70 sm:pl-16"
+    :class="insertable ? 'pl-10' : 'pl-4'"
+    :data-leg-id="leg.id"
+  >
+    <PlanInsertButton v-if="insertable" class="absolute top-1 left-2 sm:left-8" @pick="(kind) => emit('insert', kind)" />
     <span class="h-4 border-l-2 border-dashed border-base-300" :class="{ 'border-solid': leg.source === 'provider' }" aria-hidden="true"></span>
     <IconSelect
       v-if="canEdit"

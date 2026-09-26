@@ -58,7 +58,8 @@ onMounted(() => {
 
 <template>
   <section class="space-y-10">
-    <h1 class="text-2xl font-bold">{{ t('home.title') }}</h1>
+    <!-- The page names itself in the navigation; the heading stays for screen readers. -->
+    <h1 class="sr-only">{{ t('home.title') }}</h1>
 
     <section v-for="row in rows" :key="row.kind" class="space-y-4" :aria-labelledby="`home-${row.kind}`">
       <div class="flex flex-wrap items-end justify-between gap-3">

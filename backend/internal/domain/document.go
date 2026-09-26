@@ -72,33 +72,17 @@ const (
 	CategoryOther     PlaceCategory = "other"
 )
 
-// placeCategoryDefaults holds, per category, the minutes usually spent at such
-// a place and the budget category its cost goes to. Adding a category means
-// adding a row here and to the database check.
-var placeCategoryDefaults = map[PlaceCategory]struct {
-	minutes int
-	cost    CostCategory
-}{
-	CategorySight:     {60, CostActivities},
-	CategoryNature:    {90, CostActivities},
-	CategoryMuseum:    {120, CostActivities},
-	CategoryFood:      {60, CostFood},
-	CategoryShopping:  {45, CostShopping},
-	CategoryActivity:  {120, CostActivities},
-	CategoryTransport: {15, CostTransport},
-	CategoryOther:     {30, CostOther},
-}
-
-// DefaultVisitMinutes - reports how long a visit to a place of a category
-// usually lasts.
-//
-// Returns:
-//   - the minutes, or the "other" default for an unknown category.
-func (c PlaceCategory) DefaultVisitMinutes() int {
-	if defaults, ok := placeCategoryDefaults[c]; ok {
-		return defaults.minutes
-	}
-	return placeCategoryDefaults[CategoryOther].minutes
+// placeCategoryDefaults holds, per category, the budget category its cost goes
+// to. Adding a category means adding a row here and to the database check.
+var placeCategoryDefaults = map[PlaceCategory]CostCategory{
+	CategorySight:     CostSightseeing,
+	CategoryNature:    CostActivities,
+	CategoryMuseum:    CostSightseeing,
+	CategoryFood:      CostFood,
+	CategoryShopping:  CostShopping,
+	CategoryActivity:  CostActivities,
+	CategoryTransport: CostTransport,
+	CategoryOther:     CostOther,
 }
 
 // DefaultCostCategory - reports the budget category a place's cost goes to
@@ -107,8 +91,8 @@ func (c PlaceCategory) DefaultVisitMinutes() int {
 // Returns:
 //   - the expense category.
 func (c PlaceCategory) DefaultCostCategory() CostCategory {
-	if defaults, ok := placeCategoryDefaults[c]; ok {
-		return defaults.cost
+	if cost, ok := placeCategoryDefaults[c]; ok {
+		return cost
 	}
 	return CostOther
 }
@@ -116,14 +100,23 @@ func (c PlaceCategory) DefaultCostCategory() CostCategory {
 // CostCategory is a budget category.
 type CostCategory string
 
-// Budget categories.
+// Budget categories. The keys are stored and never renamed: accommodation is
+// shown as lodging and food as restaurants and bars, while groceries bought to
+// cook are a category of their own.
 const (
 	CostAccommodation CostCategory = "accommodation"
 	CostTransport     CostCategory = "transport"
-	CostFood          CostCategory = "food"
-	CostActivities    CostCategory = "activities"
-	CostShopping      CostCategory = "shopping"
-	CostOther         CostCategory = "other"
+	CostCarRental     CostCategory = "car_rental"
+	CostFuel          CostCategory = "fuel"
+	// CostTolls covers vignettes, road and tunnel tolls and other payments for
+	// using a road.
+	CostTolls       CostCategory = "tolls"
+	CostFood        CostCategory = "food"
+	CostGroceries   CostCategory = "groceries"
+	CostSightseeing CostCategory = "sightseeing"
+	CostActivities  CostCategory = "activities"
+	CostShopping    CostCategory = "shopping"
+	CostOther       CostCategory = "other"
 )
 
 // StayKind classifies a place to sleep.
@@ -184,33 +177,15 @@ const (
 var ActivityTypes = []ActivityType{ActivityHike, ActivityWalk, ActivityBike, ActivityRun, ActivityCanyoning,
 	ActivityClimbing, ActivityViaFerrata, ActivityKayak, ActivitySwim, ActivitySki, ActivityTour, ActivityOther}
 
-// activityMinutes holds, per activity type, how long such an activity usually
-// takes. Adding a type means adding a row here and to the database check.
-var activityMinutes = map[ActivityType]int{
-	ActivityHike:       300,
-	ActivityWalk:       90,
-	ActivityBike:       180,
-	ActivityRun:        60,
-	ActivityCanyoning:  240,
-	ActivityClimbing:   180,
-	ActivityViaFerrata: 240,
-	ActivityKayak:      180,
-	ActivitySwim:       60,
-	ActivitySki:        300,
-	ActivityTour:       120,
-	ActivityOther:      120,
-}
-
-// DefaultVisitMinutes - reports how long an activity of a type usually lasts.
-//
-// Returns:
-//   - the minutes, or the "other" default for an unknown type.
-func (a ActivityType) DefaultVisitMinutes() int {
-	if minutes, ok := activityMinutes[a]; ok {
-		return minutes
+// knownActivityTypes are the activity types a place may name. Adding a type
+// means adding it to ActivityTypes and to the database check.
+var knownActivityTypes = func() map[ActivityType]bool {
+	known := make(map[ActivityType]bool, len(ActivityTypes))
+	for _, activity := range ActivityTypes {
+		known[activity] = true
 	}
-	return activityMinutes[ActivityOther]
-}
+	return known
+}()
 
 // ItemStatus is how a place of a report turned out. A plan keeps every place
 // at StatusPlanned and fills none of the other report fields. A report counts
@@ -492,6 +467,15 @@ type Item struct {
 	// CostPerPerson multiplies both costs by the trip's travellers.
 	CostPerPerson bool
 	CostCategory  CostCategory
+	// CostNote says in a few words what the cost is for.
+	CostNote string
+	// PaidBy is the member who pays the cost, or nil when nobody was named or
+	// their account is gone.
+	PaidBy *uuid.UUID
+	// CostSplit is how the cost is shared among the members; CostShares lists
+	// who shares it, in the order they were listed.
+	CostSplit  CostSplit
+	CostShares []CostShare
 	// The fields below belong to a report; in a plan they stay empty.
 	Status ItemStatus
 	// StoryMD is what happened here.
@@ -540,7 +524,7 @@ func (i Item) NormalizePlace(kind DocumentKind) (Item, error) {
 		if i.ActivityType == "" {
 			i.ActivityType = ActivityOther
 		}
-		if _, ok := activityMinutes[i.ActivityType]; !ok {
+		if !knownActivityTypes[i.ActivityType] {
 			return i, NewValidationError("activity_type", "unsupported", "is not a known activity type")
 		}
 		if i.Category == "" {
@@ -592,6 +576,12 @@ func (i Item) NormalizePlace(kind DocumentKind) (Item, error) {
 		return i, err
 	}
 	if err := checkLength("description_md", i.DescriptionMD, maxMarkdownLength); err != nil {
+		return i, err
+	}
+	if i.CostNote, err = trimmedText("cost_note", i.CostNote, maxShortText); err != nil {
+		return i, err
+	}
+	if i, err = i.normalizeSplit(); err != nil {
 		return i, err
 	}
 	if i.DesiredTime != nil && (*i.DesiredTime < 0 || *i.DesiredTime >= minutesPerDay) {

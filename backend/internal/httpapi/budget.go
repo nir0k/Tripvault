@@ -1,7 +1,11 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
 	"net/http"
+
+	"github.com/google/uuid"
 
 	"github.com/nir0k/tripvault/backend/internal/domain"
 )
@@ -52,6 +56,26 @@ type budgetEntryResponse struct {
 	ActualAmount *string `json:"actual_amount"`
 }
 
+// balanceResponse is where one member stands across the split costs.
+type balanceResponse struct {
+	UserID string `json:"user_id"`
+	// Name is the member's display name; empty for an account that is gone.
+	Name  string `json:"name"`
+	Paid  string `json:"paid"`
+	Share string `json:"share"`
+	// Net is what the others owe the member, negative when the member owes.
+	Net string `json:"net"`
+}
+
+// settlementResponse is one payment that squares the members' accounts.
+type settlementResponse struct {
+	FromUserID string `json:"from_user_id"`
+	FromName   string `json:"from_name"`
+	ToUserID   string `json:"to_user_id"`
+	ToName     string `json:"to_name"`
+	Amount     string `json:"amount"`
+}
+
 // budgetResponse is the money side of a trip's plan or report.
 type budgetResponse struct {
 	// Kind is the document the figures come from: plan or report.
@@ -85,10 +109,15 @@ type budgetResponse struct {
 	Categories  []budgetCategoryResponse `json:"categories"`
 	Days        []budgetDayResponse      `json:"days"`
 	Entries     []budgetEntryResponse    `json:"entries"`
+	// Balances and Settlements say who owes whom for the split costs; empty
+	// while nothing is split.
+	Balances    []balanceResponse    `json:"balances"`
+	Settlements []settlementResponse `json:"settlements"`
 }
 
-// newBudgetResponse maps a budget onto the wire.
-func newBudgetResponse(budget domain.Budget, documentID *string) budgetResponse {
+// newBudgetResponse maps a budget onto the wire, naming the members of its
+// balances by names.
+func newBudgetResponse(budget domain.Budget, documentID *string, names map[uuid.UUID]string) budgetResponse {
 	response := budgetResponse{
 		Kind:         string(budget.Kind),
 		DocumentID:   documentID,
@@ -107,6 +136,26 @@ func newBudgetResponse(budget domain.Budget, documentID *string) budgetResponse 
 		Categories:   make([]budgetCategoryResponse, 0, len(budget.Categories)),
 		Days:         make([]budgetDayResponse, 0, len(budget.Days)),
 		Entries:      make([]budgetEntryResponse, 0, len(budget.Entries)),
+		Balances:     make([]balanceResponse, 0, len(budget.Balances)),
+		Settlements:  make([]settlementResponse, 0, len(budget.Settlements)),
+	}
+	for _, balance := range budget.Balances {
+		response.Balances = append(response.Balances, balanceResponse{
+			UserID: balance.UserID.String(),
+			Name:   names[balance.UserID],
+			Paid:   balance.Paid.String(),
+			Share:  balance.Share.String(),
+			Net:    balance.Net().String(),
+		})
+	}
+	for _, settlement := range budget.Settlements {
+		response.Settlements = append(response.Settlements, settlementResponse{
+			FromUserID: settlement.From.String(),
+			FromName:   names[settlement.From],
+			ToUserID:   settlement.To.String(),
+			ToName:     names[settlement.To],
+			Amount:     settlement.Amount.String(),
+		})
 	}
 	for _, category := range budget.Categories {
 		response.Categories = append(response.Categories, budgetCategoryResponse{
@@ -158,5 +207,43 @@ func (s *Server) handleGetBudget(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, s.logger, http.StatusOK, newBudgetResponse(domain.BuildBudget(trip.Trip, content), formatID(documentID)))
+	budget := domain.BuildBudget(trip.Trip, content)
+	names, err := s.balanceNames(r.Context(), trip.ID, budget.Balances)
+	if err != nil {
+		s.writeDomainError(w, r, "name members", err)
+		return
+	}
+	writeJSON(w, s.logger, http.StatusOK, newBudgetResponse(budget, formatID(documentID), names))
+}
+
+// balanceNames names the members of a budget's balances: the trip's members
+// by their display names, and anybody who has left it by their account's, as
+// long as it is still there.
+func (s *Server) balanceNames(ctx context.Context, tripID uuid.UUID, balances []domain.MemberBalance) (map[uuid.UUID]string, error) {
+	names := make(map[uuid.UUID]string, len(balances))
+	if len(balances) == 0 {
+		return names, nil
+	}
+	members, err := s.trips.Members(ctx, tripID)
+	if err != nil {
+		return nil, err
+	}
+	for _, member := range members {
+		names[member.User.ID] = member.User.DisplayName
+	}
+	for _, balance := range balances {
+		if _, ok := names[balance.UserID]; ok {
+			continue
+		}
+		user, err := s.users.GetByID(ctx, balance.UserID)
+		switch {
+		case errors.Is(err, domain.ErrNotFound):
+			names[balance.UserID] = ""
+		case err != nil:
+			return nil, err
+		default:
+			names[balance.UserID] = user.DisplayName
+		}
+	}
+	return names, nil
 }

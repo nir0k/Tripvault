@@ -235,9 +235,6 @@ func TestPlaceNormalize(t *testing.T) {
 			t.Errorf("%s: got %q, want %q", name, got, tc.want)
 		}
 	}
-	if CategoryMuseum.DefaultVisitMinutes() != 120 {
-		t.Error("museum default visit")
-	}
 }
 
 // TestStayNormalize checks a stay needs a night and a known kind.
@@ -278,8 +275,8 @@ func TestNormalizeActivity(t *testing.T) {
 		t.Errorf("a place with an activity type: %+v %v", place, err)
 	}
 	for _, activity := range ActivityTypes {
-		if activity.DefaultVisitMinutes() <= 0 {
-			t.Errorf("%q has no default length", activity)
+		if _, err := (Item{Name: "x", Kind: ItemActivity, ActivityType: activity}).NormalizePlace(DocumentPlan); err != nil {
+			t.Errorf("%q is refused: %v", activity, err)
 		}
 	}
 	if !ItemActivity.IsVisit() || ItemStayAnchor.IsVisit() {

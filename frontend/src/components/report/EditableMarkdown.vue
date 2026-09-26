@@ -20,6 +20,8 @@ const props = defineProps<{
   rows?: number
   /** The original being translated; undefined while the original is written. */
   original?: string
+  /** The button that opens an empty field; "Add text" when not given. */
+  addLabel?: string
 }>()
 
 const emit = defineEmits<{
@@ -94,7 +96,7 @@ function cancel(): void {
       class="btn btn-ghost btn-sm text-base-content/60"
       @click="start"
     >
-      {{ original !== undefined ? t('report.addTranslation') : t('report.addText') }}
+      {{ original !== undefined ? t('report.addTranslation') : addLabel ?? t('report.addText') }}
     </button>
   </div>
 </template>

@@ -1,7 +1,7 @@
 import { ACTIVITY_TYPES, COST_CATEGORIES, PLACE_CATEGORIES, TRAVEL_MODES, type PlanItem, type RemovedDay } from '@/api/types'
 import type { IconOption } from '@/components/IconSelect.vue'
 import { ACTIVITY_ICONS, COST_CATEGORY_ICONS, PLACE_CATEGORY_ICONS, TRAVEL_MODE_ICONS, type OUTLINE } from '@/components/icons'
-import { formatDayDate, splitDuration } from '@/utils/format'
+import { formatClock, formatDayDate, splitDuration } from '@/utils/format'
 
 type Translate = (key: string, named?: Record<string, unknown>) => string
 
@@ -101,4 +101,62 @@ export function costCategoryOptions(t: Translate): IconOption[] {
   return COST_CATEGORIES.map((category) => ({
     value: category, label: t(`costCategories.${category}`), icon: COST_CATEGORY_ICONS[category],
   }))
+}
+
+/** minutesOfDay reads "HH:MM" as minutes since midnight; null when it is no time. */
+export function minutesOfDay(value: string | null | undefined): number | null {
+  const match = /^(\d{1,2}):(\d{2})/.exec(value ?? '')
+  return match ? Number(match[1]) * 60 + Number(match[2]) : null
+}
+
+/** timeOfDay writes minutes since midnight as "HH:MM", wrapping past midnight. */
+export function timeOfDay(minutes: number): string {
+  const inDay = ((minutes % 1440) + 1440) % 1440
+  return `${String(Math.floor(inDay / 60)).padStart(2, '0')}:${String(inDay % 60).padStart(2, '0')}`
+}
+
+/**
+ * minutesBetween is how long a visit from start to end lasts. An end no later
+ * than the start is read as the next day's, since a place is not left before it
+ * is reached.
+ *
+ * Arguments:
+ *   - start: the time the place is reached, "HH:MM".
+ *   - end: the time it is left, "HH:MM".
+ *
+ * Returns:
+ *   - the minutes in between, 1 to 1440; null when either is no time.
+ */
+export function minutesBetween(start: string, end: string): number | null {
+  const from = minutesOfDay(start)
+  const to = minutesOfDay(end)
+  if (from === null || to === null) {
+    return null
+  }
+  const span = to - from
+  return span > 0 ? span : span + 1440
+}
+
+/**
+ * planTimeLabel says when a place is planned in the fewest words: from and to
+ * when both the wished time and the visit's length are known, else whichever
+ * of them is.
+ *
+ * Arguments:
+ *   - desired: the wished arrival, "HH:MM", or null.
+ *   - visitMinutes: how long the visit lasts; 0 for none.
+ *   - t: the translation function, for the length.
+ *
+ * Returns:
+ *   - the label; empty when neither is set.
+ */
+export function planTimeLabel(desired: string | null, visitMinutes: number, t: Translate): string {
+  const start = minutesOfDay(desired)
+  if (start !== null && visitMinutes > 0) {
+    return `${formatClock(start).time} – ${formatClock(start + visitMinutes).time}`
+  }
+  if (start !== null) {
+    return formatClock(start).time
+  }
+  return visitMinutes > 0 ? formatDuration(visitMinutes, t) : ''
 }
