@@ -260,6 +260,6 @@ const spent = computed(() => formatMoney(props.day.summary.actual_cost, props.cu
       @attach-to-place="(item, media) => emit('attachMediaToPlace', item, media)"
       @dismiss="emit('dismissHints')"
     />
-    <MediaUploader v-if="structural && tripId" :trip-id="tripId" @uploaded="(media) => emit('uploaded', media)" />
+    <MediaUploader v-if="structural && tripId" :trip-id="tripId" small @uploaded="(media) => emit('uploaded', media)" />
   </section>
 </template>

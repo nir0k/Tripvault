@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { listTripYears, listTrips, type TripScope } from '@/api/trips'
 import type { DocumentKind, Trip } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
+import BackToTop from '@/components/BackToTop.vue'
 import TripCard from '@/components/TripCard.vue'
 import TripCreateDialog from '@/components/TripCreateDialog.vue'
 import { errorMessage } from '@/utils/errors'
@@ -155,5 +156,6 @@ onBeforeUnmount(() => clearTimeout(searchTimer))
     </div>
 
     <TripCreateDialog ref="creator" />
+    <BackToTop />
   </section>
 </template>

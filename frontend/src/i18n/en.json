@@ -289,7 +289,12 @@
       "wrong_ends": "The route does not run between the ends of this leg.",
       "invalid_line": "The route could not be read.",
       "invalid_point": "A point is not a valid position.",
-      "missing_coordinates": "Both ends of the leg need a position."
+      "missing_coordinates": "Both ends of the leg need a position.",
+      "sum_mismatch": "The shares must add up to the cost.",
+      "unknown_member": "Only members of the trip can pay or share a cost.",
+      "duplicate_member": "A person is named twice.",
+      "amount_required": "Every share needs its amount.",
+      "negative": "An amount must not be negative."
     },
     "already_member": "This person already has access to the trip.",
     "days_would_be_removed": "The change removes days with content.",
@@ -494,6 +499,8 @@
     "hoursMinutes": "{hours} h {minutes} min"
   },
   "plan": {
+    "addIntro": "Add a note for the whole trip",
+    "introPlaceholder": "A note for the whole trip, read before the days. Markdown is supported.",
     "days": "Days",
     "dayNumber": "Day {n}",
     "addDay": "Add day",
@@ -527,9 +534,7 @@
     "unassign": "Back to unassigned",
     "emptyDay": "No places yet. Add one, or drag one here from the unassigned list.",
     "emptyDayReadOnly": "No places planned for this day.",
-    "addPlace": "Add place",
     "addStay": "Add a night's stay",
-    "addTransfer": "Add transfer",
     "summary": {
       "visits": "At places: {duration}",
       "end": "Ends about {time}",
@@ -538,7 +543,6 @@
       "unknownTravel": "Some legs have no travel time, so the day ends later than shown."
     },
     "unassigned": "Unassigned",
-    "addIdea": "Add place",
     "unassignedEmpty": "Places without a day wait here until you assign them.",
     "moveTitle": "Move “{name}”",
     "copyTitle": "Copy “{name}”",
@@ -550,7 +554,13 @@
     "collapseDay": "Fold away {day}",
     "expandDay": "Open {day}",
     "placesCount": "{n} place | {n} places",
-    "addActivity": "Add an activity"
+    "quickAdd": {
+      "insert": "Add here",
+      "placePlaceholder": "Name, address, coordinates or a map link",
+      "activityPlaceholder": "Where the activity starts: name, address, coordinates or a map link",
+      "hint": "Paste a Google Maps or OpenStreetMap link, or search and press Enter. Esc cancels.",
+      "empty": "Add a place or an activity"
+    }
   },
   "place": {
     "newTitle": "New place",
@@ -586,6 +596,50 @@
       "3": "Moderate",
       "4": "Hard",
       "5": "Extreme"
+    },
+    "openInGoogleMaps": "Open in Google Maps",
+    "copyCoordinates": "Copy coordinates",
+    "coordinatesCopied": "Copied",
+    "noCoordinates": "No coordinates",
+    "notesPlaceholder": "Add notes, links, etc. here",
+    "addTime": "Add time",
+    "addCost": "Add cost",
+    "time": {
+      "title": "Time",
+      "start": "Start time",
+      "until": "Until",
+      "end": "End time",
+      "duration": "Time spent",
+      "hours": "Hours",
+      "minutes": "Minutes",
+      "hint": "The start is the time you want to be there; the day's schedule warns when the route cannot make it.",
+      "endNeedsStart": "An end time needs a start time.",
+      "tooLong": "A visit lasts at most 24 hours.",
+      "clear": "Clear"
+    },
+    "costForm": {
+      "title": "Cost",
+      "amount": "Amount",
+      "category": "Type",
+      "note": "Description",
+      "paidBy": "Paid by",
+      "nobody": "Nobody named",
+      "split": "Split",
+      "splits": {
+        "none": "Don't split",
+        "everyone": "Everyone",
+        "individuals": "Individuals"
+      },
+      "share": "Share",
+      "shareOf": "Share of {name}",
+      "left": "Left to assign: {amount}",
+      "over": "Over the cost by {amount}",
+      "perPersonHint": "A per-person cost is shared for the whole group: {amount}.",
+      "payerRequired": "Choose who pays a split cost.",
+      "sharesRequired": "Tick at least one person to share the cost.",
+      "sharesMismatch": "The shares must add up to the cost.",
+      "formerMember": "Former member",
+      "clear": "Remove cost"
     }
   },
   "categories": {
@@ -649,6 +703,8 @@
     "expenseDay": "Belongs to",
     "expenseNote": "What it is",
     "expenseNotePlaceholder": "Such as “City tax” or “Fuel”",
+    "expenseComment": "Note",
+    "expenseUrl": "Link",
     "confirmDeleteExpense": "Delete the expense “{name}”?",
     "kinds": {
       "place": "Place",
@@ -663,7 +719,18 @@
     "budgetHint": "Leave the amount empty to keep the trip without a budget.",
     "actual": "Spent",
     "spentOfBudget": "{planned} of {budget} spent — {percent}% of the budget",
-    "reportHint": "What was really spent is entered in the report, on its places, stays and expenses."
+    "reportHint": "What was really spent is entered in the report, on its places, stays and expenses.",
+    "balances": {
+      "title": "Who owes whom",
+      "member": "Member",
+      "paid": "Paid",
+      "share": "Own share",
+      "net": "Balance",
+      "settle": "To settle up",
+      "square": "Everybody is square.",
+      "hint": "Counts the split costs of the places and activities on a day, at their planned amounts.",
+      "hintReport": "Counts the split costs of the places and activities on a day, at what was really spent once it is entered."
+    }
   },
   "report": {
     "edit": "Edit",
@@ -769,10 +836,15 @@
     "readOnly": "Shared for reading"
   },
   "costCategories": {
-    "accommodation": "Accommodation",
+    "accommodation": "Lodging",
     "transport": "Transport",
-    "food": "Food",
-    "activities": "Activities and tickets",
+    "car_rental": "Car rental",
+    "fuel": "Fuel",
+    "tolls": "Tolls and vignettes",
+    "food": "Restaurants and bars",
+    "groceries": "Groceries",
+    "sightseeing": "Sightseeing",
+    "activities": "Activities and tours",
     "shopping": "Shopping",
     "other": "Other"
   },
@@ -1016,6 +1088,7 @@
     "activityHint": "A GPX or KML export shows where this activity went.",
     "choose": "Choose a GPX or KML file",
     "route": "Route",
-    "routeHint": "A GPX or KML route, such as a hike planned in an outdoor app. An activity with no position takes the route's start."
+    "routeHint": "A GPX or KML route, such as a hike planned in an outdoor app. An activity with no position takes the route's start.",
+    "add": "Add track"
   }
 }

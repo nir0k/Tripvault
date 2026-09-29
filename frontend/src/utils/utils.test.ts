@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError } from '@/api/client'
 import type { Media, TripDocument } from '@/api/types'
-import { evaluateFormula, invalidAmount, resolveAmount } from '@/utils/amount'
+import { amountCents, centsToAmount, equalShares, evaluateFormula, invalidAmount, resolveAmount } from '@/utils/amount'
 import { errorMessage } from '@/utils/errors'
 import { addDays, describeUserAgent, formatClock, formatDayDate, formatDistance, formatDateRange, formatMoney, formatTimeOfDay, fromMetres, normalizeAmount, parseTimeOfDay, splitDuration, toMetres } from '@/utils/format'
 import { markdownExcerpt, renderMarkdown } from '@/utils/markdown'
+import { justifyRows, justifyStrip, previewSize, tileRatio } from '@/utils/justify'
+import { minutesBetween, minutesOfDay, planTimeLabel, timeOfDay } from '@/utils/plan'
 import { distanceBetween, mediaHint, takenDate } from '@/utils/mediaHints'
 import { mediaLinkUpdates } from '@/utils/mediaLinks'
 import { decodePolyline } from '@/utils/polyline'
@@ -115,6 +117,23 @@ describe('times of day', () => {
   })
 })
 
+describe('shared costs', () => {
+  it('reads amounts as hundredths, formulas included', () => {
+    expect(amountCents('12,5')).toBe(1250)
+    expect(amountCents('=10*3')).toBe(3000)
+    expect(amountCents('')).toBeNull()
+    expect(amountCents('abc')).toBeNull()
+    expect(centsToAmount(1205)).toBe('12.05')
+    expect(centsToAmount(-50)).toBe('-0.50')
+  })
+
+  it('splits equally with the leftover cents on the first', () => {
+    expect(equalShares(1000, 3)).toEqual([334, 333, 333])
+    expect(equalShares(900, 3)).toEqual([300, 300, 300])
+    expect(equalShares(100, 0)).toEqual([])
+  })
+})
+
 describe('amount formulas', () => {
   it('follows operator precedence and parentheses', () => {
     expect(evaluateFormula('=2+3*4')).toBe(14)
@@ -155,6 +174,31 @@ describe('display preferences', () => {
     expect(formatClock(12 * 60 + 5, 'h12').time).toBe('12:05 PM')
     // A schedule that runs past midnight still says how many days it passed.
     expect(formatClock(25 * 60, 'h12')).toEqual({ time: '1:00 AM', dayOffset: 1 })
+  })
+})
+
+describe('planned times', () => {
+  const t = (key: string, named?: Record<string, unknown>) => `${key}:${JSON.stringify(named)}`
+
+  it('reads and writes times of day', () => {
+    expect(minutesOfDay('09:30')).toBe(570)
+    expect(minutesOfDay('')).toBeNull()
+    expect(timeOfDay(570)).toBe('09:30')
+    expect(timeOfDay(1500)).toBe('01:00')
+  })
+
+  it('measures a visit, past midnight when the end comes first', () => {
+    expect(minutesBetween('10:00', '11:30')).toBe(90)
+    expect(minutesBetween('23:00', '01:00')).toBe(120)
+    expect(minutesBetween('10:00', '10:00')).toBe(1440)
+    expect(minutesBetween('', '10:00')).toBeNull()
+  })
+
+  it('labels a place by what is known of its time', () => {
+    expect(planTimeLabel('10:00', 90, t)).toBe('10:00 – 11:30')
+    expect(planTimeLabel('10:00', 0, t)).toBe('10:00')
+    expect(planTimeLabel(null, 90, t)).toBe('duration.hoursMinutes:{"hours":1,"minutes":30}')
+    expect(planTimeLabel(null, 0, t)).toBe('')
   })
 })
 
@@ -226,6 +270,94 @@ describe('renderMarkdown', () => {
   })
 })
 
+describe('justifyRows', () => {
+  it('fills every row but the last to the exact width', () => {
+    const ratios = [1.5, 0.75, 1.5, 1, 1.5, 1.5, 0.75, 1.5, 1]
+    const rows = justifyRows(ratios, 1000, 200, 4)
+    expect(rows.flatMap((row) => row.tiles.map((tile) => tile.index))).toEqual(ratios.map((_, index) => index))
+    for (const row of rows.slice(0, -1)) {
+      const used = row.tiles.reduce((sum, tile) => sum + tile.width, 0) + 4 * (row.tiles.length - 1)
+      expect(used).toBe(1000)
+      expect(row.tiles.every((tile) => tile.height === row.height)).toBe(true)
+      expect(Math.abs(row.height - 200)).toBeLessThan(100)
+    }
+  })
+
+  it('leaves the last row at the target height', () => {
+    const rows = justifyRows([1, 1], 1000, 200, 4)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toEqual({ height: 200, tiles: [{ index: 0, width: 200, height: 200 }, { index: 1, width: 200, height: 200 }] })
+  })
+
+  it('keeps the last row no taller than the row above it', () => {
+    const rows = justifyRows([1.5, 1.5, 1.5, 1.5, 1], 1000, 240, 4)
+    expect(rows).toHaveLength(2)
+    expect(rows[1]!.height).toBe(rows[0]!.height)
+    expect(rows[0]!.height).toBeLessThan(240)
+  })
+
+  it('gives a picture too wide for the page a row of its own', () => {
+    const rows = justifyRows([3, 1], 300, 200, 4)
+    expect(rows[0]!.tiles).toEqual([{ index: 0, width: 300, height: 100 }])
+  })
+
+  it('lays out nothing without a width', () => {
+    expect(justifyRows([1, 1], 0, 200, 4)).toEqual([])
+  })
+})
+
+describe('justifyStrip', () => {
+  it('lays out every picture at the target height when they all fit', () => {
+    const strip = justifyStrip([1, 1], 1000, 200, 4, Infinity, 1)
+    expect(strip?.shown).toBe(2)
+    expect(strip?.row.tiles).toEqual([{ index: 0, width: 200, height: 200 }, { index: 1, width: 200, height: 200 }])
+  })
+
+  it('fills the width with the pictures that fit and a tile for the rest', () => {
+    const strip = justifyStrip([1.5, 1.5, 1.5, 1.5, 1.5, 1.5], 1000, 200, 4, Infinity, 1)!
+    expect(strip.shown).toBeGreaterThan(0)
+    expect(strip.shown).toBeLessThan(6)
+    expect(strip.row.tiles).toHaveLength(strip.shown + 1)
+    expect(strip.row.tiles.at(-1)!.index).toBe(strip.shown)
+    const used = strip.row.tiles.reduce((sum, tile) => sum + tile.width, 0) + 4 * strip.shown
+    expect(used).toBe(1000)
+  })
+
+  it('keeps to the limit without stretching the row', () => {
+    const strip = justifyStrip([1, 1, 1, 1], 1000, 200, 4, 2, 1)!
+    expect(strip.shown).toBe(2)
+    expect(strip.row.tiles).toHaveLength(3)
+    expect(strip.row.height).toBe(200)
+  })
+
+  it('shows one picture however narrow the page is', () => {
+    const strip = justifyStrip([3, 1], 300, 200, 4, Infinity, 1)!
+    expect(strip.shown).toBe(1)
+    expect(strip.row.tiles).toHaveLength(2)
+  })
+
+  it('lays out nothing without a width or pictures', () => {
+    expect(justifyStrip([1], 0, 200, 4, Infinity, 1)).toBeNull()
+    expect(justifyStrip([], 1000, 200, 4, Infinity, 1)).toBeNull()
+  })
+})
+
+describe('tileRatio and previewSize', () => {
+  it('bounds the proportions and falls back to a square', () => {
+    expect(tileRatio(0, 0)).toBe(1)
+    expect(tileRatio(4000, 3000)).toBeCloseTo(4 / 3)
+    expect(tileRatio(10000, 1000)).toBe(3)
+    expect(tileRatio(1000, 10000)).toBe(0.5)
+  })
+
+  it('picks the narrowest preview covering the tile on the screen', () => {
+    expect(previewSize(200, 1)).toBe(320)
+    expect(previewSize(300, 2)).toBe(640)
+    expect(previewSize(500, 2)).toBe(1280)
+    expect(previewSize(2000, 3)).toBe(1280)
+  })
+})
+
 describe('decodePolyline', () => {
   it('reads the reference example of the format', () => {
     expect(decodePolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@')).toEqual([[38.5, -120.2], [40.7, -120.95], [43.252, -126.453]])
@@ -243,7 +375,8 @@ describe('media hints', () => {
     id, day_id: 'd2', position: 0, kind: 'place' as const, anchor: null, stay_id: null, name, activity_type: null,
     category: 'sight' as const, lat, lng, address: '', osm_ref: '', description_md: '', url: '',
     desired_time: null, visit_minutes: 0, is_optional: false, booking_ref: '', planned_cost_amount: null,
-    cost_per_person: false, cost_category: 'other' as const, schedule: null, status: 'visited' as const,
+    cost_per_person: false, cost_category: 'other' as const,
+    cost_note: '', paid_by: null, cost_split: 'none' as const, cost_shares: [], schedule: null, status: 'visited' as const,
     story_md: '', actual_time: null, actual_end_time: null, rating: null, actual_cost_amount: null, difficulty: null, source_item_id: null, track: null,
     media: [], cover_media_id: null,
   })

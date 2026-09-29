@@ -112,6 +112,24 @@ const ENTRY_ICONS: Record<BudgetEntryKind, IconName> = {
   place: 'map', stay: 'stay', transfer: 'modeFlight', leg: 'transport', expense: 'wallet',
 }
 
+// expenses finds an expense of the listed document by its id, so its entry can
+// show the comment and the link the budget itself does not carry.
+const expenses = computed(() => new Map((plan.value?.expenses ?? []).map((expense) => [expense.id, expense])))
+
+/** expenseOf returns the expense behind a budget entry, or undefined for any other cost. */
+function expenseOf(entry: BudgetEntry): Expense | undefined {
+  return entry.kind === 'expense' ? expenses.value.get(entry.id) : undefined
+}
+
+/** linkHost is the site a link points at, which reads better than the whole address. */
+function linkHost(url: string): string {
+  try {
+    return new URL(url).host.replace(/^www\./, '')
+  } catch {
+    return url
+  }
+}
+
 /** dayNumber labels the day a cost belongs to, or the trip as a whole. */
 function dayNumber(dayId: string | null): string {
   const day = budget.value?.days.find((row) => row.day_id === dayId)
@@ -496,6 +514,54 @@ async function saveLeg(leg: Leg, changes: documentsApi.LegChanges): Promise<void
         </section>
       </div>
 
+      <!-- Who owes whom for the costs somebody paid and shared: each member's
+           standing, and the fewest payments that square it. -->
+      <section v-if="budget.balances.length > 0" class="space-y-3">
+        <h2 class="text-xl font-bold">{{ t('budget.balances.title') }}</h2>
+        <div class="grid gap-6 lg:grid-cols-2">
+          <div class="overflow-x-auto">
+            <table class="table table-zebra table-sm">
+              <thead>
+                <tr>
+                  <th>{{ t('budget.balances.member') }}</th>
+                  <th class="text-end">{{ t('budget.balances.paid') }}</th>
+                  <th class="text-end">{{ t('budget.balances.share') }}</th>
+                  <th class="text-end">{{ t('budget.balances.net') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in budget.balances" :key="row.user_id">
+                  <td>{{ row.name || t('place.costForm.formerMember') }}</td>
+                  <td class="text-end whitespace-nowrap">{{ amount(row.paid) }}</td>
+                  <td class="text-end whitespace-nowrap">{{ amount(row.share) }}</td>
+                  <td
+                    class="text-end font-medium whitespace-nowrap"
+                    :class="Number(row.net) > 0 ? 'text-success' : Number(row.net) < 0 ? 'text-error' : ''"
+                  >
+                    {{ amount(row.net) }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="space-y-2">
+            <h3 class="font-semibold">{{ t('budget.balances.settle') }}</h3>
+            <ul v-if="budget.settlements.length > 0" class="space-y-1 text-sm">
+              <li v-for="(payment, index) in budget.settlements" :key="index" class="flex flex-wrap items-center gap-x-2">
+                <span class="font-medium">{{ payment.from_name || t('place.costForm.formerMember') }}</span>
+                <AppIcon name="chevronRight" class="size-4! opacity-60" />
+                <span class="font-medium">{{ payment.to_name || t('place.costForm.formerMember') }}</span>
+                <span class="ms-auto tabular-nums">{{ amount(payment.amount) }}</span>
+              </li>
+            </ul>
+            <p v-else class="text-sm text-base-content/70">{{ t('budget.balances.square') }}</p>
+            <p class="text-xs text-base-content/60">
+              {{ isReport ? t('budget.balances.hintReport') : t('budget.balances.hint') }}
+            </p>
+          </div>
+        </div>
+      </section>
+
       <section class="space-y-3">
         <header class="flex flex-wrap items-center justify-between gap-2">
           <h2 class="text-xl font-bold">{{ t('budget.costs') }}</h2>
@@ -555,6 +621,21 @@ async function saveLeg(leg: Leg, changes: documentsApi.LegChanges): Promise<void
                     <span v-if="entry.is_optional" class="badge badge-ghost badge-sm">{{ t('place.optional') }}</span>
                     <span v-if="entry.unassigned" class="badge badge-ghost badge-sm">{{ t('plan.unassigned') }}</span>
                   </span>
+                  <template v-if="expenseOf(entry)">
+                    <p
+                      v-if="expenseOf(entry)!.comment"
+                      class="ps-7 text-xs whitespace-pre-line break-words text-base-content/70"
+                    >
+                      {{ expenseOf(entry)!.comment }}
+                    </p>
+                    <a
+                      v-if="expenseOf(entry)!.url"
+                      :href="expenseOf(entry)!.url"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="link link-primary ms-7 block truncate text-xs"
+                    >{{ linkHost(expenseOf(entry)!.url) }}</a>
+                  </template>
                 </td>
                 <td class="whitespace-nowrap">{{ t(`costCategories.${entry.category}`) }}</td>
                 <td class="whitespace-nowrap">{{ entry.day_id ? dayNumber(entry.day_id) : t('budget.wholeTrip') }}</td>

@@ -44,6 +44,10 @@ const mediaBase = useMediaBase()
 /** The weight and opacity a line is drawn with, open day against the rest. */
 const CURRENT_LINE = { weight: 6, opacity: 0.95 }
 const OTHER_LINE = { weight: 3, opacity: 0.45 }
+/** The dark casing a recorded track is drawn over, so it reads as a trail. */
+const TRACK_CASING = '#1f2937'
+/** Screen pixels between two arrows along a track; the first sits half a step in. */
+const ARROW_STEP = 150
 
 const container = useTemplateRef<HTMLDivElement>('container')
 const frame = useTemplateRef<HTMLDivElement>('frame')
@@ -54,6 +58,10 @@ const canFullscreen = typeof document !== 'undefined' && document.fullscreenEnab
 
 let map: L.Map | null = null
 let layers: L.LayerGroup | null = null
+// The arrows along the tracks sit a fixed number of screen pixels apart, so
+// they live on a layer of their own, redrawn at every zoom.
+let arrowLayer: L.LayerGroup | null = null
+let drawnTracks: { points: LatLng[]; muted: boolean }[] = []
 let bounds: L.LatLngBounds | null = null
 // The open day's own bounds: what the map frames while a day is being read,
 // instead of pulling back to the whole trip.
@@ -84,6 +92,76 @@ function pinIcon(glyph: PinGlyph, color: string, muted = false, number?: number)
     iconAnchor: [15, 15],
     popupAnchor: [0, -14],
   })
+}
+
+// trackEndIcon marks where a recorded track starts - a ring in the day's colour -
+// or finishes - a dark disc with a flag. Only fixed shapes and colours reach the
+// HTML.
+function trackEndIcon(end: 'start' | 'finish', color: string, muted: boolean): L.DivIcon {
+  const flag = end === 'finish'
+    ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${OUTLINE.flag}"/></svg>`
+    : ''
+  const size = end === 'finish' ? 20 : 14
+  return L.divIcon({
+    className: 'map-pin-wrapper',
+    html: `<span class="map-track-${end}${muted ? ' map-pin-muted' : ''}" style="--pin:${color}">${flag}</span>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  })
+}
+
+// trackLabel is the distance of a recorded track with a hiker in front of it,
+// so it is not read as the length of a leg. The distance is a formatted number
+// and the glyph a fixed path, so the HTML carries nothing people typed.
+function trackLabel(distance: number): string {
+  const glyph = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${OUTLINE.activityHike}"/></svg>`
+  return `<span class="map-track-label">${glyph}${formatDistance(distance, locale.value, activeUnits.value)}</span>`
+}
+
+// arrowIcon is a white chevron turned to the direction of travel.
+function arrowIcon(degrees: number, muted: boolean): L.DivIcon {
+  const svg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>'
+  return L.divIcon({
+    className: 'map-pin-wrapper',
+    html: `<span class="map-track-arrow${muted ? ' map-pin-muted' : ''}" style="transform:rotate(${degrees.toFixed(1)}deg)">${svg}</span>`,
+    iconSize: [14, 14],
+    iconAnchor: [7, 7],
+  })
+}
+
+/**
+ * drawArrows puts an arrow every ARROW_STEP screen pixels along each track,
+ * pointing from its start to its finish, the first half a step in so it keeps
+ * clear of the start. A track shorter on screen than a step gets none. The
+ * distances are measured at the current zoom, so the arrows are redrawn when
+ * it changes.
+ */
+function drawArrows(): void {
+  if (!map || !arrowLayer) {
+    return
+  }
+  arrowLayer.clearLayers()
+  const zoom = map.getZoom()
+  for (const track of drawnTracks) {
+    const pixels = track.points.map((point) => map!.project(point, zoom))
+    let next = ARROW_STEP / 2
+    let walked = 0
+    for (let index = 1; index < pixels.length; index++) {
+      const from = pixels[index - 1]!
+      const to = pixels[index]!
+      const length = from.distanceTo(to)
+      while (length > 0 && walked + length >= next) {
+        const along = (next - walked) / length
+        const at = L.point(from.x + (to.x - from.x) * along, from.y + (to.y - from.y) * along)
+        const degrees = (Math.atan2(to.y - from.y, to.x - from.x) * 180) / Math.PI
+        L.marker(map.unproject(at, zoom), {
+          icon: arrowIcon(degrees, track.muted), interactive: false, keyboard: false, zIndexOffset: -1000,
+        }).addTo(arrowLayer)
+        next += ARROW_STEP
+      }
+      walked += length
+    }
+  }
 }
 
 // popupPicture is the picture a popup shows: the place's cover, or its first
@@ -208,6 +286,7 @@ function draw(): void {
   }
   layers.clearLayers()
   markers.clear()
+  drawnTracks = []
   const points: LatLng[] = []
   const dayPoints: LatLng[] = []
   // Every element of the document, because the leg that opens a day starts at
@@ -251,15 +330,28 @@ function draw(): void {
     // A place or an activity may carry a recording of its own - a hike, a walk
     // around a lake - which is drawn beside the legs rather than instead of
     // them: the drive to the start of a hike is still a journey of the day.
+    // It is drawn as a trail - a dark casing, the day's colour and a dotted
+    // white core - with its start and finish marked, so a recording is never
+    // taken for a road (solid) or an estimate (dashed).
     for (const item of day.items) {
       const recorded = item.track ? decodePolyline(item.track.geometry) : []
       if (!item.track || recorded.length < 2) {
         continue
       }
       collect(recorded)
+      L.polyline(recorded, {
+        color: TRACK_CASING, weight: line.weight + 4, opacity: line.opacity * 0.8, interactive: false,
+      }).addTo(layers)
       const track = L.polyline(recorded, { color, ...line }).addTo(layers)
+      L.polyline(recorded, {
+        color: '#ffffff', weight: Math.max(1.5, line.weight / 3), opacity: line.opacity,
+        dashArray: '1 8', lineCap: 'round', interactive: false,
+      }).addTo(layers)
+      drawnTracks.push({ points: recorded, muted: !current })
+      L.marker(recorded[0]!, { icon: trackEndIcon('start', color, !current), interactive: false, zIndexOffset: -1000 }).addTo(layers)
+      L.marker(recorded.at(-1)!, { icon: trackEndIcon('finish', color, !current), interactive: false, zIndexOffset: -1000 }).addTo(layers)
       if (showDistances.value) {
-        track.bindTooltip(formatDistance(item.track.distance_m, locale.value, activeUnits.value), {
+        track.bindTooltip(trackLabel(item.track.distance_m), {
           permanent: true, direction: 'center', className: 'map-distance',
         })
       }
@@ -294,6 +386,9 @@ function draw(): void {
     marker.bindPopup(() => popupFor(item, null, marker)).addTo(layers)
     markers.set(item.id, marker)
   }
+
+  // Before the map has a view there is no zoom to measure the arrows at.
+  map.whenReady(drawArrows)
 
   empty.value = points.length === 0
   bounds = points.length > 0 ? L.latLngBounds(points) : null
@@ -360,6 +455,8 @@ onMounted(() => {
   map = L.map(container.value, { zoomControl: true, worldCopyJump: true })
   tiles.attach(map, props.tileUrl, props.attribution)
   layers = L.layerGroup().addTo(map)
+  arrowLayer = L.layerGroup().addTo(map)
+  map.on('zoomend', drawArrows)
   map.on('click', (event: L.LeafletMouseEvent) => {
     if (!props.canEdit || !map) {
       return

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, useTemplateRef, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import * as mediaApi from '@/api/media'
@@ -9,6 +9,7 @@ import type { CoverCrop, Media, MediaTarget, PlanDay, PlanItem, TripDocument } f
 import AppIcon, { type IconName } from '@/components/AppIcon.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import CoverCropDialog from '@/components/media/CoverCropDialog.vue'
+import JustifiedGrid from '@/components/media/JustifiedGrid.vue'
 import MediaImage from '@/components/media/MediaImage.vue'
 import MediaLinkDialog from '@/components/media/MediaLinkDialog.vue'
 import MediaUploader from '@/components/media/MediaUploader.vue'
@@ -20,6 +21,7 @@ import { errorMessage } from '@/utils/errors'
 import { formatDayDate } from '@/utils/format'
 import { mediaLinkUpdates, type MediaLinkChange } from '@/utils/mediaLinks'
 import { isVisit, itemIcon } from '@/utils/plan'
+import BackToTop from '@/components/BackToTop.vue'
 
 // Every picture of a trip in one place, laid out the way the trip's document
 // files them: a section for each day, the day's own pictures first and then one
@@ -68,6 +70,40 @@ const selected = ref(new Set<string>())
 const confirmDialog = useTemplateRef<InstanceType<typeof ConfirmDialog>>('confirmDialog')
 const linkDialog = useTemplateRef<InstanceType<typeof MediaLinkDialog>>('linkDialog')
 const viewer = useTemplateRef<InstanceType<typeof MediaViewer>>('viewer')
+const selectionBar = useTemplateRef<HTMLElement>('selectionBar')
+
+// barClearance is how much of the bottom of the window the bar of picked
+// pictures covers, so the button back to the top can stand above it. The bar is
+// sticky: pinned to the bottom while the list runs on, resting higher up at its
+// end, and wrapping into more lines on a narrow page, so where its top is on the
+// screen is measured rather than assumed.
+const barClearance = ref(0)
+
+// measureBar reads where the bar's top is, or clears the room when it is gone.
+function measureBar(): void {
+  const bar = selectionBar.value
+  barClearance.value = bar ? Math.max(window.innerHeight - bar.getBoundingClientRect().top, 0) : 0
+}
+
+const barObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measureBar) : null
+watch(selectionBar, (bar, previous) => {
+  if (previous) {
+    barObserver?.unobserve(previous)
+  }
+  if (bar) {
+    barObserver?.observe(bar)
+  }
+  measureBar()
+})
+onMounted(() => {
+  window.addEventListener('scroll', measureBar, { passive: true })
+  window.addEventListener('resize', measureBar)
+})
+onBeforeUnmount(() => {
+  barObserver?.disconnect()
+  window.removeEventListener('scroll', measureBar)
+  window.removeEventListener('resize', measureBar)
+})
 const coverCrop = useTemplateRef<InstanceType<typeof CoverCropDialog>>('coverCrop')
 const more = useTemplateRef<HTMLElement>('more')
 
@@ -599,6 +635,7 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
             {{ t(`media.filters.${each}`) }}
           </button>
         </div>
+        <MediaUploader v-if="canEdit && trip" :trip-id="trip.id" small @uploaded="() => void load()" />
       </div>
     </header>
 
@@ -606,8 +643,6 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
     <div v-if="loading" class="flex justify-center py-8"><span class="loading loading-spinner"></span></div>
 
     <template v-else>
-      <MediaUploader v-if="canEdit && trip" :trip-id="trip.id" @uploaded="() => void load()" />
-
       <p v-if="sections.length === 0" class="py-6 text-sm text-base-content/70">
         {{ items.length === 0 ? t('media.tripEmpty') : t('media.noMatches') }}
       </p>
@@ -644,111 +679,127 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
             {{ group.label }}
           </h3>
           <!-- Shift picks a range of tiles, which must not also select their text. -->
-          <ul class="grid grid-cols-4 gap-2 select-none sm:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 2xl:grid-cols-12">
-            <li v-for="tile in group.tiles" :key="tile.picture.id" class="group relative">
-              <button
-                type="button"
-                class="block w-full overflow-hidden rounded-box border border-base-300"
-                :class="selected.has(tile.picture.id) ? 'ring-2 ring-primary' : ''"
-                :aria-label="tile.picture.original_name"
-                @click="onTileClick(tile, $event)"
-              >
-                <MediaImage :id="tile.picture.id" :alt="tile.picture.original_name" :size="320" square />
-              </button>
-
-              <!-- The circle appears under the pointer, and stays out where there
-                   is no pointer to hover with or something is already picked. -->
-              <button
-                v-if="canEdit"
-                type="button"
-                class="absolute start-1 top-1 flex size-6 items-center justify-center rounded-full border border-base-300 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
-                :class="selected.has(tile.picture.id)
-                  ? 'bg-primary text-primary-content opacity-100!'
-                  : 'bg-base-100/80 text-base-content/60'"
-                :aria-label="t('media.selectPicture')"
-                :aria-pressed="selected.has(tile.picture.id)"
-                @click="pick(tile, $event)"
-              >
-                <AppIcon name="check" class="size-4!" />
-              </button>
-
-              <span class="pointer-events-none absolute bottom-1 start-1 flex items-center gap-1">
-                <span v-if="tile.picture.id === trip?.cover_media_id" class="badge badge-primary badge-xs">
-                  {{ t('media.cover') }}
-                </span>
-                <AppIcon
-                  v-if="tile.favorite"
-                  name="starFill"
-                  class="size-4! text-amber-400 drop-shadow-[0_1px_1px_rgb(0_0_0/0.7)]"
-                  role="img"
-                  :aria-label="t('media.favorite')"
-                />
-                <AppIcon
-                  v-if="tile.picture.is_private"
-                  name="lockFill"
-                  class="size-4! text-amber-400 drop-shadow-[0_1px_1px_rgb(0_0_0/0.7)]"
-                  role="img"
-                  :aria-label="t('media.private')"
-                />
-              </span>
-
-              <details v-if="canEdit" class="dropdown dropdown-end absolute end-1 top-1">
-                <summary class="btn btn-square btn-xs" :aria-label="t('media.actions')">
-                  <AppIcon name="dots" />
-                </summary>
-                <ul
-                  class="menu dropdown-content z-20 w-60 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
-                  @click="closeMenu"
+          <JustifiedGrid
+            :items="group.tiles"
+            :item-key="(tile) => tile.picture.id"
+            :dimensions="(tile) => tile.picture"
+            class="select-none"
+          >
+            <template #default="{ item: tile, size }">
+              <div class="group size-full">
+                <!-- A picked picture shrinks inside its tile, as in Google Photos,
+                     so the choice shows without a frame crowding its neighbours. -->
+                <button
+                  type="button"
+                  class="block size-full overflow-hidden"
+                  :class="selected.has(tile.picture.id) ? 'bg-primary/20' : ''"
+                  :aria-label="tile.picture.original_name"
+                  @click="onTileClick(tile, $event)"
                 >
-                  <li>
-                    <button
-                      type="button"
-                      :disabled="busy || !document"
-                      :title="document ? undefined : t('media.linkNoDocuments')"
-                      @click="openLinks([tile.picture])"
-                    >
-                      <AppIcon name="calendar" />
-                      {{ t('media.linkAction') }}
-                    </button>
-                  </li>
-                  <li>
-                    <button type="button" :disabled="busy" @click="coverCrop?.open(tile.picture.id)">
-                      <AppIcon name="image" />
-                      {{ t('media.setTripCover') }}
-                    </button>
-                  </li>
-                  <li v-if="isReport && group.gallery">
-                    <button
-                      type="button"
-                      :disabled="busy"
-                      @click="setGalleryFavorite(group.gallery, tile.picture, !tile.favorite)"
-                    >
-                      <AppIcon :name="tile.favorite ? 'star' : 'starFill'" />
-                      {{ tile.favorite ? t('media.unsetFavoriteHere') : t('media.setFavoriteHere') }}
-                    </button>
-                  </li>
-                  <li v-else-if="isReport">
-                    <button type="button" :disabled="busy || !document" @click="favoriteLoose([tile.picture])">
-                      <AppIcon name="starFill" />
-                      {{ t('media.setFavorite') }}
-                    </button>
-                  </li>
-                  <li>
-                    <button type="button" :disabled="busy" @click="setPrivacy(tile.picture, !tile.picture.is_private)">
-                      <AppIcon :name="tile.picture.is_private ? 'eye' : 'eyeSlash'" />
-                      {{ tile.picture.is_private ? t('media.makePublic') : t('media.makePrivate') }}
-                    </button>
-                  </li>
-                  <li>
-                    <button type="button" class="text-error" :disabled="busy" @click="remove(tile.picture)">
-                      <AppIcon name="trash" />
-                      {{ t('media.remove') }}
-                    </button>
-                  </li>
-                </ul>
-              </details>
-            </li>
-          </ul>
+                  <MediaImage
+                    :id="tile.picture.id"
+                    :alt="tile.picture.original_name"
+                    :size="size"
+                    fill
+                    class="transition-transform duration-150"
+                    :class="selected.has(tile.picture.id) ? 'scale-[0.86] rounded-md' : ''"
+                  />
+                </button>
+
+                <!-- The circle appears under the pointer, and stays out where there
+                   is no pointer to hover with or something is already picked. -->
+                <button
+                  v-if="canEdit"
+                  type="button"
+                  class="absolute start-1 top-1 flex size-6 items-center justify-center rounded-full border border-base-300 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
+                  :class="selected.has(tile.picture.id)
+                    ? 'bg-primary text-primary-content opacity-100!'
+                    : 'bg-base-100/80 text-base-content/60'"
+                  :aria-label="t('media.selectPicture')"
+                  :aria-pressed="selected.has(tile.picture.id)"
+                  @click="pick(tile, $event)"
+                >
+                  <AppIcon name="check" class="size-4!" />
+                </button>
+
+                <span class="pointer-events-none absolute bottom-1 start-1 flex items-center gap-1">
+                  <span v-if="tile.picture.id === trip?.cover_media_id" class="badge badge-primary badge-xs">
+                    {{ t('media.cover') }}
+                  </span>
+                  <AppIcon
+                    v-if="tile.favorite"
+                    name="starFill"
+                    class="size-4! text-amber-400 drop-shadow-[0_1px_1px_rgb(0_0_0/0.7)]"
+                    role="img"
+                    :aria-label="t('media.favorite')"
+                  />
+                  <AppIcon
+                    v-if="tile.picture.is_private"
+                    name="lockFill"
+                    class="size-4! text-amber-400 drop-shadow-[0_1px_1px_rgb(0_0_0/0.7)]"
+                    role="img"
+                    :aria-label="t('media.private')"
+                  />
+                </span>
+
+                <details v-if="canEdit" class="dropdown dropdown-end absolute end-1 top-1">
+                  <summary class="btn btn-square btn-xs" :aria-label="t('media.actions')">
+                    <AppIcon name="dots" />
+                  </summary>
+                  <ul
+                    class="menu dropdown-content z-20 w-60 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
+                    @click="closeMenu"
+                  >
+                    <li>
+                      <button
+                        type="button"
+                        :disabled="busy || !document"
+                        :title="document ? undefined : t('media.linkNoDocuments')"
+                        @click="openLinks([tile.picture])"
+                      >
+                        <AppIcon name="calendar" />
+                        {{ t('media.linkAction') }}
+                      </button>
+                    </li>
+                    <li>
+                      <button type="button" :disabled="busy" @click="coverCrop?.open(tile.picture.id)">
+                        <AppIcon name="image" />
+                        {{ t('media.setTripCover') }}
+                      </button>
+                    </li>
+                    <li v-if="isReport && group.gallery">
+                      <button
+                        type="button"
+                        :disabled="busy"
+                        @click="setGalleryFavorite(group.gallery, tile.picture, !tile.favorite)"
+                      >
+                        <AppIcon :name="tile.favorite ? 'star' : 'starFill'" />
+                        {{ tile.favorite ? t('media.unsetFavoriteHere') : t('media.setFavoriteHere') }}
+                      </button>
+                    </li>
+                    <li v-else-if="isReport">
+                      <button type="button" :disabled="busy || !document" @click="favoriteLoose([tile.picture])">
+                        <AppIcon name="starFill" />
+                        {{ t('media.setFavorite') }}
+                      </button>
+                    </li>
+                    <li>
+                      <button type="button" :disabled="busy" @click="setPrivacy(tile.picture, !tile.picture.is_private)">
+                        <AppIcon :name="tile.picture.is_private ? 'eye' : 'eyeSlash'" />
+                        {{ tile.picture.is_private ? t('media.makePublic') : t('media.makePrivate') }}
+                      </button>
+                    </li>
+                    <li>
+                      <button type="button" class="text-error" :disabled="busy" @click="remove(tile.picture)">
+                        <AppIcon name="trash" />
+                        {{ t('media.remove') }}
+                      </button>
+                    </li>
+                  </ul>
+                </details>
+              </div>
+            </template>
+          </JustifiedGrid>
         </div>
       </section>
 
@@ -759,6 +810,7 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
 
       <div
         v-if="canEdit && selected.size > 0"
+        ref="selectionBar"
         class="sticky bottom-2 z-30 flex flex-wrap items-center gap-2 rounded-box border border-base-300 bg-base-100 p-3 shadow-lg"
       >
         <span class="me-1 text-sm font-medium">
@@ -810,5 +862,7 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
       <ConfirmDialog ref="confirmDialog" />
       <CoverCropDialog ref="coverCrop" @save="setCover" />
     </template>
+    <!-- It rises above the bar of picked pictures while that is shown. -->
+    <BackToTop :clearance="barClearance > 0 ? barClearance + 16 : 0" />
   </div>
 </template>

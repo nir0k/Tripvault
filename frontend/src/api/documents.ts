@@ -1,7 +1,7 @@
 import { http, PDF_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } from './client'
 import { filenameFrom, saveBlob } from '@/utils/download'
 import type {
-  ActivityType, CostCategory, GeoPoint, ItemStatus, ListResponse, PlaceCategory, RouteOption, RoutePreference, StayKind,
+  ActivityType, CostCategory, CostShare, CostSplit, GeoPoint, ItemStatus, ListResponse, PlaceCategory, RouteOption, RoutePreference, StayKind,
   Track, TransferKind, TranslationEntry, TravelMode, TripDocument,
 } from './types'
 
@@ -39,6 +39,12 @@ export interface PlaceFields {
   planned_cost_amount?: string | null
   cost_per_person?: boolean
   cost_category?: CostCategory
+  cost_note?: string
+  /** The member who pays; null names nobody. */
+  paid_by?: string | null
+  cost_split?: CostSplit
+  /** Replaces the members the cost is shared among. */
+  cost_shares?: CostShare[]
   /** An activity's difficulty, 1 to 5; a place drops it. */
   difficulty?: number | null
   /** The fields below are refused on a plan. */
@@ -105,6 +111,8 @@ export interface ExpenseFields {
   actual_amount?: string | null
   spent_on?: string | null
   note?: string
+  comment?: string
+  url?: string
 }
 
 export interface LegChanges {
@@ -197,10 +205,14 @@ export async function reorderDays(documentId: string, dayIds: string[]): Promise
   return (await http.post<TripDocument>(path`/documents/${documentId}/days:reorder`, { day_ids: dayIds })).data
 }
 
-/** createPlace adds a place to a day, or to the unassigned list when dayId is null. */
-export async function createPlace(documentId: string, dayId: string | null, fields: PlaceFields): Promise<TripDocument> {
+/**
+ * createPlace adds a place to a day, or to the unassigned list when dayId is
+ * null: before the place now at position, or at the end without one.
+ */
+export async function createPlace(documentId: string, dayId: string | null, fields: PlaceFields,
+  position?: number): Promise<TripDocument> {
   const url = dayId ? path`/days/${dayId}/items` : path`/documents/${documentId}/items`
-  return (await http.post<TripDocument>(url, fields)).data
+  return (await http.post<TripDocument>(url, position === undefined ? fields : { ...fields, position })).data
 }
 
 /** updatePlace changes only the given fields of a place. */

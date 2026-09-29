@@ -178,7 +178,7 @@ func parseVia(raw []byte) ([]domain.Point, error) {
 var itemColumns = `i.id, i.document_id, i.day_id, i.position, i.kind, coalesce(i.anchor, ''), i.stay_id, i.name,
 	i.category, coalesce(i.activity_type, ''), i.lat, i.lng, i.address, coalesce(i.osm_ref, ''), i.description_md, i.url, ` +
 	clockColumn("i.desired_time") + `, i.visit_minutes, i.is_optional, i.booking_ref,
-	(i.planned_cost_amount * 100)::bigint, i.cost_per_person, i.cost_category,
+	(i.planned_cost_amount * 100)::bigint, i.cost_per_person, i.cost_category, i.cost_note, i.paid_by, i.cost_split,
 	i.status, i.story_md, ` + clockColumn("i.actual_time") + `, ` + clockColumn("i.actual_end_time") + `, i.rating,
 	(i.actual_cost_amount * 100)::bigint, i.cover_media_id, i.source_item_id, i.difficulty, i.created_at, i.updated_at`
 
@@ -188,7 +188,7 @@ func scanItem(row pgx.Row) (domain.Item, error) {
 	err := row.Scan(&i.ID, &i.DocumentID, &i.DayID, &i.Position, &i.Kind, &i.Anchor, &i.StayID, &i.Name,
 		&i.Category, &i.ActivityType, &i.Lat, &i.Lng, &i.Address, &i.OSMRef, &i.DescriptionMD, &i.URL,
 		&i.DesiredTime, &i.VisitMinutes, &i.IsOptional, &i.BookingRef,
-		&i.PlannedCost, &i.CostPerPerson, &i.CostCategory,
+		&i.PlannedCost, &i.CostPerPerson, &i.CostCategory, &i.CostNote, &i.PaidBy, &i.CostSplit,
 		&i.Status, &i.StoryMD, &i.ActualTime, &i.ActualEndTime, &i.Rating, &i.ActualCost, &i.CoverMediaID,
 		&i.SourceItemID, &i.Difficulty, &i.CreatedAt, &i.UpdatedAt)
 	return i, err
@@ -231,7 +231,13 @@ func (r *DocumentRepository) Day(ctx context.Context, id uuid.UUID) (domain.Day,
 //   - the item.
 //   - domain.ErrNotFound when it does not exist.
 func (r *DocumentRepository) Item(ctx context.Context, id uuid.UUID) (domain.Item, error) {
-	return oneRow(scanItem, r.pool.QueryRow(ctx, `SELECT `+itemColumns+` FROM items i WHERE i.id = $1`, id), "get item")
+	item, err := oneRow(scanItem, r.pool.QueryRow(ctx, `SELECT `+itemColumns+` FROM items i WHERE i.id = $1`, id), "get item")
+	if err != nil {
+		return item, err
+	}
+	shares, err := readCostShares(ctx, r.pool, `s.item_id = $1`, id)
+	item.CostShares = shares[id]
+	return item, err
 }
 
 // Stay - reads one stay.
@@ -285,6 +291,13 @@ func readContent(ctx context.Context, q querier, id uuid.UUID) (domain.DocumentC
 		`SELECT `+itemColumns+` FROM items i WHERE i.document_id = $1 ORDER BY i.position, i.created_at`, id); err != nil {
 		return content, err
 	}
+	shares, err := readCostShares(ctx, q, `s.item_id IN (SELECT id FROM items WHERE document_id = $1)`, id)
+	if err != nil {
+		return content, err
+	}
+	for index := range content.Items {
+		content.Items[index].CostShares = shares[content.Items[index].ID]
+	}
 	if content.Stays, err = collect(ctx, q, scanStay,
 		`SELECT `+stayColumns+` FROM stays s WHERE s.document_id = $1 ORDER BY s.check_in_date, s.id`, id); err != nil {
 		return content, err
@@ -307,6 +320,47 @@ func readContent(ctx context.Context, q querier, id uuid.UUID) (domain.DocumentC
 	}
 	content.Translations, err = documentTranslations(ctx, q, content.Document.TripID)
 	return content, err
+}
+
+// readCostShares reads the members the costs of some items are shared among,
+// in the order they were listed, by item. where selects the shares, as s.
+func readCostShares(ctx context.Context, q querier, where string, args ...any) (map[uuid.UUID][]domain.CostShare, error) {
+	rows, err := q.Query(ctx,
+		`SELECT s.item_id, s.user_id, (s.amount * 100)::bigint FROM item_cost_shares s
+		 WHERE `+where+` ORDER BY s.item_id, s.position`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query cost shares: %w", err)
+	}
+	defer rows.Close()
+	shares := make(map[uuid.UUID][]domain.CostShare)
+	for rows.Next() {
+		var itemID uuid.UUID
+		var share domain.CostShare
+		if err := rows.Scan(&itemID, &share.UserID, &share.Amount); err != nil {
+			return nil, fmt.Errorf("scan cost share: %w", err)
+		}
+		shares[itemID] = append(shares[itemID], share)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read cost shares: %w", err)
+	}
+	return shares, nil
+}
+
+// writeCostShares replaces the members a place's cost is shared among with
+// the ones the place lists.
+func writeCostShares(ctx context.Context, tx pgx.Tx, place domain.Item) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM item_cost_shares WHERE item_id = $1`, place.ID); err != nil {
+		return fmt.Errorf("clear cost shares: %w", err)
+	}
+	for position, share := range place.CostShares {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO item_cost_shares (item_id, user_id, position, amount) VALUES ($1, $2, $3, $4::numeric)`,
+			place.ID, share.UserID, position, moneyParam(share.Amount)); err != nil {
+			return fmt.Errorf("add cost share: %w", err)
+		}
+	}
+	return nil
 }
 
 // collect runs a query and scans every row with scan.
@@ -769,12 +823,18 @@ func (r *DocumentRepository) DuplicateDay(ctx context.Context, sourceID uuid.UUI
 			   INSERT INTO items (id, document_id, day_id, position, kind, name, category, activity_type, lat, lng,
 			                      address, osm_ref,
 			                      description_md, url, desired_time, visit_minutes, is_optional, booking_ref,
-			                      planned_cost_amount, cost_per_person, cost_category, difficulty)
+			                      planned_cost_amount, cost_per_person, cost_category, difficulty,
+			                      cost_note, paid_by, cost_split)
 			   SELECT source.copy_id, document_id, $2, position, kind, name, category, activity_type, lat, lng,
 			          address, osm_ref,
 			          description_md, url, desired_time, visit_minutes, is_optional, booking_ref,
-			          planned_cost_amount, cost_per_person, cost_category, difficulty
+			          planned_cost_amount, cost_per_person, cost_category, difficulty,
+			          cost_note, paid_by, cost_split
 			   FROM items JOIN source ON source.id = items.id
+			 ), shares AS (
+			   INSERT INTO item_cost_shares (item_id, user_id, position, amount)
+			   SELECT source.copy_id, s.user_id, s.position, s.amount
+			   FROM item_cost_shares s JOIN source ON source.id = s.item_id
 			 )
 			 INSERT INTO translations (trip_id, item_id, field, lang, value)
 			 SELECT tr.trip_id, source.copy_id, tr.field, tr.lang, tr.value
@@ -967,20 +1027,29 @@ func insertPlace(ctx context.Context, tx pgx.Tx, place domain.Item, position int
 		                    description_md, url, desired_time, visit_minutes, is_optional, booking_ref,
 		                    planned_cost_amount, cost_per_person, cost_category,
 		                    status, story_md, actual_time, rating, actual_cost_amount, source_item_id,
-		                    activity_type, actual_end_time, difficulty)
+		                    activity_type, actual_end_time, difficulty, cost_note, paid_by, cost_split)
 		 VALUES ($1, $2, $3, $4, $26, $5, $6, $7, $8, $9, nullif($10, ''), $11, $12, $13::time, $14, $15, $16,
 		         $17::numeric, $18, $19, $20, $21, $22::time, $23, $24::numeric, $25, nullif($27, ''),
-		         $28::time, $29)`,
+		         $28::time, $29, $30, $31, $32)`,
 		place.ID, place.DocumentID, place.DayID, position, place.Name, place.Category, place.Lat, place.Lng,
 		place.Address, place.OSMRef, place.DescriptionMD, place.URL, clockParam(place.DesiredTime),
 		place.VisitMinutes, place.IsOptional, place.BookingRef, moneyParam(place.PlannedCost),
 		place.CostPerPerson, place.CostCategory,
 		place.Status, place.StoryMD, clockParam(place.ActualTime), place.Rating, moneyParam(place.ActualCost),
-		place.SourceItemID, place.Kind, place.ActivityType, clockParam(place.ActualEndTime), place.Difficulty)
+		place.SourceItemID, place.Kind, place.ActivityType, clockParam(place.ActualEndTime), place.Difficulty,
+		place.CostNote, place.PaidBy, splitParam(place.CostSplit))
 	if err != nil {
 		return fmt.Errorf("add place: %w", err)
 	}
-	return nil
+	return writeCostShares(ctx, tx, place)
+}
+
+// splitParam stores an unset split as none, the column's own default.
+func splitParam(split domain.CostSplit) domain.CostSplit {
+	if split == "" {
+		return domain.SplitNone
+	}
+	return split
 }
 
 // CreatePlace - adds a place to a day or to the unassigned list.
@@ -1064,19 +1133,24 @@ func (r *DocumentRepository) UpdatePlace(ctx context.Context, place domain.Item)
 			                  cost_per_person = $15, cost_category = $16, status = $17, story_md = $18,
 			                  actual_time = $19::time, rating = $20, actual_cost_amount = $21::numeric,
 			                  cover_media_id = $22, kind = $23, activity_type = nullif($24, ''),
-			                  actual_end_time = $25::time, difficulty = $26, updated_at = now()
+			                  actual_end_time = $25::time, difficulty = $26, cost_note = $27, paid_by = $28,
+			                  cost_split = $29, updated_at = now()
 			 WHERE id = $1 AND kind <> 'stay_anchor'`,
 			place.ID, place.Name, place.Category, place.Lat, place.Lng, place.Address, place.OSMRef,
 			place.DescriptionMD, place.URL, clockParam(place.DesiredTime), place.VisitMinutes, place.IsOptional,
 			place.BookingRef, moneyParam(place.PlannedCost), place.CostPerPerson, place.CostCategory,
 			place.Status, place.StoryMD, clockParam(place.ActualTime), place.Rating,
 			moneyParam(place.ActualCost), place.CoverMediaID, place.Kind, place.ActivityType,
-			clockParam(place.ActualEndTime), place.Difficulty)
+			clockParam(place.ActualEndTime), place.Difficulty, place.CostNote, place.PaidBy,
+			splitParam(place.CostSplit))
 		if err != nil {
 			return fmt.Errorf("update place: %w", err)
 		}
 		if tag.RowsAffected() == 0 {
 			return domain.ErrNotFound
+		}
+		if err := writeCostShares(ctx, tx, place); err != nil {
+			return err
 		}
 		// Only an activity carries a track, so an activity turned into a place
 		// loses it; the legs are drawn from the marker again by syncTrip below.

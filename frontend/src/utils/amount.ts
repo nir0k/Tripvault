@@ -99,3 +99,48 @@ export function resolveAmount(value: string): string {
 export function invalidAmount(value: string): boolean {
   return isFormula(value) && isFormula(resolveAmount(value))
 }
+
+/**
+ * amountCents reads a typed amount - a formula included - as whole hundredths,
+ * which add up without the rounding errors of fractions.
+ *
+ * Arguments:
+ *   - value: the amount as typed, a decimal comma allowed.
+ *
+ * Returns:
+ *   - the hundredths; null when nothing was typed or it is no amount.
+ */
+export function amountCents(value: string): number | null {
+  const cleaned = resolveAmount(value).replace(/\s/g, '').replace(',', '.')
+  if (cleaned === '' || !/^\d+(\.\d{0,2})?$/.test(cleaned)) {
+    return null
+  }
+  return Math.round(Number(cleaned) * 100)
+}
+
+/** centsToAmount writes hundredths as the "123.45" the API takes. */
+export function centsToAmount(cents: number): string {
+  const sign = cents < 0 ? '-' : ''
+  const whole = Math.abs(cents)
+  return `${sign}${Math.floor(whole / 100)}.${String(whole % 100).padStart(2, '0')}`
+}
+
+/**
+ * equalShares divides a cost equally, the way the server does: the cents that
+ * do not divide evenly go to the first members, one each.
+ *
+ * Arguments:
+ *   - total: the cost in hundredths.
+ *   - count: how many share it.
+ *
+ * Returns:
+ *   - one amount in hundredths per member; empty for nobody.
+ */
+export function equalShares(total: number, count: number): number[] {
+  if (count <= 0) {
+    return []
+  }
+  const base = Math.floor(total / count)
+  const left = total - base * count
+  return Array.from({ length: count }, (_, index) => base + (index < left ? 1 : 0))
+}

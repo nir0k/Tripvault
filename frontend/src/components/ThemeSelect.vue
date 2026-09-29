@@ -22,6 +22,16 @@ const themes: { value: Theme; icon: IconName }[] = [
   { value: 'dark', icon: 'moonStarsFill' },
 ]
 
+// The half circle and the moon are solid shapes that fill their whole box,
+// while the sun beside them and the icons of the other selects are outlines
+// drawn with a margin; a step smaller, the solid ones look the same size.
+const SOLID: IconName[] = ['circleHalf', 'moonStarsFill']
+
+// sizeOf returns the class that evens a theme icon out with the outline ones.
+function sizeOf(icon: IconName): string {
+  return SOLID.includes(icon) ? 'size-4! m-0.5' : ''
+}
+
 // iconOf returns the picture that stands for a theme preference.
 function iconOf(theme: Theme): IconName {
   return themes.find((item) => item.value === theme)?.icon ?? 'circleHalf'
@@ -41,7 +51,7 @@ function choose(theme: Theme): void {
       :aria-label="`${t('preferences.theme')}: ${t(`preferences.themes.${activeTheme}`)}`"
       :title="t('preferences.theme')"
     >
-      <AppIcon :name="iconOf(activeTheme)" />
+      <AppIcon :name="iconOf(activeTheme)" :class="sizeOf(iconOf(activeTheme))" />
       <span v-if="props.labelled">{{ t(`preferences.themes.${activeTheme}`) }}</span>
       <AppIcon name="chevronDown" class="size-3!" />
     </summary>
@@ -53,7 +63,7 @@ function choose(theme: Theme): void {
           :aria-pressed="item.value === activeTheme"
           @click="choose(item.value)"
         >
-          <AppIcon :name="item.icon" />
+          <AppIcon :name="item.icon" :class="sizeOf(item.icon)" />
           {{ t(`preferences.themes.${item.value}`) }}
         </button>
       </li>

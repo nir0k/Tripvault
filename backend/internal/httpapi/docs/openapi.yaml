@@ -4179,6 +4179,23 @@ components:
       pattern: "^[0-2][0-9]:[0-5][0-9]$"
       examples: ["09:00"]
 
+    CostSplit:
+      type: string
+      enum: [none, everyone, individuals]
+      description: |
+        How a cost is shared among the members of the trip: not at all,
+        equally among the members listed, or in amounts of each member's own.
+    CostShare:
+      type: object
+      required: [user_id, amount]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        amount:
+          allOf:
+            - $ref: "#/components/schemas/NullableAmount"
+          description: The member's own part; null when the cost is split equally.
     NullableAmount:
       oneOf:
         - $ref: "#/components/schemas/Amount"
@@ -4195,7 +4212,11 @@ components:
 
     CostCategory:
       type: string
-      enum: [accommodation, transport, food, activities, shopping, other]
+      description: |
+        `accommodation` is shown as lodging and `food` as restaurants and bars;
+        `tolls` covers vignettes and road and tunnel tolls.
+      enum: [accommodation, transport, car_rental, fuel, tolls, food, groceries, sightseeing, activities,
+        shopping, other]
 
     ItemStatus:
       type: string
@@ -4236,7 +4257,8 @@ components:
         position being where it starts; it also names its type.
       required: [id, day_id, position, kind, anchor, stay_id, name, category, activity_type, lat, lng, address, osm_ref,
                  description_md, url, desired_time, visit_minutes, is_optional, booking_ref,
-                 planned_cost_amount, cost_per_person, cost_category, schedule,
+                 planned_cost_amount, cost_per_person, cost_category, cost_note, paid_by, cost_split,
+                 cost_shares, schedule,
                  status, story_md, actual_time, actual_end_time, rating, actual_cost_amount, difficulty,
                  source_item_id, track]
       properties:
@@ -4294,6 +4316,20 @@ components:
           type: boolean
         cost_category:
           $ref: "#/components/schemas/CostCategory"
+        cost_note:
+          type: string
+          description: What the cost is for, in a few words.
+        paid_by:
+          type: [string, "null"]
+          format: uuid
+          description: The member of the trip who pays the cost; null when nobody was named.
+        cost_split:
+          $ref: "#/components/schemas/CostSplit"
+        cost_shares:
+          type: array
+          description: The members the cost is shared among, in the order they were listed.
+          items:
+            $ref: "#/components/schemas/CostShare"
         status:
           $ref: "#/components/schemas/ItemStatus"
         story_md:
@@ -4929,10 +4965,10 @@ components:
       additionalProperties: false
       description: |
         Omitted fields keep their value; null clears coordinates, desired time
-        and cost. A new place needs a name; its visit time defaults to its
-        category's and its cost category follows the place category. `kind`
-        makes it an activity, whose visit time defaults to its type's; it may
-        be changed later, and a place forgets its activity type and difficulty.
+        and cost. A new place needs a name; without `visit_minutes` it takes no
+        time, and its cost category follows the place category. `kind` makes
+        it an activity; it may be changed later, and a place forgets its
+        activity type and difficulty.
         In a report, storing a place puts the places of its day in the order
         of their `actual_time`: the timed ones are sorted into the positions
         the timed ones held, and a place without a time keeps its position.
@@ -4979,6 +5015,27 @@ components:
           type: boolean
         cost_category:
           $ref: "#/components/schemas/CostCategory"
+        cost_note:
+          type: string
+          maxLength: 500
+        paid_by:
+          type: [string, "null"]
+          format: uuid
+          description: A member of the trip; null names nobody.
+        cost_split:
+          $ref: "#/components/schemas/CostSplit"
+        cost_shares:
+          type: array
+          description: |
+            Replaces the members the cost is shared among. Split among
+            `everyone`, the amounts are ignored and the cost is divided
+            equally; split among `individuals`, every share needs an amount and
+            together they must make up the cost for the whole group - in a
+            report the actual cost once it is set. A split cost needs `paid_by`,
+            and everybody named must be a member of the trip
+            (`unknown_member`), except those the place already named.
+          items:
+            $ref: "#/components/schemas/CostShare"
         status:
           $ref: "#/components/schemas/ItemStatus"
         story_md:
@@ -5263,7 +5320,7 @@ components:
         A cost that belongs to no place, stay or leg. `day_id` is null for an
         expense of the whole trip. `actual_amount` and `spent_on` stay empty in
         a plan.
-      required: [id, day_id, category, planned_amount, actual_amount, spent_on, note]
+      required: [id, day_id, category, planned_amount, actual_amount, spent_on, note, comment, url]
       properties:
         id:
           type: string
@@ -5282,6 +5339,13 @@ components:
           format: date
         note:
           type: string
+          description: What the money went on, in a few words.
+        comment:
+          type: string
+          description: Anything longer said about the expense, as plain text.
+        url:
+          type: string
+          description: A link to a booking, a receipt or a shop; empty when there is none.
 
     ExpenseRequest:
       type: object
@@ -5306,6 +5370,13 @@ components:
         note:
           type: string
           maxLength: 500
+        comment:
+          type: string
+          maxLength: 2000
+        url:
+          type: string
+          maxLength: 2000
+          description: An absolute http or https address, or empty.
 
     Budget:
       type: object
@@ -5319,7 +5390,8 @@ components:
         copied with - and `actual` beside each of them. There the overall budget
         is measured against `actual`, since that is what was spent.
       required: [kind, document_id, currency, travelers, budget_amount, planned, unassigned, stays,
-                 transfers, untied, actual, per_person, remaining, used_percent, categories, days, entries]
+                 transfers, untied, actual, per_person, remaining, used_percent, categories, days, entries,
+                 balances, settlements]
       properties:
         kind:
           type: string
@@ -5450,6 +5522,49 @@ components:
                   What was really spent for the whole group, in a report; null in
                   a plan and where nothing was entered. A cost entered only as
                   spent has an `amount` of `0.00`.
+        balances:
+          type: array
+          description: |
+            Where each member stands across the split costs of the places on a
+            day: what they paid and what their own part was. The balances add
+            up to zero. In a report a cost is shared at its actual amount once
+            that is set. Empty while nothing is split.
+          items:
+            type: object
+            required: [user_id, name, paid, share, net]
+            properties:
+              user_id:
+                type: string
+                format: uuid
+              name:
+                type: string
+                description: The member's display name; empty for an account that is gone.
+              paid:
+                $ref: "#/components/schemas/Amount"
+              share:
+                $ref: "#/components/schemas/Amount"
+              net:
+                type: string
+                description: What the others owe the member; negative when the member owes them.
+        settlements:
+          type: array
+          description: The payments that square the balances, largest first.
+          items:
+            type: object
+            required: [from_user_id, from_name, to_user_id, to_name, amount]
+            properties:
+              from_user_id:
+                type: string
+                format: uuid
+              from_name:
+                type: string
+              to_user_id:
+                type: string
+                format: uuid
+              to_name:
+                type: string
+              amount:
+                $ref: "#/components/schemas/Amount"
 
     Leg:
       type: object

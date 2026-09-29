@@ -1,6 +1,7 @@
 package pdf
 
 import (
+	"math"
 	"strconv"
 
 	"github.com/go-pdf/fpdf"
@@ -13,8 +14,9 @@ import (
 // The maps of the document: one of the whole trip after the summary and one at
 // the head of every day, drawn the way the interface draws its map. Each day
 // keeps its colour, a route that followed the roads is a solid line and one
-// that was only estimated is dashed, and the places of a day carry the numbers
-// their headings carry below.
+// that was only estimated is dashed, a recorded track is a trail - a dark
+// casing, the day's colour and a dotted white core - with its start and finish
+// marked, and the places of a day carry the numbers their headings carry below.
 //
 // Only the background is a picture - tiles glued together by the caller, who
 // may reach the tile server - and everything drawn over it is drawn here, as
@@ -63,6 +65,15 @@ type mapLine struct {
 	points []domain.Point
 	color  [3]int
 	dashed bool
+	// track marks a recording imported from a file rather than a journey.
+	track bool
+}
+
+// trackEnd is where a recorded track starts or, with finish set, ends.
+type trackEnd struct {
+	point  domain.Point
+	color  [3]int
+	finish bool
 }
 
 // mapMarker is one point of a map; a label turns the dot into a numbered pin.
@@ -74,7 +85,11 @@ type mapMarker struct {
 
 // mapLayer is everything drawn over a map's background.
 type mapLayer struct {
-	lines   []mapLine
+	lines []mapLine
+	// ends are drawn under the markers, so a place at the start of its own
+	// track keeps its pin on top. They lie on their tracks' lines, so the
+	// frame needs nothing from them.
+	ends    []trackEnd
 	markers []mapMarker
 }
 
@@ -118,6 +133,7 @@ func tripLayer(content domain.DocumentContent) mapLayer {
 	for index, day := range content.Days {
 		each := dayLayer(content, day, index, false)
 		layer.lines = append(layer.lines, each.lines...)
+		layer.ends = append(layer.ends, each.ends...)
 		layer.markers = append(layer.markers, each.markers...)
 	}
 	return layer
@@ -157,7 +173,9 @@ func dayLayer(content domain.DocumentContent, day domain.Day, index int, numbere
 	for _, item := range items {
 		if track := domain.TrackOfItem(content.Tracks, item.ID); track != nil {
 			if points := domain.DecodePolyline(track.Geometry, 5); len(points) >= 2 {
-				layer.lines = append(layer.lines, mapLine{points: points, color: color})
+				layer.lines = append(layer.lines, mapLine{points: points, color: color, track: true})
+				layer.ends = append(layer.ends, trackEnd{point: points[0], color: color},
+					trackEnd{point: points[len(points)-1], color: color, finish: true})
 			}
 		}
 		if item.Kind.IsVisit() {
@@ -241,18 +259,10 @@ func (d *document) drawMap(layer mapLayer, m Map, attribution string) error {
 	d.pdf.SetLineCapStyle("round")
 	d.pdf.SetLineJoinStyle("round")
 	for _, line := range layer.lines {
-		// A pale casing under each line keeps it readable over a busy map.
-		for _, pass := range []struct {
-			width float64
-			color [3]int
-		}{{1.3, [3]int{255, 255, 255}}, {0.7, line.color}} {
+		for _, pass := range linePasses(line) {
 			d.pdf.SetLineWidth(pass.width)
 			d.pdf.SetDrawColor(pass.color[0], pass.color[1], pass.color[2])
-			if line.dashed && pass.color == line.color {
-				d.pdf.SetDashPattern([]float64{1.8, 1.4}, 0)
-			} else {
-				d.pdf.SetDashPattern([]float64{}, 0)
-			}
+			d.pdf.SetDashPattern(pass.dash, 0)
 			for index, point := range line.points {
 				x, y := place(point)
 				if index == 0 {
@@ -265,6 +275,43 @@ func (d *document) drawMap(layer mapLayer, m Map, attribution string) error {
 		}
 	}
 	d.pdf.SetDashPattern([]float64{}, 0)
+
+	// Arrows along each track show the way it was travelled: a white chevron
+	// every so often, its point towards the finish.
+	d.pdf.SetDrawColor(255, 255, 255)
+	d.pdf.SetLineWidth(0.4)
+	for _, line := range layer.lines {
+		if !line.track {
+			continue
+		}
+		path := make([]paperPoint, len(line.points))
+		for index, point := range line.points {
+			path[index].x, path[index].y = place(point)
+		}
+		for _, arrow := range arrowsAlong(path, arrowStepMM) {
+			sin, cos := math.Sincos(arrow.angle)
+			for _, side := range []float64{-1, 1} {
+				// Each arm runs back from the tip and out to one side.
+				backX, backY := -arrowArmMM*cos, -arrowArmMM*sin
+				outX, outY := -side*arrowArmMM*sin, side*arrowArmMM*cos
+				d.pdf.Line(arrow.x, arrow.y, arrow.x+backX+outX*0.8, arrow.y+backY+outY*0.8)
+			}
+		}
+	}
+
+	// A track starts at a white dot ringed in its colour and finishes at a dark
+	// one: the flag the interface draws is too small to read in print.
+	d.pdf.SetLineWidth(0.5)
+	for _, end := range layer.ends {
+		x, y := place(end.point)
+		d.pdf.SetDrawColor(end.color[0], end.color[1], end.color[2])
+		if end.finish {
+			d.pdf.SetFillColor(trackCasing[0], trackCasing[1], trackCasing[2])
+		} else {
+			d.pdf.SetFillColor(255, 255, 255)
+		}
+		d.pdf.Circle(x, y, 1.2, "FD")
+	}
 
 	d.pdf.SetDrawColor(255, 255, 255)
 	d.pdf.SetTextColor(255, 255, 255)
@@ -297,4 +344,83 @@ func (d *document) drawMap(layer mapLayer, m Map, attribution string) error {
 	d.pdf.SetTextColor(0, 0, 0)
 	d.pdf.SetXY(left, top+height+sizeCaption*0.5+2)
 	return nil
+}
+
+// trackCasing is the dark edge a recorded track is drawn over, the colour the
+// interface's map uses.
+var trackCasing = [3]int{31, 41, 55}
+
+// linePass is one stroke of a line; a line is drawn as several, widest first.
+type linePass struct {
+	width float64
+	color [3]int
+	dash  []float64
+}
+
+// linePasses lists the strokes a line is drawn with. A journey has a pale
+// casing that keeps it readable over a busy map, then its colour, dashed while
+// it was only estimated. A recorded track is a trail instead: a dark casing,
+// its colour and a dotted white core, so it is never read as a road.
+func linePasses(line mapLine) []linePass {
+	if line.track {
+		return []linePass{
+			{width: 1.7, color: trackCasing, dash: []float64{}},
+			{width: 1.0, color: line.color, dash: []float64{}},
+			{width: 0.35, color: [3]int{255, 255, 255}, dash: []float64{0.01, 0.9}},
+		}
+	}
+	stroke := linePass{width: 0.7, color: line.color, dash: []float64{}}
+	if line.dashed {
+		stroke.dash = []float64{1.8, 1.4}
+	}
+	return []linePass{{width: 1.3, color: [3]int{255, 255, 255}, dash: []float64{}}, stroke}
+}
+
+// The spacing of the arrows along a track and the length of an arrow's arm,
+// in millimetres of the page.
+const (
+	arrowStepMM = 25.0
+	arrowArmMM  = 0.7
+)
+
+// paperPoint is a position on the page, in millimetres.
+type paperPoint struct {
+	x, y float64
+}
+
+// trackArrow is one arrow along a track: where its tip is and the direction of
+// travel there, in radians on the page (y grows downwards).
+type trackArrow struct {
+	x, y  float64
+	angle float64
+}
+
+// arrowsAlong places an arrow every step millimetres along a path, the first
+// half a step from its start so it keeps clear of the start's dot. A path
+// shorter than half a step gets none.
+//
+// Arguments:
+//   - path: the track on the page, from its start to its finish.
+//   - step: the distance between two arrows.
+//
+// Returns:
+//   - the arrows, in the order they are met along the path.
+func arrowsAlong(path []paperPoint, step float64) []trackArrow {
+	var arrows []trackArrow
+	next, walked := step/2, 0.0
+	for index := 1; index < len(path); index++ {
+		from, to := path[index-1], path[index]
+		length := math.Hypot(to.x-from.x, to.y-from.y)
+		for length > 0 && walked+length >= next {
+			along := (next - walked) / length
+			arrows = append(arrows, trackArrow{
+				x:     from.x + (to.x-from.x)*along,
+				y:     from.y + (to.y-from.y)*along,
+				angle: math.Atan2(to.y-from.y, to.x-from.x),
+			})
+			next += step
+		}
+		walked += length
+	}
+	return arrows
 }

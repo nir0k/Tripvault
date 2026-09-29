@@ -635,7 +635,7 @@ function setStatus(item: PlanItem, status: ItemStatus): void {
 </script>
 
 <template>
-  <div class="max-w-5xl space-y-8">
+  <div class="space-y-8">
     <p v-if="error" role="alert" class="alert alert-error">{{ error }}</p>
     <div v-if="loading" class="flex justify-center py-8"><span class="loading loading-spinner"></span></div>
 

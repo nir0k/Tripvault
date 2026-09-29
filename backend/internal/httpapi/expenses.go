@@ -57,6 +57,8 @@ type expenseFields struct {
 	ActualAmount  optional[string] `json:"actual_amount"`
 	SpentOn       optional[string] `json:"spent_on"`
 	Note          optional[string] `json:"note"`
+	Comment       optional[string] `json:"comment"`
+	URL           optional[string] `json:"url"`
 }
 
 // apply writes the given fields onto an expense and validates the result.
@@ -78,6 +80,12 @@ func (f expenseFields) apply(expense domain.Expense, kind domain.DocumentKind) (
 	}
 	if f.Note.Set {
 		expense.Note = f.Note.Value
+	}
+	if f.Comment.Set {
+		expense.Comment = f.Comment.Value
+	}
+	if f.URL.Set {
+		expense.URL = f.URL.Value
 	}
 	return expense.Normalize(kind)
 }

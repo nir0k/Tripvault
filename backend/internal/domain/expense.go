@@ -1,15 +1,17 @@
 package domain
 
 import (
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
 )
 
 // CostCategories is the order budget categories are listed in. Accommodation
-// and transport come first because they dominate a trip's cost.
-var CostCategories = []CostCategory{CostAccommodation, CostTransport, CostFood, CostActivities,
-	CostShopping, CostOther}
+// and transport come first because they dominate a trip's cost, and the costs
+// of a car follow them.
+var CostCategories = []CostCategory{CostAccommodation, CostTransport, CostCarRental, CostFuel, CostTolls,
+	CostFood, CostGroceries, CostSightseeing, CostActivities, CostShopping, CostOther}
 
 // ValidateCostCategory - checks that a value names a budget category.
 //
@@ -20,12 +22,10 @@ var CostCategories = []CostCategory{CostAccommodation, CostTransport, CostFood, 
 // Returns:
 //   - a *ValidationError when the value is not a known category.
 func ValidateCostCategory(field string, category CostCategory) error {
-	switch category {
-	case CostAccommodation, CostTransport, CostFood, CostActivities, CostShopping, CostOther:
+	if slices.Contains(CostCategories, category) {
 		return nil
-	default:
-		return NewValidationError(field, "unsupported", "is not a known budget category")
 	}
+	return NewValidationError(field, "unsupported", "is not a known budget category")
 }
 
 // Expense is a cost that belongs to no place, stay or leg: a city tax, a
@@ -42,14 +42,22 @@ type Expense struct {
 	Actual  *Money
 	// SpentOn is the date the money left, known only in a report.
 	SpentOn *time.Time
-	Note    string
+	// Note names what the money went on, in a few words.
+	Note string
+	// Comment is anything longer said about the expense, as plain text.
+	Comment string
+	// URL links to a booking, a receipt or the page something was bought on.
+	URL string
 	// SourceExpenseID is the expense of the plan this one was copied from.
 	SourceExpenseID *uuid.UUID
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
 
-// Normalize - trims an expense's note, fills its default category and checks
+// maxExpenseComment bounds the plain-text comment of an expense.
+const maxExpenseComment = 2000
+
+// Normalize - trims an expense's note and comment, fills its default category and checks
 // its fields.
 //
 // Arguments:
@@ -76,6 +84,12 @@ func (e Expense) Normalize(kind DocumentKind) (Expense, error) {
 	}
 	var err error
 	if e.Note, err = trimmedText("note", e.Note, maxShortText); err != nil {
+		return e, err
+	}
+	if e.Comment, err = trimmedText("comment", e.Comment, maxExpenseComment); err != nil {
+		return e, err
+	}
+	if e.URL, err = normalizeURL(e.URL); err != nil {
 		return e, err
 	}
 	if e.Planned == nil && e.Actual == nil {

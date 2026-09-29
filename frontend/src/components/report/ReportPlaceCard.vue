@@ -202,6 +202,6 @@ function rate(stars: number): void {
       @unlink="(media) => emit('unlinkMedia', media)"
       @remove="(media) => emit('removeMedia', media)"
     />
-    <MediaUploader v-if="structural && tripId" :trip-id="tripId" compact @uploaded="(media) => emit('uploaded', media)" />
+    <MediaUploader v-if="structural && tripId" :trip-id="tripId" small @uploaded="(media) => emit('uploaded', media)" />
   </article>
 </template>

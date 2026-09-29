@@ -156,6 +156,8 @@ func copyStays(ctx context.Context, tx pgx.Tx, reportID uuid.UUID, stays []domai
 
 // copyPlaces writes the report's places. A place with no day is a plan's
 // unassigned idea and is not copied; stay marks are derived and are not either.
+// Who pays a cost and who shares it are left behind with the plan's people:
+// the report has members of its own.
 func copyPlaces(ctx context.Context, tx pgx.Tx, reportID uuid.UUID, items []domain.Item,
 	days map[uuid.UUID]uuid.UUID) (map[uuid.UUID]uuid.UUID, error) {
 	copies := make(map[uuid.UUID]uuid.UUID, len(items))
@@ -172,13 +174,13 @@ func copyPlaces(ctx context.Context, tx pgx.Tx, reportID uuid.UUID, items []doma
 			`INSERT INTO items (id, document_id, day_id, position, kind, name, category, lat, lng, address, osm_ref,
 			                    description_md, url, desired_time, visit_minutes, is_optional, booking_ref,
 			                    planned_cost_amount, cost_per_person, cost_category, status, source_item_id,
-			                    activity_type, difficulty)
+			                    activity_type, difficulty, cost_note)
 			 VALUES ($1, $2, $3, $4, $21, $5, $6, $7, $8, $9, nullif($10, ''), $11, $12, $13::time, $14, $15, $16,
-			         $17::numeric, $18, $19, 'visited', $20, nullif($22, ''), $23)`,
+			         $17::numeric, $18, $19, 'visited', $20, nullif($22, ''), $23, $24)`,
 			id, reportID, dayID, item.Position, item.Name, item.Category, item.Lat, item.Lng, item.Address,
 			item.OSMRef, item.DescriptionMD, item.URL, clockParam(item.DesiredTime), item.VisitMinutes,
 			item.IsOptional, item.BookingRef, moneyParam(item.PlannedCost), item.CostPerPerson, item.CostCategory,
-			item.ID, item.Kind, item.ActivityType, item.Difficulty); err != nil {
+			item.ID, item.Kind, item.ActivityType, item.Difficulty, item.CostNote); err != nil {
 			return nil, fmt.Errorf("copy place: %w", err)
 		}
 		copies[item.ID] = id
@@ -223,10 +225,11 @@ func copyExpenses(ctx context.Context, tx pgx.Tx, reportID uuid.UUID, expenses [
 			dayID = &copied
 		}
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO expenses (id, document_id, day_id, category, planned_amount, note, source_expense_id)
-			 VALUES ($1, $2, $3, $4, $5::numeric, $6, $7)`,
+			`INSERT INTO expenses (id, document_id, day_id, category, planned_amount, note, comment, url,
+			                       source_expense_id)
+			 VALUES ($1, $2, $3, $4, $5::numeric, $6, $7, $8, $9)`,
 			uuid.Must(uuid.NewV7()), reportID, dayID, expense.Category, moneyParam(expense.Planned),
-			expense.Note, expense.ID); err != nil {
+			expense.Note, expense.Comment, expense.URL, expense.ID); err != nil {
 			return fmt.Errorf("copy expense: %w", err)
 		}
 	}

@@ -76,8 +76,35 @@ type demoPlace struct {
 	Cost         string
 	PerPerson    bool
 	CostCategory domain.CostCategory
+	// CostNote says what the cost is for.
+	CostNote string
+	// Split names who pays the cost and who shares it, nil when nobody does.
+	Split *demoSplit
 	// Report holds what the report says about the place, on a trip that has one.
 	Report *demoReport
+}
+
+// demoPerson is one of the people of an example trip.
+type demoPerson int
+
+// The people of an example trip: the owner and the two accounts it is shared with.
+const (
+	demoOwner demoPerson = iota
+	demoEditor
+	demoViewer
+)
+
+// demoSplit is who pays a place's cost and who shares it. Shares without
+// amounts split it equally; with amounts, each takes their own.
+type demoSplit struct {
+	PaidBy demoPerson
+	Shares []demoShare
+}
+
+// demoShare is one person's part of a split cost; Amount is empty for an equal split.
+type demoShare struct {
+	Person demoPerson
+	Amount string
 }
 
 // demoReport is how a place turned out, for the report copied from the plan.
@@ -352,7 +379,8 @@ func writeDemoTrip(ctx context.Context, trips TripStore, documents DocumentStore
 	if err := shareDemoTrip(ctx, trips, trip.ID, owner, editor, viewer, demo.Title, logger); err != nil {
 		return err
 	}
-	if err := writePlan(ctx, documents, planID, demo); err != nil {
+	people := map[demoPerson]uuid.UUID{demoOwner: owner, demoEditor: editor, demoViewer: viewer}
+	if err := writePlan(ctx, documents, planID, demo, people); err != nil {
 		return err
 	}
 	if demo.Report == nil {
@@ -467,7 +495,8 @@ func writeDemoShareLink(ctx context.Context, trips TripStore, tripID, owner uuid
 
 // writePlan fills a plan: the words of each day, the stays, the transfers, the
 // places, the separate expenses, the unassigned ideas and the legs' own figures.
-func writePlan(ctx context.Context, documents DocumentStore, planID uuid.UUID, demo demoTrip) error {
+func writePlan(ctx context.Context, documents DocumentStore, planID uuid.UUID, demo demoTrip,
+	people map[demoPerson]uuid.UUID) error {
 	content, err := documents.Content(ctx, planID)
 	if err != nil {
 		return err
@@ -503,13 +532,13 @@ func writePlan(ctx context.Context, documents DocumentStore, planID uuid.UUID, d
 	for index, day := range demo.Days {
 		dayID := content.Days[index].ID
 		for _, place := range day.Places {
-			if err := writePlace(ctx, documents, planID, &dayID, place); err != nil {
+			if err := writePlace(ctx, documents, planID, &dayID, place, people); err != nil {
 				return err
 			}
 		}
 	}
 	for _, idea := range demo.Ideas {
-		if err := writePlace(ctx, documents, planID, nil, idea); err != nil {
+		if err := writePlace(ctx, documents, planID, nil, idea, people); err != nil {
 			return err
 		}
 	}
@@ -521,9 +550,10 @@ func writePlan(ctx context.Context, documents DocumentStore, planID uuid.UUID, d
 	return writeLegs(ctx, documents, planID, demo.Legs)
 }
 
-// writePlace adds one place to a day, or to the unassigned list when dayID is nil.
+// writePlace adds one place to a day, or to the unassigned list when dayID is
+// nil, naming the people of the trip who pay and share its cost.
 func writePlace(ctx context.Context, documents DocumentStore, documentID uuid.UUID, dayID *uuid.UUID,
-	place demoPlace) error {
+	place demoPlace, people map[demoPerson]uuid.UUID) error {
 	kind := domain.ItemPlace
 	if place.Activity != "" {
 		kind = domain.ItemActivity
@@ -533,6 +563,10 @@ func writePlace(ctx context.Context, documents DocumentStore, documentID uuid.UU
 		Name: place.Name, Category: place.Category, Address: place.Address, URL: place.URL,
 		BookingRef: place.BookingRef, DescriptionMD: place.Description, VisitMinutes: place.VisitMinutes,
 		IsOptional: place.Optional, CostPerPerson: place.PerPerson, CostCategory: place.CostCategory,
+		CostNote: place.CostNote,
+	}
+	if err := applyDemoSplit(&item, place.Split, people); err != nil {
+		return err
 	}
 	if place.Difficulty > 0 {
 		difficulty := place.Difficulty
@@ -561,6 +595,29 @@ func writePlace(ctx context.Context, documents DocumentStore, documentID uuid.UU
 		return err
 	}
 	return documents.CreatePlace(ctx, normalized, nil)
+}
+
+// applyDemoSplit gives a place the payer and the shares its example names.
+func applyDemoSplit(item *domain.Item, split *demoSplit, people map[demoPerson]uuid.UUID) error {
+	if split == nil {
+		return nil
+	}
+	payer := people[split.PaidBy]
+	item.PaidBy = &payer
+	item.CostSplit = domain.SplitEveryone
+	for _, share := range split.Shares {
+		part := domain.CostShare{UserID: people[share.Person]}
+		if share.Amount != "" {
+			amount, err := domain.ParseMoney("cost_shares", share.Amount)
+			if err != nil {
+				return err
+			}
+			part.Amount = &amount
+			item.CostSplit = domain.SplitIndividuals
+		}
+		item.CostShares = append(item.CostShares, part)
+	}
+	return nil
 }
 
 // writeTransfer adds one booked journey.

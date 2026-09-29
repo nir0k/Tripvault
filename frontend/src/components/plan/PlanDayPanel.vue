@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { DayChanges } from '@/api/documents'
+import type { DayChanges, PlaceFields } from '@/api/documents'
 import type { Leg, PlanDay, PlanItem, Transfer, TravelMode } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import IconSelect from '@/components/IconSelect.vue'
 import MarkdownText from '@/components/MarkdownText.vue'
+import PlanInsertButton from '@/components/plan/PlanInsertButton.vue'
 import PlanItemCard from '@/components/plan/PlanItemCard.vue'
 import PlanLegRow from '@/components/plan/PlanLegRow.vue'
 import PlanPlaceList from '@/components/plan/PlanPlaceList.vue'
@@ -13,7 +14,7 @@ import TransferRow from '@/components/plan/TransferRow.vue'
 import TimeInput from '@/components/TimeInput.vue'
 import { formatClock, formatDayDate, formatDistance, formatMoney } from '@/utils/format'
 import { activeUnits } from '@/utils/units'
-import { formatDuration, isVisit, travelModeOptions } from '@/utils/plan'
+import { dayColor, formatDuration, isVisit, travelModeOptions } from '@/utils/plan'
 
 // One day of the plan: its header, settings, elements in schedule order and
 // totals.
@@ -29,6 +30,10 @@ const props = defineProps<{
   canEdit: boolean
   draggable: boolean
   collapsed?: boolean
+  /** Ranks the search of a new place near this point first. */
+  focus?: { lat: number; lng: number } | null
+  /** create stores a new element at a position of the day; see PlanPlaceList. */
+  create?: (position: number, fields: PlaceFields) => Promise<boolean>
 }>()
 
 const emit = defineEmits<{
@@ -36,13 +41,15 @@ const emit = defineEmits<{
   update: [changes: DayChanges]
   duplicate: []
   remove: []
-  addPlace: []
-  addActivity: []
   addStay: []
-  addTransfer: []
   editTransfer: [transfer: Transfer]
   move: [itemId: string, dayId: string | null, position: number]
   edit: [item: PlanItem]
+  updatePlace: [item: PlanItem, fields: PlaceFields]
+  editTime: [item: PlanItem]
+  editCost: [item: PlanItem]
+  importTrack: [item: PlanItem, file: File]
+  removeTrack: [item: PlanItem]
   pickTarget: [item: PlanItem, mode: 'move' | 'copy']
   removePlace: [item: PlanItem]
   legMode: [leg: Leg, mode: TravelMode]
@@ -67,6 +74,8 @@ watch(() => props.day, (day) => {
     notes.value = day.notes_md
   }
 })
+
+const placeList = useTemplateRef<InstanceType<typeof PlanPlaceList>>('placeList')
 
 const morning = computed(() => props.day.items.find((item) => item.anchor === 'morning') ?? null)
 const evening = computed(() => props.day.items.find((item) => item.anchor === 'evening') ?? null)
@@ -254,22 +263,32 @@ function setMode(value: string): void {
         @hide-anchor="emit('update', { morning_anchor: false })"
       />
       <PlanPlaceList
+        ref="placeList"
         :places="places"
         :day-id="day.id"
         :currency="currency"
         :can-edit="canEdit"
         :draggable="draggable"
         :legs-to="legsTo"
+        :color="dayColor(day.position)"
+        :focus="focus"
+        :create="create"
+        :trailing="false"
         @locate="(item) => emit('locate', item)"
         @move="(itemId, dayId, position) => emit('move', itemId, dayId, position)"
         @edit="(item) => emit('edit', item)"
+        @update="(item, fields) => emit('updatePlace', item, fields)"
+        @edit-time="(item) => emit('editTime', item)"
+        @edit-cost="(item) => emit('editCost', item)"
+        @import-track="(item, file) => emit('importTrack', item, file)"
+        @remove-track="(item) => emit('removeTrack', item)"
         @pick-target="(item, mode) => emit('pickTarget', item, mode)"
         @remove="(item) => emit('removePlace', item)"
         @leg-mode="(leg, mode) => emit('legMode', leg, mode)"
         @leg-edit="(leg) => emit('legEdit', leg)"
         @leg-retry="(leg) => emit('legRetry', leg)"
       />
-      <p v-if="places.length === 0" class="rounded-box border border-dashed border-base-300 p-4 text-center text-sm text-base-content/60">
+      <p v-if="places.length === 0 && !(canEdit && create)" class="rounded-box border border-dashed border-base-300 p-4 text-center text-sm text-base-content/60">
         {{ canEdit ? t('plan.emptyDay') : t('plan.emptyDayReadOnly') }}
       </p>
       <PlanLegRow
@@ -277,9 +296,11 @@ function setMode(value: string): void {
         :leg="eveningLeg"
         :currency="currency"
         :can-edit="canEdit"
+        :insertable="canEdit && !!create"
         @mode="(mode) => emit('legMode', eveningLeg!, mode)"
         @edit="emit('legEdit', eveningLeg!)"
         @retry="emit('legRetry', eveningLeg!)"
+        @insert="(kind) => placeList?.startAdding(places.length, kind)"
       />
       <PlanItemCard
         v-if="evening"
@@ -289,24 +310,18 @@ function setMode(value: string): void {
         @locate="emit('locate', evening)"
         @hide-anchor="emit('update', { evening_anchor: false })"
       />
+      <!-- The end of the day, after the night's stay when there is one: a new
+           place goes last among the places, since the stay always closes the day.
+           An empty day offers its "+" in the list itself. -->
+      <div v-if="canEdit && create && places.length > 0" class="flex justify-center pt-1">
+        <PlanInsertButton pill @pick="(kind) => placeList?.startAdding(places.length, kind)" />
+      </div>
     </div>
 
     <div v-if="canEdit && !collapsed" class="flex flex-wrap gap-2">
-      <button type="button" class="btn btn-sm btn-primary" @click="emit('addPlace')">
-        <AppIcon name="plus" />
-        {{ t('plan.addPlace') }}
-      </button>
-      <button type="button" class="btn btn-sm btn-hover-outline" @click="emit('addActivity')">
-        <AppIcon name="plus" />
-        {{ t('plan.addActivity') }}
-      </button>
       <button type="button" class="btn btn-sm btn-hover-outline" @click="emit('addStay')">
         <AppIcon name="plus" />
         {{ t('plan.addStay') }}
-      </button>
-      <button v-if="day.date" type="button" class="btn btn-sm btn-hover-outline" @click="emit('addTransfer')">
-        <AppIcon name="plus" />
-        {{ t('plan.addTransfer') }}
       </button>
     </div>
 

@@ -17,13 +17,13 @@ import (
 // document, which is checked in the same transaction as the write.
 
 var expenseColumns = `e.id, e.document_id, e.day_id, e.category, (e.planned_amount * 100)::bigint,
-	(e.actual_amount * 100)::bigint, e.spent_on, e.note, e.source_expense_id, e.created_at, e.updated_at`
+	(e.actual_amount * 100)::bigint, e.spent_on, e.note, e.comment, e.url, e.source_expense_id, e.created_at, e.updated_at`
 
 // scanExpense reads one row in the order of expenseColumns.
 func scanExpense(row pgx.Row) (domain.Expense, error) {
 	var e domain.Expense
 	err := row.Scan(&e.ID, &e.DocumentID, &e.DayID, &e.Category, &e.Planned, &e.Actual, &e.SpentOn, &e.Note,
-		&e.SourceExpenseID, &e.CreatedAt, &e.UpdatedAt)
+		&e.Comment, &e.URL, &e.SourceExpenseID, &e.CreatedAt, &e.UpdatedAt)
 	return e, err
 }
 
@@ -70,7 +70,8 @@ func (r *DocumentRepository) writeExpense(ctx context.Context, expense domain.Ex
 			return err
 		}
 		args := []any{expense.ID, expense.DocumentID, expense.DayID, expense.Category,
-			moneyParam(expense.Planned), moneyParam(expense.Actual), expense.SpentOn, expense.Note}
+			moneyParam(expense.Planned), moneyParam(expense.Actual), expense.SpentOn, expense.Note,
+			expense.Comment, expense.URL}
 		var sql string
 		if insert {
 			// The link to the plan's expense is written once and never changes, so
@@ -78,11 +79,12 @@ func (r *DocumentRepository) writeExpense(ctx context.Context, expense domain.Ex
 			// its statement has no place for.
 			args = append(args, expense.SourceExpenseID)
 			sql = `INSERT INTO expenses (id, document_id, day_id, category, planned_amount, actual_amount,
-			                             spent_on, note, source_expense_id)
-			       VALUES ($1, $2, $3, $4, $5::numeric, $6::numeric, $7, $8, $9)`
+			                             spent_on, note, comment, url, source_expense_id)
+			       VALUES ($1, $2, $3, $4, $5::numeric, $6::numeric, $7, $8, $9, $10, $11)`
 		} else {
 			sql = `UPDATE expenses SET day_id = $3, category = $4, planned_amount = $5::numeric,
-			                           actual_amount = $6::numeric, spent_on = $7, note = $8, updated_at = now()
+			                           actual_amount = $6::numeric, spent_on = $7, note = $8,
+			                           comment = $9, url = $10, updated_at = now()
 			       WHERE id = $1 AND document_id = $2`
 		}
 		tag, err := tx.Exec(ctx, sql, args...)
