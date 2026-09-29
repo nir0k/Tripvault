@@ -16,7 +16,7 @@ import (
 // TestTheFontsHaveEveryMarkTheDocumentDraws checks the decoration and the two
 // alphabets against all three embedded faces.
 func TestTheFontsHaveEveryMarkTheDocumentDraws(t *testing.T) {
-	marks := []rune(bulletMark + arrowMark + separator + "–—…«»“”'’")
+	marks := []rune(bulletMark + arrowMark + separator + quantityMark + "–—…«»“”'’")
 
 	// One letter from each script the interface is written in, plus the
 	// punctuation a Russian page needs.

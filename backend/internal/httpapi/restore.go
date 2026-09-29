@@ -364,6 +364,8 @@ func (s *Server) runRestore(id uuid.UUID, open func(context.Context) (io.ReadClo
 	// Backups leave previews out, so the restored pictures have none; the walk
 	// that renders them waits for the maintenance to end.
 	s.requestPreviewBackfill()
+	// An archive of an older build may hold tracks measured an older way.
+	s.remeasureTracks()
 	s.logger.Warn("restored the whole service from an archive",
 		slog.String("restore_id", id.String()),
 		slog.String("requested_by", s.restoreJobRequestedBy(id)),

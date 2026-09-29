@@ -115,9 +115,16 @@ type DocumentStore interface {
 	SaveTrack(ctx context.Context, track domain.Track, file []byte) (domain.Track, error)
 	Track(ctx context.Context, id uuid.UUID) (domain.Track, error)
 	TrackFile(ctx context.Context, id uuid.UUID) (domain.TrackFile, error)
+	StaleTracks(ctx context.Context, version int) ([]uuid.UUID, error)
+	UpdateTrackClimb(ctx context.Context, id uuid.UUID, ascent, descent *int, grades []int, version int) error
+	SetTrackSpeed(ctx context.Context, itemID uuid.UUID, speed *float64) error
 	DeleteTrack(ctx context.Context, itemID uuid.UUID) error
 	Leg(ctx context.Context, id uuid.UUID) (domain.Leg, error)
 	UpdateLeg(ctx context.Context, leg domain.Leg) error
+	SaveLegParts(ctx context.Context, leg domain.Leg) error
+	UpdateLegNote(ctx context.Context, legID uuid.UUID, note string) error
+	SaveSegmentCalculation(ctx context.Context, segmentID uuid.UUID, input string, calculation domain.LegCalculation,
+		at time.Time) (bool, error)
 	SaveLegCalculation(ctx context.Context, legID uuid.UUID, input string, calculation domain.LegCalculation,
 		pinned bool, at time.Time) (bool, error)
 	SaveTranslations(ctx context.Context, documentID uuid.UUID, language string, translations []domain.Translation) error
@@ -176,6 +183,12 @@ type Dependencies struct {
 	Sessions  SessionStore
 	Trips     TripStore
 	Documents DocumentStore
+	// Tags are every person's own tags.
+	Tags TagStore
+	// Packing is the list of what to take on a plan's trip.
+	Packing PackingStore
+	// Ideas are every person's own ideas of where to go.
+	Ideas IdeaStore
 	// Media is the catalogue of the files; MediaFiles is where their bytes live.
 	Media      MediaStore
 	MediaFiles media.Store
@@ -237,6 +250,9 @@ type Server struct {
 	sessions       SessionStore
 	trips          TripStore
 	documents      DocumentStore
+	tags           TagStore
+	packing        PackingStore
+	ideas          IdeaStore
 	media          MediaStore
 	mediaFiles     media.Store
 	mediaMaxBytes  int64
@@ -286,6 +302,8 @@ type Server struct {
 	restoreJobsMu sync.Mutex
 	restoreActive bool
 	restoreJobs   map[uuid.UUID]*restoreJob
+	// downloads are the tickets of the downloads the browser opens itself.
+	downloads downloadTickets
 
 	signIns *signInLimits
 	docs    *docs.Handler
@@ -316,6 +334,9 @@ func NewServer(opts Options, logger *slog.Logger, deps Dependencies) *Server {
 		sessions:       deps.Sessions,
 		trips:          deps.Trips,
 		documents:      deps.Documents,
+		tags:           deps.Tags,
+		packing:        deps.Packing,
+		ideas:          deps.Ideas,
 		media:          deps.Media,
 		mediaFiles:     deps.MediaFiles,
 		mediaMaxBytes:  deps.MediaMaxBytes,
@@ -399,6 +420,9 @@ func (s *Server) routes() http.Handler {
 		v1.Use(s.requireAvailable)
 
 		v1.Get("/config", s.handleClientConfig)
+		// A download the browser opens itself carries its ticket in a cookie
+		// scoped to its address, not in a header, so it needs no account.
+		v1.Get("/downloads/{downloadID}", s.handleDownload)
 		v1.Post("/auth/login", s.handleLogin)
 		v1.Post("/auth/refresh", s.handleRefresh)
 		v1.Post("/auth/logout", s.handleLogout)
@@ -411,8 +435,12 @@ func (s *Server) routes() http.Handler {
 			shared.Get("/", s.handleShared)
 			shared.Get("/document", s.handleSharedDocument)
 			shared.Get("/report/pdf", s.handleSharedReportPDF)
+			shared.Get("/plan/pdf", s.handleSharedPlanPDF)
+			shared.Get("/packing", s.handleSharedPacking)
+			shared.Get("/packing/pdf", s.handleSharedPackingPDF)
 			shared.Get("/media/{mediaID}", s.handleSharedMediaFile)
 			shared.Get("/media/{mediaID}/thumbnail", s.handleSharedMediaThumbnail)
+			shared.Post("/media:download", s.handleSharedMediaDownload)
 			shared.Get("/tracks/{trackID}/file", s.handleSharedTrackFile)
 		})
 
@@ -440,6 +468,22 @@ func (s *Server) routes() http.Handler {
 				member.Get("/geo/reverse", s.handleGeoReverse)
 				member.Get("/geo/parse-link", s.handleParseLink)
 
+				member.Get("/tags", s.handleListTags)
+				member.Post("/tags", s.handleCreateTag)
+				member.Patch("/tags/{tagID}", s.handleUpdateTag)
+				member.Delete("/tags/{tagID}", s.handleDeleteTag)
+				member.Put("/trips/{tripID}/tags", s.handleSetTripTags)
+
+				member.Get("/ideas", s.handleListIdeas)
+				member.Post("/ideas", s.handleCreateIdea)
+				member.Get("/ideas/{ideaID}", s.handleGetIdea)
+				member.Put("/ideas/{ideaID}", s.handleUpdateIdea)
+				member.Delete("/ideas/{ideaID}", s.handleDeleteIdea)
+				member.Put("/ideas/{ideaID}/tags", s.handleSetIdeaTags)
+				member.Post("/ideas/{ideaID}/photos", s.handleAddIdeaPhoto)
+				member.Get("/ideas/{ideaID}/photos/{photoID}", s.handleGetIdeaPhoto)
+				member.Delete("/ideas/{ideaID}/photos/{photoID}", s.handleDeleteIdeaPhoto)
+
 				member.Get("/trips", s.handleListTrips)
 				member.Post("/trips", s.handleCreateTrip)
 				member.Get("/trips/years", s.handleTripYears)
@@ -456,6 +500,7 @@ func (s *Server) routes() http.Handler {
 				member.Get("/trips/{tripID}/budget", s.handleGetBudget)
 				member.Get("/trips/{tripID}/media", s.handleListMedia)
 				member.Post("/trips/{tripID}/media", s.handleUploadMedia)
+				member.Post("/trips/{tripID}/media:download", s.handleMediaDownload)
 				member.Get("/media/{mediaID}", s.handleGetMediaFile)
 				member.Get("/media/{mediaID}/thumbnail", s.handleGetMediaThumbnail)
 				member.Patch("/media/{mediaID}", s.handleUpdateMedia)
@@ -464,10 +509,24 @@ func (s *Server) routes() http.Handler {
 				member.Post("/media-favorites", s.handleSetMediaFavorites)
 				member.Post("/trips/{tripID}/reports", s.handleCreateReport)
 				member.Get("/trips/{tripID}/report/pdf", s.handleReportPDF)
+				member.Get("/trips/{tripID}/plan/pdf", s.handlePlanPDF)
+				member.Get("/trips/{tripID}/packing", s.handleGetPacking)
+				member.Get("/trips/{tripID}/packing/pdf", s.handlePackingPDF)
+				member.Post("/trips/{tripID}/packing:reset", s.handleResetPacking)
+				member.Post("/trips/{tripID}/packing/categories", s.handleCreatePackingCategory)
+				member.Post("/trips/{tripID}/packing/categories:reorder", s.handleReorderPackingCategories)
+				member.Post("/trips/{tripID}/packing/items", s.handleCreatePackingItem)
+				member.Patch("/packing-categories/{categoryID}", s.handleUpdatePackingCategory)
+				member.Delete("/packing-categories/{categoryID}", s.handleDeletePackingCategory)
+				member.Patch("/packing-items/{itemID}", s.handleUpdatePackingItem)
+				member.Delete("/packing-items/{itemID}", s.handleDeletePackingItem)
+				member.Post("/packing-items/{itemID}:move", s.handleMovePackingItem)
 
 				member.Get("/documents/{documentID}", s.handleGetDocument)
 				member.Patch("/documents/{documentID}", s.handleUpdateDocument)
 				member.Put("/documents/{documentID}/translations/{lang}", s.handleSaveTranslations)
+				member.Get("/documents/{documentID}/translations/{lang}/file", s.handleGetTranslationFile)
+				member.Put("/documents/{documentID}/translations/{lang}/file", s.handlePutTranslationFile)
 				member.Post("/documents/{documentID}/days", s.handleCreateDay)
 				member.Post("/documents/{documentID}/days:reorder", s.handleReorderDays)
 				member.Post("/documents/{documentID}/items", s.handleCreateUnassignedPlace)
@@ -482,6 +541,7 @@ func (s *Server) routes() http.Handler {
 				member.Post("/days/{dayID}:duplicate", s.handleDuplicateDay)
 				member.Post("/days/{dayID}:recalculate", s.handleRecalculateDay)
 				member.Post("/items/{itemID}/track", s.handleImportItemTrack)
+				member.Patch("/items/{itemID}/track", s.handleUpdateItemTrack)
 				member.Delete("/items/{itemID}/track", s.handleDeleteItemTrack)
 				member.Get("/tracks/{trackID}/file", s.handleGetTrackFile)
 				member.Post("/days/{dayID}/items", s.handleCreateDayPlace)
@@ -495,6 +555,7 @@ func (s *Server) routes() http.Handler {
 				member.Patch("/expenses/{expenseID}", s.handleUpdateExpense)
 				member.Delete("/expenses/{expenseID}", s.handleDeleteExpense)
 				member.Patch("/legs/{legID}", s.handleUpdateLeg)
+				member.Put("/legs/{legID}/segments", s.handleSetLegSegments)
 				member.Post("/legs/{legID}:recalculate", s.handleRecalculateLeg)
 				member.Post("/legs/{legID}:alternatives", s.handleLegAlternatives)
 				member.Post("/legs/{legID}:route", s.handlePinLegRoute)
@@ -564,6 +625,7 @@ func (s *Server) handleMethodNotAllowed(w http.ResponseWriter, r *http.Request) 
 //     in-flight requests did not finish in time.
 func (s *Server) Run(ctx context.Context) error {
 	s.startPreviewWork()
+	s.remeasureTracks()
 	serveErr := make(chan error, 1)
 	go func() {
 		s.logger.Info("http server listening", slog.String("addr", s.opts.Addr))

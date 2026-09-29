@@ -310,6 +310,9 @@ func readContent(ctx context.Context, q querier, id uuid.UUID) (domain.DocumentC
 		`SELECT `+legColumns+` FROM legs l WHERE l.document_id = $1`, id); err != nil {
 		return content, err
 	}
+	if err = attachLegParts(ctx, q, content.Legs, `SELECT id FROM legs WHERE document_id = $1`, id); err != nil {
+		return content, err
+	}
 	if content.Expenses, err = collect(ctx, q, scanExpense,
 		`SELECT `+expenseColumns+` FROM expenses e WHERE e.document_id = $1 ORDER BY e.created_at, e.id`, id); err != nil {
 		return content, err
@@ -548,7 +551,19 @@ func renumberPlaces(ctx context.Context, tx pgx.Tx, documentID uuid.UUID, dayID 
 // openSlot makes room in a list of places and returns the position to use. A
 // nil or out-of-range position means the end of the list. except is left out
 // of the list, for a place moving within it.
+//
+// The list is numbered afresh without except first: a place moving down its
+// own day leaves a gap where it was, and positions counted with that gap would
+// put it straight back.
 func openSlot(ctx context.Context, tx pgx.Tx, documentID uuid.UUID, dayID *uuid.UUID, position *int, except uuid.UUID) (int, error) {
+	if _, err := tx.Exec(ctx,
+		`UPDATE items i SET position = r.rn - 1
+		 FROM (SELECT id, row_number() OVER (ORDER BY position, created_at, id) AS rn FROM items
+		       WHERE document_id = $1 AND day_id IS NOT DISTINCT FROM $2 AND kind <> 'stay_anchor' AND id <> $3) r
+		 WHERE i.id = r.id AND i.position <> r.rn - 1`,
+		documentID, dayID, except); err != nil {
+		return 0, fmt.Errorf("number places: %w", err)
+	}
 	var count int
 	if err := tx.QueryRow(ctx,
 		`SELECT count(*) FROM items WHERE document_id = $1 AND day_id IS NOT DISTINCT FROM $2 AND kind <> 'stay_anchor' AND id <> $3`,
@@ -657,6 +672,11 @@ func syncLegs(ctx context.Context, tx pgx.Tx, tripID uuid.UUID) error {
 				                 updated_at = now()
 				 WHERE id = $1`, leg.ID, leg.Input); err != nil {
 				return fmt.Errorf("reset leg: %w", err)
+			}
+		}
+		for _, segment := range plan.ResetSegments {
+			if err := resetSegment(ctx, tx, segment); err != nil {
+				return err
 			}
 		}
 		for _, leg := range plan.Create {
@@ -1242,7 +1262,8 @@ func (r *DocumentRepository) MovePlace(ctx context.Context, documentID, placeID 
 	})
 }
 
-// CopyPlace - copies a place into a day or the unassigned list.
+// CopyPlace - copies a place into a day or the unassigned list. In a report
+// the copy is another visit to the place, without the record of the first.
 //
 // Arguments:
 //   - ctx: context bounding the transaction.
@@ -1268,6 +1289,11 @@ func (r *DocumentRepository) CopyPlace(ctx context.Context, source domain.Item, 
 			return err
 		}
 		place := source
+		// A copy in a report is another visit to the same place: it starts
+		// without the story, rating, times and pictures of the first.
+		if document.Kind == domain.DocumentReport {
+			place = place.WithoutVisit()
+		}
 		place.ID = copyID
 		place.DayID = dayID
 		if err := insertPlace(ctx, tx, place, slot); err != nil {
@@ -1275,8 +1301,9 @@ func (r *DocumentRepository) CopyPlace(ctx context.Context, source domain.Item, 
 		}
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO translations (trip_id, item_id, field, lang, value)
-			 SELECT trip_id, $2, field, lang, value FROM translations WHERE item_id = $1`,
-			source.ID, copyID); err != nil {
+			 SELECT trip_id, $2, field, lang, value FROM translations
+			 WHERE item_id = $1 AND NOT ($3 AND field = 'story_md')`,
+			source.ID, copyID, document.Kind == domain.DocumentReport); err != nil {
 			return fmt.Errorf("copy place translations: %w", err)
 		}
 		return syncTrip(ctx, tx, document.TripID)
@@ -1371,7 +1398,7 @@ func (r *DocumentRepository) DeleteStay(ctx context.Context, stay domain.Stay) e
 	})
 }
 
-// Leg - reads one leg.
+// Leg - reads one leg, with its parts and tickets and folded when it has changes.
 //
 // Arguments:
 //   - ctx: context bounding the query.
@@ -1381,7 +1408,15 @@ func (r *DocumentRepository) DeleteStay(ctx context.Context, stay domain.Stay) e
 //   - the leg.
 //   - domain.ErrNotFound when it does not exist.
 func (r *DocumentRepository) Leg(ctx context.Context, id uuid.UUID) (domain.Leg, error) {
-	return oneRow(scanLeg, r.pool.QueryRow(ctx, `SELECT `+legColumns+` FROM legs l WHERE l.id = $1`, id), "get leg")
+	leg, err := oneRow(scanLeg, r.pool.QueryRow(ctx, `SELECT `+legColumns+` FROM legs l WHERE l.id = $1`, id), "get leg")
+	if err != nil {
+		return leg, err
+	}
+	legs := []domain.Leg{leg}
+	if err := attachLegParts(ctx, r.pool, legs, `SELECT $1::uuid`, id); err != nil {
+		return leg, err
+	}
+	return legs[0], nil
 }
 
 // UpdateLeg - stores a leg's mode, typed values, cost, note and how it asks to

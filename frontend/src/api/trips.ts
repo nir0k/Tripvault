@@ -1,7 +1,7 @@
 import { http } from './client'
 import type {
-  Budget, CoverCrop, CreatedShareLink, DocumentKind, ListResponse, MemberRole, PageResponse, ShareLink, Trip, TripMember,
-  TripUser,
+  Budget, CoverCrop, CreatedShareLink, DocumentKind, ListResponse, MemberRole, PageResponse, PlanState, ShareLink, Trip,
+  TripMember, TripUser,
 } from './types'
 
 export type TripScope = 'all' | 'owned' | 'shared'
@@ -52,6 +52,10 @@ export interface TripChanges {
   cover_crop?: CoverCrop | null
   /** A report's languages, the original first; a language left out loses its translations. */
   languages?: string[]
+  /** Closes a plan as completed or cancelled; null opens it again. */
+  state?: PlanState | null
+  /** The speed on the flat, in km/h, the plan's lines are timed at by default. */
+  track_speed_kmh?: number
   /** Accept that the new period removes days holding content. */
   confirm?: boolean
 }
@@ -124,6 +128,8 @@ export async function removeMember(tripId: string, userId: string): Promise<void
 export interface NewShareLink {
   label?: string
   include_private_media?: boolean
+  /** Let the link save the pictures, one by one or as an archive. */
+  allow_download?: boolean
   /** An RFC 3339 timestamp in the future; null never expires. */
   expires_at?: string | null
 }

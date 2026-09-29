@@ -1,7 +1,8 @@
 import { http, PDF_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } from './client'
 import { filenameFrom, saveBlob } from '@/utils/download'
 import type {
-  ActivityType, CostCategory, CostShare, CostSplit, GeoPoint, ItemStatus, ListResponse, PlaceCategory, RouteOption, RoutePreference, StayKind,
+  ActivityType, CostCategory, CostShare, CostSplit, GeoPoint, ItemStatus, LegStop, ListResponse, PlaceCategory, RouteOption,
+  RoutePreference, StayKind,
   Track, TransferKind, TranslationEntry, TravelMode, TripDocument,
 } from './types'
 
@@ -155,6 +156,18 @@ export async function downloadReportPDF(tripId: string, photos: boolean, content
   saveBlob(response.data, filenameFrom(response.headers['content-disposition'], 'report.pdf'))
 }
 
+/**
+ * downloadPlanPDF saves the plan as a PDF to take on the way, in the reader's
+ * language and units, which the server reads from their profile.
+ */
+export async function downloadPlanPDF(tripId: string): Promise<void> {
+  const response = await http.get<Blob>(path`/trips/${tripId}/plan/pdf`, {
+    timeout: PDF_TIMEOUT_MS,
+    responseType: 'blob',
+  })
+  saveBlob(response.data, filenameFrom(response.headers['content-disposition'], 'plan.pdf'))
+}
+
 /** updateDocument changes the words before and after a document's days. */
 export async function updateDocument(
   documentId: string,
@@ -173,6 +186,31 @@ export async function saveTranslations(
   translations: TranslationEntry[],
 ): Promise<TripDocument> {
   return (await http.put<TripDocument>(path`/documents/${documentId}/translations/${lang}`, { translations })).data
+}
+
+/** TranslationFileResult says what a translation file brought. */
+export interface TranslationFileResult {
+  /** The fields written, the emptied ones included. */
+  saved: number
+  /** Entries naming an element the report no longer has. */
+  skipped: number
+}
+
+/**
+ * downloadTranslationFile saves the words of a report as a YAML file for one of
+ * its languages, each beside its translation so far, for a person or a model
+ * to fill in.
+ */
+export async function downloadTranslationFile(documentId: string, lang: string, title: string): Promise<void> {
+  const response = await http.get<Blob>(path`/documents/${documentId}/translations/${lang}/file`, { responseType: 'blob' })
+  saveBlob(response.data, `${title.replace(/[\\/:*?"<>|]/g, '').trim() || 'Tripvault'}.${lang}.yaml`)
+}
+
+/** uploadTranslationFile reads the translations back from a filled file and saves them all. */
+export async function uploadTranslationFile(documentId: string, lang: string, file: File): Promise<TranslationFileResult> {
+  return (await http.put<TranslationFileResult>(path`/documents/${documentId}/translations/${lang}/file`, file, {
+    headers: { 'Content-Type': 'application/yaml' },
+  })).data
 }
 
 /** getDocument reads a whole document. */
@@ -307,9 +345,48 @@ export async function retryEstimatedLegs(documentId: string): Promise<TripDocume
  * sends the leg back to pending, and the choice is made for the leg as it
  * stands after the change.
  */
-export async function saveLeg(legId: string, changes: LegChanges, route: RouteOption | null = null): Promise<TripDocument> {
+export async function saveLeg(
+  legId: string, changes: LegChanges, route: RouteOption | null = null, parts: LegParts | null = null,
+): Promise<TripDocument> {
+  // A journey with changes is saved part by part; the note is all that is
+  // left on the leg itself.
+  if (parts) {
+    const updated = await setLegSegments(legId, parts)
+    return changes.note === undefined ? updated : updateLeg(legId, { note: changes.note })
+  }
   const updated = await updateLeg(legId, changes)
   return route ? pinLegRoute(legId, route) : updated
+}
+
+/** LegPartChange is one part of a journey with changes as it is saved. */
+export interface LegPartChange {
+  mode: TravelMode
+  distance_m: number | null
+  duration_s: number | null
+  /** The position of the part's ticket in the list of tickets, or null. */
+  ticket: number | null
+  stop: LegStop | null
+}
+
+/** LegTicketChange is one ticket of a journey with changes as it is saved. */
+export interface LegTicketChange {
+  name: string
+  planned_cost_amount: string | null
+  actual_cost_amount?: string | null
+}
+
+/**
+ * LegParts are the parts and tickets of a leg. Two parts or more make a journey
+ * with changes; one part or none make a leg travelled one way again.
+ */
+export interface LegParts {
+  segments: LegPartChange[]
+  tickets: LegTicketChange[]
+}
+
+/** setLegSegments replaces the parts and tickets of a leg. */
+export async function setLegSegments(legId: string, parts: LegParts): Promise<TripDocument> {
+  return (await http.put<TripDocument>(path`/legs/${legId}/segments`, parts)).data
 }
 
 /** legAlternatives asks for the routes a road leg could take, the best first. */
@@ -346,6 +423,16 @@ export async function importItemTrack(itemId: string, file: File): Promise<TripD
   form.append('file', file, file.name)
   return (await http.post<TripDocument>(`/api/v1/items/${encodeURIComponent(itemId)}/track`, form, {
     timeout: UPLOAD_TIMEOUT_MS,
+  })).data
+}
+
+/**
+ * setItemTrackSpeed sets the speed on the flat, in km/h, an activity's line is
+ * timed at; null takes the plan's own speed again.
+ */
+export async function setItemTrackSpeed(itemId: string, speedKmh: number | null): Promise<TripDocument> {
+  return (await http.patch<TripDocument>(`/api/v1/items/${encodeURIComponent(itemId)}/track`, {
+    speed_kmh: speedKmh,
   })).data
 }
 

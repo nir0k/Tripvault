@@ -440,3 +440,39 @@ func TestEveryLabelIsTranslated(t *testing.T) {
 		}
 	}
 }
+
+// TestLegChain checks a journey with changes is written part by part, each way
+// of travelling with its time and the changes between them.
+func TestLegChain(t *testing.T) {
+	walk, train := 900, 2400
+	leg := domain.Leg{Segments: []domain.LegSegment{
+		{Mode: domain.ModeWalk, ManualDurationS: &walk, StopName: "Rossio"},
+		{Mode: domain.ModeTrain, ManualDurationS: &train, StopName: "Sintra"},
+		{Mode: domain.ModeBus},
+	}}
+	got := legChain(english, leg)
+	want := "On foot 15 min → Rossio → By train 40 min → Sintra → By bus"
+	if got != want {
+		t.Errorf("chain: %q, want %q", got, want)
+	}
+	if ru := legChain(russian, leg); ru != "Пешком 15 мин → Rossio → Поездом 40 мин → Sintra → Автобусом" {
+		t.Errorf("russian chain: %q", ru)
+	}
+}
+
+// TestTrackNote checks a recording is described by its length to a tenth, the
+// time it took and its climb.
+func TestTrackNote(t *testing.T) {
+	start := time.Date(2026, 9, 27, 8, 33, 26, 0, time.UTC)
+	end := start.Add(4*time.Hour + 57*time.Minute + 51*time.Second)
+	ascent, descent := 615, 693
+	track := &domain.Track{DistanceM: 21397, StartedAt: &start, EndedAt: &end, AscentM: &ascent, DescentM: &descent}
+	want := "Recorded track: 21.4 km" + separator + "time 4:57:51" + separator + "up 615 m, down 693 m"
+	if got := trackNote(english, track); got != want {
+		t.Errorf("note: %q, want %q", got, want)
+	}
+	track.StartedAt = nil
+	if got := trackNote(english, track); strings.Contains(got, "time") {
+		t.Errorf("a track without time has one: %q", got)
+	}
+}

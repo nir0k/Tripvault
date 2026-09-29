@@ -32,6 +32,8 @@ type fakeTrips struct {
 	visits map[uuid.UUID]int
 	// listed is the filter the last list was read with.
 	listed domain.TripFilter
+	// members are what Members answers.
+	members []domain.TripMember
 }
 
 // Create echoes the trip back as its owner's.
@@ -78,8 +80,10 @@ func (f *fakeTrips) Delete(context.Context, uuid.UUID) ([]string, error) {
 	return f.mediaKeys, nil
 }
 
-// Members returns nobody.
-func (f *fakeTrips) Members(context.Context, uuid.UUID) ([]domain.TripMember, error) { return nil, nil }
+// Members returns the members the test gave the fake, nobody by default.
+func (f *fakeTrips) Members(context.Context, uuid.UUID) ([]domain.TripMember, error) {
+	return f.members, nil
+}
 
 // AddMember reports the person already has access.
 func (f *fakeTrips) AddMember(context.Context, uuid.UUID, uuid.UUID, domain.TripRole) (domain.TripMember, error) {
@@ -302,6 +306,51 @@ func TestTripCreateAndUpdate(t *testing.T) {
 	}
 }
 
+// TestApplyTripChangesClosesAPlan checks a plan is completed, cancelled and
+// opened again through state, an unrelated change leaves the state alone, and a
+// report or an empty state is refused.
+func TestApplyTripChangesClosesAPlan(t *testing.T) {
+	start, _ := domain.ParseDate("start_date", "2026-06-20")
+	end, _ := domain.ParseDate("end_date", "2026-06-27")
+	plan := domain.Trip{ID: uuid.New(), Kind: domain.DocumentPlan, Title: "Iceland", Currency: "ISK",
+		Travelers: 1, StartDate: &start, EndDate: &end}
+
+	decode := func(body string) updateTripRequest {
+		t.Helper()
+		var request updateTripRequest
+		if err := json.Unmarshal([]byte(body), &request); err != nil {
+			t.Fatalf("decode %s: %v", body, err)
+		}
+		return request
+	}
+
+	completed, err := applyTripChanges(plan, decode(`{"state":"completed"}`))
+	if err != nil || completed.State != domain.PlanCompleted {
+		t.Fatalf("complete: %q %v", completed.State, err)
+	}
+	renamed, err := applyTripChanges(completed, decode(`{"title":"Iceland again"}`))
+	if err != nil || renamed.State != domain.PlanCompleted {
+		t.Errorf("an unrelated change reopened the plan: %q %v", renamed.State, err)
+	}
+	cancelled, err := applyTripChanges(completed, decode(`{"state":"cancelled"}`))
+	if err != nil || cancelled.State != domain.PlanCancelled {
+		t.Errorf("cancel: %q %v", cancelled.State, err)
+	}
+	reopened, err := applyTripChanges(completed, decode(`{"state":null}`))
+	if err != nil || reopened.State != domain.PlanOpen {
+		t.Errorf("reopen: %q %v", reopened.State, err)
+	}
+	if _, err := applyTripChanges(plan, decode(`{"state":""}`)); err == nil {
+		t.Error("an empty state was accepted")
+	}
+
+	report := plan
+	report.Kind, report.Languages = domain.DocumentReport, []string{"en"}
+	if _, err := applyTripChanges(report, decode(`{"state":"completed"}`)); err == nil {
+		t.Error("a report was completed")
+	}
+}
+
 // TestApplyTripChangesKeepsTheFrameWithItsCover checks that a frame is set,
 // kept while the cover stays, and dropped when another picture becomes the
 // cover without a frame of its own.
@@ -349,5 +398,52 @@ func TestApplyTripChangesKeepsTheFrameWithItsCover(t *testing.T) {
 
 	if _, err := applyTripChanges(framed, decode(`{"cover_crop":{"x":0.5,"y":0,"w":0.8,"h":1}}`)); err == nil {
 		t.Error("a frame running off the picture was accepted")
+	}
+}
+
+// TestParseTagIDs checks repeats are dropped in order and a malformed
+// identifier or too many tags are refused.
+func TestParseTagIDs(t *testing.T) {
+	first, second := uuid.New(), uuid.New()
+	ids, err := parseTagIDs([]string{first.String(), second.String(), first.String()})
+	if err != nil || len(ids) != 2 || ids[0] != first || ids[1] != second {
+		t.Errorf("repeats: %v %v", ids, err)
+	}
+	if ids, err := parseTagIDs(nil); err != nil || len(ids) != 0 {
+		t.Errorf("none: %v %v", ids, err)
+	}
+	if _, err := parseTagIDs([]string{"nope"}); err == nil {
+		t.Error("a malformed identifier was accepted")
+	}
+	many := make([]string, domain.MaxTripTags+1)
+	for i := range many {
+		many[i] = uuid.NewString()
+	}
+	if _, err := parseTagIDs(many); err == nil {
+		t.Error("too many tags were accepted")
+	}
+}
+
+// TestTagChanges checks a change names what it changes, and an empty or
+// unknown value is refused rather than read as "keep".
+func TestTagChanges(t *testing.T) {
+	decode := func(body string) updateTagRequest {
+		t.Helper()
+		var request updateTagRequest
+		if err := json.Unmarshal([]byte(body), &request); err != nil {
+			t.Fatalf("decode %s: %v", body, err)
+		}
+		return request
+	}
+	if name, color, err := tagChanges(decode(`{"color":"teal"}`)); err != nil || name != "" || color != "teal" {
+		t.Errorf("colour only: %q %q %v", name, color, err)
+	}
+	if name, color, err := tagChanges(decode(`{"name":" Sea  "}`)); err != nil || name != "Sea" || color != "" {
+		t.Errorf("name only: %q %q %v", name, color, err)
+	}
+	for _, body := range []string{`{"name":""}`, `{"name":null}`, `{"color":""}`, `{"color":"magenta"}`} {
+		if _, _, err := tagChanges(decode(body)); err == nil {
+			t.Errorf("%s accepted", body)
+		}
 	}
 }

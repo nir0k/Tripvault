@@ -45,10 +45,6 @@ type Config struct {
 	Backup    Backup      `envPrefix:"BACKUP_"`
 	Secrets   Secrets     `envPrefix:"SECRETS_"`
 
-	// DemoData fills an empty instance with two example trips, for looking at
-	// the interface with something in it. Development only.
-	DemoData bool `env:"DEMO_DATA" envDefault:"false"`
-
 	// LogLevel is the parsed form of Log.Level, filled in by Load.
 	LogLevel slog.Level `env:"-"`
 }
@@ -444,12 +440,6 @@ func (c *Config) validate() error {
 
 	if (c.Admin.Email == "") != (c.Admin.Password == "") {
 		errs = append(errs, errors.New("TRIPVAULT_ADMIN_EMAIL and TRIPVAULT_ADMIN_PASSWORD: set both or neither"))
-	}
-
-	// Example trips carry accounts with published passwords, so a production
-	// instance must not be able to create them even by accident.
-	if c.DemoData && c.Env == EnvProduction {
-		errs = append(errs, errors.New("TRIPVAULT_DEMO_DATA: example trips are for development only"))
 	}
 
 	errs = append(errs, c.validateRouting()...)

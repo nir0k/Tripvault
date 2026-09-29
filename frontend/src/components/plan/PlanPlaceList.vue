@@ -51,6 +51,7 @@ const emit = defineEmits<{
   editCost: [item: PlanItem]
   importTrack: [item: PlanItem, file: File]
   removeTrack: [item: PlanItem]
+  trackSpeed: [item: PlanItem, speedKmh: number | null]
   pickTarget: [item: PlanItem, mode: 'move' | 'copy']
   remove: [item: PlanItem]
   legMode: [leg: Leg, mode: TravelMode]
@@ -158,6 +159,7 @@ defineExpose({ startAdding })
           @edit-cost="emit('editCost', item)"
           @import-track="(file) => emit('importTrack', item, file)"
           @remove-track="emit('removeTrack', item)"
+          @track-speed="(speed) => emit('trackSpeed', item, speed)"
           @up="emit('move', item.id, dayId, index - 1)"
           @down="emit('move', item.id, dayId, index + 1)"
           @move="emit('pickTarget', item, 'move')"

@@ -90,6 +90,32 @@ func TestReportFieldsOverHTTP(t *testing.T) {
 	}
 }
 
+// TestNewReportPlaceStatus checks a place added to a report is marked as not
+// planned only when the report was copied from a plan, and a status the
+// request names is kept.
+func TestNewReportPlaceStatus(t *testing.T) {
+	for _, tc := range []struct {
+		fromPlan bool
+		body     string
+		want     domain.ItemStatus
+	}{
+		{fromPlan: true, body: `{"name":"Diner"}`, want: domain.StatusUnplanned},
+		{fromPlan: false, body: `{"name":"Diner"}`, want: domain.StatusVisited},
+		{fromPlan: true, body: `{"name":"Diner","status":"visited"}`, want: domain.StatusVisited},
+		{fromPlan: false, body: `{"name":"Diner","status":"unplanned"}`, want: domain.StatusUnplanned},
+	} {
+		s, docs := newReportServer(domain.RoleOwner)
+		docs.trips.trip.FromPlan = tc.fromPlan
+		recorder := send(s, http.MethodPost, "/api/v1/days/"+docs.day.ID.String()+"/items", "good", tc.body)
+		if recorder.Code != http.StatusCreated {
+			t.Fatalf("add a place: %d %s", recorder.Code, recorder.Body.String())
+		}
+		if docs.created.Status != tc.want {
+			t.Errorf("from plan %v, body %s: status %q, want %q", tc.fromPlan, tc.body, docs.created.Status, tc.want)
+		}
+	}
+}
+
 // TestReportDocumentCarriesTotals checks a report answers with the figures its
 // reading mode needs and a plan does not.
 func TestReportDocumentCarriesTotals(t *testing.T) {

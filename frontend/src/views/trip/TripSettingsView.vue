@@ -13,12 +13,14 @@ import CoverCropDialog from '@/components/media/CoverCropDialog.vue'
 import MediaImage from '@/components/media/MediaImage.vue'
 import MediaPicker from '@/components/media/MediaPicker.vue'
 import ReportLanguagesCard from '@/components/ReportLanguagesCard.vue'
+import SpeedSlider from '@/components/SpeedSlider.vue'
 import TripFields, { type TripFormModel } from '@/components/TripFields.vue'
 import TripShareLinks from '@/components/TripShareLinks.vue'
 import UserPicker from '@/components/UserPicker.vue'
 import { useTripStore } from '@/stores/trip'
 import { errorMessage } from '@/utils/errors'
 import { describeRemovedDays } from '@/utils/plan'
+import { DEFAULT_SPEED } from '@/utils/trackTime'
 import { listRouteName } from '@/utils/tripRoutes'
 
 type Section = 'general' | 'members' | 'links'
@@ -136,6 +138,34 @@ async function save(confirm = false): Promise<void> {
     saveError.value = errorMessage(err, t, te)
   } finally {
     saving.value = false
+  }
+}
+
+// trackSpeed is the plan's speed being chosen: the time of every route of the
+// plan that names no speed of its own is worked out at it.
+const trackSpeed = ref(DEFAULT_SPEED)
+const speedSaving = ref(false)
+const speedMessage = ref('')
+const speedError = ref('')
+watch(() => trip.value?.track_speed_kmh, (speed) => {
+  trackSpeed.value = speed ?? DEFAULT_SPEED
+}, { immediate: true })
+
+// saveSpeed stores the plan's speed.
+async function saveSpeed(): Promise<void> {
+  if (!trip.value) {
+    return
+  }
+  speedSaving.value = true
+  speedMessage.value = ''
+  speedError.value = ''
+  try {
+    store.set(await updateTrip(trip.value.id, { track_speed_kmh: trackSpeed.value }))
+    speedMessage.value = t('settings.saved')
+  } catch (err) {
+    speedError.value = errorMessage(err, t, te)
+  } finally {
+    speedSaving.value = false
   }
 }
 
@@ -259,6 +289,27 @@ watch(() => trip.value?.id, () => {
           <p v-if="saveError" role="alert" class="text-sm text-error">{{ saveError }}</p>
           <div v-if="canEdit" class="card-actions justify-end">
             <button type="submit" class="btn btn-primary" :disabled="saving">{{ t('common.save') }}</button>
+          </div>
+        </form>
+      </div>
+
+      <div v-if="trip.kind === 'plan'" class="card border border-base-300 bg-base-100">
+        <form class="card-body gap-3" @submit.prevent="saveSpeed">
+          <h2 class="card-title">{{ t('settings.trackSpeed') }}</h2>
+          <p class="text-sm text-base-content/70">{{ t('settings.trackSpeedHint') }}</p>
+          <fieldset :disabled="!canEdit" class="max-w-md">
+            <SpeedSlider v-model="trackSpeed" :label="t('settings.trackSpeed')" />
+          </fieldset>
+          <p v-if="speedMessage" role="status" class="text-sm text-success">{{ speedMessage }}</p>
+          <p v-if="speedError" role="alert" class="text-sm text-error">{{ speedError }}</p>
+          <div v-if="canEdit" class="card-actions justify-end">
+            <button
+              type="submit"
+              class="btn btn-primary"
+              :disabled="speedSaving || trackSpeed === trip.track_speed_kmh"
+            >
+              {{ t('common.save') }}
+            </button>
           </div>
         </form>
       </div>

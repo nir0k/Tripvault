@@ -61,7 +61,8 @@ func TestTripNormalize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("valid trip refused: %v", err)
 	}
-	if normalized.Title != "Iceland" || normalized.Currency != "ISK" || normalized.Timezone != "UTC" {
+	if normalized.Title != "Iceland" || normalized.Currency != "ISK" || normalized.Timezone != "UTC" ||
+		normalized.TrackSpeedKmh != DefaultTrackSpeed {
 		t.Errorf("unexpected normalisation: %+v", normalized)
 	}
 
@@ -86,6 +87,9 @@ func TestTripNormalize(t *testing.T) {
 		"frame outside": {func(t *Trip) { t.CoverMediaID, t.CoverCrop = &cover, &CoverCrop{X: 0.5, W: 0.6, H: 1} }, "cover_crop:invalid_crop"},
 		"empty frame":   {func(t *Trip) { t.CoverMediaID, t.CoverCrop = &cover, &CoverCrop{W: 0, H: 1} }, "cover_crop:invalid_crop"},
 		"negative edge": {func(t *Trip) { t.CoverMediaID, t.CoverCrop = &cover, &CoverCrop{X: -0.1, W: 0.5, H: 1} }, "cover_crop:invalid_crop"},
+		"a stroll":      {func(t *Trip) { t.TrackSpeedKmh = 2 }, ""},
+		"too slow":      {func(t *Trip) { t.TrackSpeedKmh = 0.5 }, "track_speed_kmh:out_of_range"},
+		"too fast":      {func(t *Trip) { t.TrackSpeedKmh = 13 }, "track_speed_kmh:out_of_range"},
 	}
 	for name, tc := range cases {
 		trip := valid
@@ -112,15 +116,17 @@ func TestTripNormalizeDropsAFrameWithoutACover(t *testing.T) {
 	}
 }
 
-// TestTripStatus checks the status follows the dates in the trip's own zone.
+// TestTripStatus checks an open plan's status follows the dates in the trip's
+// own zone and never completes on its own.
 func TestTripStatus(t *testing.T) {
-	trip := Trip{StartDate: date(t, "2026-06-20"), EndDate: date(t, "2026-06-27"), Timezone: "Atlantic/Reykjavik"}
+	trip := Trip{Kind: DocumentPlan, StartDate: date(t, "2026-06-20"), EndDate: date(t, "2026-06-27"),
+		Timezone: "Atlantic/Reykjavik"}
 
 	cases := map[string]TripStatus{
 		"2026-06-19T23:59:00Z": StatusUpcoming,
 		"2026-06-20T00:00:00Z": StatusOngoing,
 		"2026-06-27T23:59:00Z": StatusOngoing,
-		"2026-06-28T00:00:00Z": StatusCompleted,
+		"2026-06-28T00:00:00Z": StatusOverdue,
 	}
 	for instant, want := range cases {
 		now, _ := time.Parse(time.RFC3339, instant)
@@ -177,5 +183,56 @@ func TestTripFilterNormalize(t *testing.T) {
 	}
 	if _, err := (TripFilter{Sort: "title"}).Normalize(); validationCode(t, err) != "sort:unsupported" {
 		t.Errorf("bad sort accepted: %v", err)
+	}
+}
+
+// TestClosedPlanStatus checks a closed plan reads as it was closed whatever the
+// date, and a report has no status at all.
+func TestClosedPlanStatus(t *testing.T) {
+	trip := Trip{Kind: DocumentPlan, StartDate: date(t, "2026-06-20"), EndDate: date(t, "2026-06-27"),
+		Timezone: "UTC"}
+	before, _ := time.Parse(time.RFC3339, "2026-06-01T12:00:00Z")
+	after, _ := time.Parse(time.RFC3339, "2026-07-01T12:00:00Z")
+
+	for state, want := range map[PlanState]TripStatus{PlanCompleted: StatusCompleted, PlanCancelled: StatusCancelled} {
+		trip.State = state
+		for _, now := range []time.Time{before, after} {
+			if got := trip.StatusAt(now); got != want {
+				t.Errorf("%s at %s: got %s", state, now, got)
+			}
+		}
+	}
+
+	report := trip
+	report.Kind, report.State = DocumentReport, PlanOpen
+	if got := report.StatusAt(after); got != "" {
+		t.Errorf("a report has a status: %s", got)
+	}
+}
+
+// TestPlanStateValidation checks only a plan is closed, and only as completed
+// or cancelled.
+func TestPlanStateValidation(t *testing.T) {
+	base := Trip{Kind: DocumentPlan, Title: "Trip", StartDate: date(t, "2026-06-20"),
+		EndDate: date(t, "2026-06-27"), Currency: "EUR", Travelers: 1}
+
+	for _, state := range []PlanState{PlanOpen, PlanCompleted, PlanCancelled} {
+		trip := base
+		trip.State = state
+		if _, err := trip.Normalize(); err != nil {
+			t.Errorf("state %q refused: %v", state, err)
+		}
+	}
+
+	trip := base
+	trip.State = "finished"
+	if _, err := trip.Normalize(); validationCode(t, err) != "state:unsupported" {
+		t.Errorf("an unknown state: %v", err)
+	}
+
+	report := base
+	report.Kind, report.Languages, report.State = DocumentReport, []string{"en"}, PlanCompleted
+	if _, err := report.Normalize(); validationCode(t, err) != "state:plan_only" {
+		t.Errorf("a completed report: %v", err)
 	}
 }

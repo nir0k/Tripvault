@@ -197,9 +197,10 @@ const METRES_PER_FOOT = 0.3048
  *
  * Distances are carried in metres whatever the reader has chosen. Short ones are
  * shown in the small unit - metres, or feet - because "0.2 km" reads as a
- * measurement and "200 m" reads as a walk.
+ * measurement and "200 m" reads as a walk. A precise distance keeps a tenth
+ * however long it is.
  */
-export function formatDistance(metres: number, locale: string, units: Units = 'km'): string {
+export function formatDistance(metres: number, locale: string, units: Units = 'km', precise = false): string {
   if (units === 'mi') {
     const miles = metres / METRES_PER_MILE
     if (miles < 0.1) {
@@ -208,7 +209,7 @@ export function formatDistance(metres: number, locale: string, units: Units = 'k
       }).format(metres / METRES_PER_FOOT)
     }
     return new Intl.NumberFormat(locale, {
-      style: 'unit', unit: 'mile', maximumFractionDigits: miles < 10 ? 1 : 0,
+      style: 'unit', unit: 'mile', ...fractions(miles, precise),
     }).format(miles)
   }
 
@@ -217,8 +218,27 @@ export function formatDistance(metres: number, locale: string, units: Units = 'k
   }
   const km = metres / 1000
   return new Intl.NumberFormat(locale, {
-    style: 'unit', unit: 'kilometer', maximumFractionDigits: km < 10 ? 1 : 0,
+    style: 'unit', unit: 'kilometer', ...fractions(km, precise),
   }).format(km)
+}
+
+// fractions says how many decimals a distance gets: a tenth below ten and none
+// above, or always a tenth when it is precise - the length of a recording, which
+// a watch shows as 21.4 km rather than 21.
+function fractions(value: number, precise: boolean): Intl.NumberFormatOptions {
+  return precise
+    ? { minimumFractionDigits: 1, maximumFractionDigits: 1 }
+    : { maximumFractionDigits: value < 10 ? 1 : 0 }
+}
+
+/**
+ * formatElapsed writes how long a recording took as a watch does: hours,
+ * minutes and seconds, "4:57:51".
+ */
+export function formatElapsed(seconds: number): string {
+  const whole = Math.max(0, Math.round(seconds))
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return `${Math.floor(whole / 3600)}:${pad(Math.floor((whole % 3600) / 60))}:${pad(whole % 60)}`
 }
 
 /**
@@ -231,6 +251,22 @@ export function formatHeight(metres: number, locale: string, units: Units = 'km'
       .format(metres / METRES_PER_FOOT)
   }
   return new Intl.NumberFormat(locale, { style: 'unit', unit: 'meter', maximumFractionDigits: 0 }).format(metres)
+}
+
+/**
+ * formatSpeed shows a speed kept in km/h, in miles an hour for somebody who
+ * counts distances in miles, to a tenth.
+ *
+ * Arguments:
+ *   - kmh: the speed in km/h.
+ *   - withUnit: false shows the number alone, as the marks of a scale do.
+ */
+export function formatSpeed(kmh: number, locale: string, units: Units = 'km', withUnit = true): string {
+  const value = units === 'mi' ? (kmh * 1000) / METRES_PER_MILE : kmh
+  const unit = units === 'mi' ? 'mile-per-hour' : 'kilometer-per-hour'
+  return new Intl.NumberFormat(locale, {
+    maximumFractionDigits: 1, ...(withUnit ? { style: 'unit', unit } : {}),
+  }).format(value)
 }
 
 /**

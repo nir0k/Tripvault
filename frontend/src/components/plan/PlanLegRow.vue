@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import type { Leg, TravelMode } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import IconSelect from '@/components/IconSelect.vue'
+import LegChain from '@/components/plan/LegChain.vue'
 import PlanInsertButton from '@/components/plan/PlanInsertButton.vue'
 import { TRAVEL_MODE_ICONS } from '@/components/icons'
 import { formatDistance, formatMoney } from '@/utils/format'
@@ -11,7 +12,8 @@ import { activeUnits } from '@/utils/units'
 import { formatDuration, travelModeOptions } from '@/utils/plan'
 
 // The journey to the element below it: mode, distance, time and how they were
-// obtained. The gap before it is where a new element goes between the two it
+// obtained. A journey with changes shows its parts in a row instead of one
+// mode, and its mode is changed part by part in its form, not here. The gap before it is where a new element goes between the two it
 // joins, so it carries the "+" that puts one there.
 const props = defineProps<{
   leg: Leg
@@ -38,8 +40,11 @@ const duration = computed(() =>
 )
 const cost = computed(() => formatMoney(props.leg.planned_cost_amount, props.currency, locale.value))
 
-// A flight's or a cable car's time is an estimate until somebody types the real one.
-const flightEstimate = computed(() => (props.leg.mode === 'flight' || props.leg.mode === 'cable_car')
+// A journey drawn as a straight line - a flight, a cable car, a train, a metro,
+// a ferry - has an estimated time until somebody types the real one.
+const STRAIGHT_TIMED: TravelMode[] = ['flight', 'cable_car', 'train', 'tram', 'ferry']
+const composite = computed(() => props.leg.segments.length > 0)
+const flightEstimate = computed(() => !composite.value && STRAIGHT_TIMED.includes(props.leg.mode)
   && !props.leg.manual_duration && props.leg.duration_s !== null)
 const manual = computed(() => props.leg.manual_distance || props.leg.manual_duration)
 // Without a provider a retry cannot help, and the page already explains why.
@@ -57,8 +62,9 @@ const noRoute = computed(() => props.leg.source === 'estimate' && props.leg.erro
   >
     <PlanInsertButton v-if="insertable" class="absolute top-1 left-2 sm:left-8" @pick="(kind) => emit('insert', kind)" />
     <span class="h-4 border-l-2 border-dashed border-base-300" :class="{ 'border-solid': leg.source === 'provider' }" aria-hidden="true"></span>
+    <LegChain v-if="composite" :segments="leg.segments" />
     <IconSelect
-      v-if="canEdit"
+      v-else-if="canEdit"
       :model-value="leg.mode"
       :options="modes"
       :label="t('leg.mode')"
@@ -86,7 +92,10 @@ const noRoute = computed(() => props.leg.source === 'estimate' && props.leg.erro
       {{ t('leg.estimate') }}
     </span>
     <span v-if="flightEstimate" class="badge badge-ghost badge-xs">{{ t('leg.flightEstimate') }}</span>
-    <span v-if="leg.mode === 'transit' && leg.source === 'provider'" class="badge badge-ghost badge-xs">{{ t('leg.transitEstimate') }}</span>
+    <span
+      v-if="!composite && (leg.mode === 'transit' || leg.mode === 'bus') && leg.source === 'provider'"
+      class="badge badge-ghost badge-xs"
+    >{{ t('leg.transitEstimate') }}</span>
     <span v-if="leg.route_preference === 'shortest'" class="badge badge-ghost badge-xs">{{ t('leg.routeShortest') }}</span>
     <span v-if="leg.route_pinned" class="badge badge-ghost badge-xs">{{ t('leg.pinned') }}</span>
     <span v-if="leg.via.length > 0" class="badge badge-ghost badge-xs">{{ t('leg.via') }}</span>

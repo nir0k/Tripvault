@@ -127,7 +127,7 @@ defineExpose({ open, close, fail })
 </script>
 
 <template>
-  <dialog ref="dialog" class="modal modal-bottom sm:modal-middle">
+  <dialog ref="dialog" class="modal modal-top sm:modal-middle">
     <form class="modal-box flex max-h-[90dvh] flex-col gap-3 overflow-y-auto" @submit.prevent="submit">
       <h2 class="text-lg font-bold">{{ editing ? t('transfer.editTitle') : t('transfer.newTitle') }}</h2>
 

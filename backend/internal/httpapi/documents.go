@@ -114,6 +114,10 @@ type legResponse struct {
 	// RoutePinned is true for a route chosen among the alternatives, which is
 	// kept until the leg changes or is recalculated.
 	RoutePinned bool `json:"route_pinned"`
+	// Segments are the parts of a leg with changes, in order; empty for a leg
+	// travelled one way. Tickets are what they were paid with.
+	Segments []segmentResponse `json:"segments"`
+	Tickets  []ticketResponse  `json:"tickets"`
 }
 
 // pointBody is a position on the wire.
@@ -153,8 +157,7 @@ type daySummaryResponse struct {
 }
 
 // travelModes is the order modes are listed in.
-var travelModes = []domain.TravelMode{domain.ModeWalk, domain.ModeCar, domain.ModeBike, domain.ModeTransit,
-	domain.ModeFlight, domain.ModeCableCar, domain.ModeOther}
+var travelModes = domain.TravelModes
 
 // newLegResponse maps a leg onto the wire.
 func newLegResponse(leg domain.Leg) legResponse {
@@ -179,6 +182,8 @@ func newLegResponse(leg domain.Leg) legResponse {
 		RoutePreference:   string(leg.Route().Preference),
 		Via:               newPointBodies(leg.Via),
 		RoutePinned:       leg.Pinned,
+		Segments:          newSegmentResponses(leg.Segments),
+		Tickets:           newTicketResponses(leg.Tickets),
 	}
 }
 
@@ -217,6 +222,11 @@ type trackResponse struct {
 	AscentM  *int   `json:"ascent_m"`
 	DescentM *int   `json:"descent_m"`
 	Geometry string `json:"geometry"`
+	// Grades are the metres run at each slope from -50 to +50 percent, which
+	// the reader works the time to walk the line out from; null without heights.
+	Grades []int `json:"grades"`
+	// SpeedKmh is the speed the line is timed at; null to take the plan's.
+	SpeedKmh *float64 `json:"speed_kmh"`
 	// StartedAt and EndedAt are null when the file records no time.
 	StartedAt *time.Time `json:"started_at"`
 	EndedAt   *time.Time `json:"ended_at"`
@@ -236,6 +246,8 @@ func newTrackResponse(track *domain.Track) *trackResponse {
 		AscentM:      track.AscentM,
 		DescentM:     track.DescentM,
 		Geometry:     track.Geometry,
+		Grades:       track.Grades,
+		SpeedKmh:     track.SpeedKmh,
 		StartedAt:    track.StartedAt,
 		EndedAt:      track.EndedAt,
 	}
@@ -1101,6 +1113,14 @@ func (s *Server) createPlace(w http.ResponseWriter, r *http.Request, document do
 	if !s.decodeJSON(w, r, &body) {
 		return
 	}
+	if document.Kind == domain.DocumentReport && !body.Status.Set {
+		status, err := s.newReportPlaceStatus(r, document)
+		if err != nil {
+			s.writeDomainError(w, r, "read trip", err)
+			return
+		}
+		body.Status = optional[string]{Set: true, Value: string(status)}
+	}
 	place, err := body.apply(domain.Item{ID: uuid.Must(uuid.NewV7()), DocumentID: document.ID, DayID: dayID},
 		document.Kind)
 	if err != nil {
@@ -1118,6 +1138,20 @@ func (s *Server) createPlace(w http.ResponseWriter, r *http.Request, document do
 		return
 	}
 	s.writeDocument(w, r, http.StatusCreated, document.ID)
+}
+
+// newReportPlaceStatus is the status a place added to a report starts with
+// when the request names none: not planned in a report copied from a plan,
+// visited in one written from scratch, which had no plan to depart from.
+func (s *Server) newReportPlaceStatus(r *http.Request, document domain.Document) (domain.ItemStatus, error) {
+	trip, err := s.trips.Get(r.Context(), document.TripID, principalFrom(r.Context()).user.ID)
+	if err != nil {
+		return "", err
+	}
+	if trip.FromPlan {
+		return domain.StatusUnplanned, nil
+	}
+	return domain.StatusVisited, nil
 }
 
 // handleCreateUnassignedPlace adds a place to a plan's unassigned list.

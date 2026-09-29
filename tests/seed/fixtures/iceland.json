@@ -1,0 +1,441 @@
+{
+  "_about": "The trip that has been travelled: a plan, closed as completed, and a report copied from it with how every place turned out, what was really spent and a Russian translation that leaves some days and places untranslated.",
+  "title": "Iceland: the south coast",
+  "summary": "Four days along route 1, from Reykjavík to Vík and back. Waterfalls, black sand and one very windy afternoon.",
+  "start_date": "2026-06-20",
+  "end_date": "2026-06-23",
+  "timezone": "Atlantic/Reykjavik",
+  "currency": "EUR",
+  "travelers": 2,
+  "budget_amount": "2600",
+  "stays": [
+    {
+      "name": "Guesthouse Hraun",
+      "kind": "apartment",
+      "address": "Hvolsvegur 12, Hvolsvöllur",
+      "lat": 63.7492,
+      "lng": -20.2264,
+      "check_in_date": "2026-06-20",
+      "check_out_date": "2026-06-22",
+      "check_in_time": "15:00",
+      "check_out_time": "10:00",
+      "booking_ref": "HR-884213",
+      "url": "https://example.com/hraun",
+      "contacts": "+354 555 0143",
+      "notes_md": "Parking behind the house. The key is in the box, code in the email.",
+      "planned_cost_amount": "320",
+      "actual_cost_amount": "320"
+    },
+    {
+      "name": "Vík Sea View",
+      "kind": "hotel",
+      "address": "Klettsvegur 3, Vík í Mýrdal",
+      "lat": 63.4187,
+      "lng": -19.006,
+      "check_in_date": "2026-06-22",
+      "check_out_date": "2026-06-23",
+      "check_in_time": "16:00",
+      "check_out_time": "11:00",
+      "booking_ref": "VSV-20260622",
+      "url": "https://example.com/vik-sea-view",
+      "contacts": "stay@example.com",
+      "notes_md": "Breakfast from 07:30. Ask for a room facing the sea.",
+      "planned_cost_amount": "410",
+      "actual_cost_amount": "430"
+    }
+  ],
+  "transfers": [
+    {
+      "kind": "flight",
+      "name": "Icelandair FI 205",
+      "from_name": "Copenhagen airport",
+      "from_lat": 55.618,
+      "from_lng": 12.6508,
+      "to_name": "Keflavík airport",
+      "to_lat": 63.985,
+      "to_lng": -22.6056,
+      "departure_date": "2026-06-20",
+      "departure_time": "08:10",
+      "arrival_time": "09:50",
+      "booking_ref": "FI-7QK2LD",
+      "notes_md": "One checked bag each. Seats 14A and 14B.",
+      "planned_cost_amount": "210",
+      "cost_per_person": true,
+      "actual_cost_amount": "210"
+    },
+    {
+      "kind": "flight",
+      "name": "Icelandair FI 204",
+      "from_name": "Keflavík airport",
+      "from_lat": 63.985,
+      "from_lng": -22.6056,
+      "to_name": "Copenhagen airport",
+      "to_lat": 55.618,
+      "to_lng": 12.6508,
+      "departure_date": "2026-06-23",
+      "departure_time": "17:40",
+      "arrival_time": "22:55",
+      "booking_ref": "FI-7QK2LD",
+      "planned_cost_amount": "190",
+      "cost_per_person": true,
+      "actual_cost_amount": "190"
+    }
+  ],
+  "days": [
+    {
+      "title": "Reykjavík to Hvolsvöllur",
+      "notes_md": "Pick the car up at the airport and take route 1 east. Nothing ambitious: the point is to be at the guesthouse before the shop closes.",
+      "places": [
+        {
+          "name": "Keflavík airport",
+          "category": "transport",
+          "lat": 63.985,
+          "lng": -22.6056,
+          "address": "Keflavíkurflugvöllur, 235 Reykjanesbær",
+          "url": "https://example.com/kef",
+          "booking_ref": "CAR-4471",
+          "description_md": "Car hire desk is in the arrivals hall, on the right. **Bring the booking number.**",
+          "desired_time": "10:30",
+          "visit_minutes": 45,
+          "cost_category": "transport",
+          "report": {
+            "status": "visited",
+            "story_md": "The queue took half an hour; the car had a scratch we photographed.",
+            "actual_time": "10:55"
+          }
+        },
+        {
+          "name": "Seljalandsfoss",
+          "category": "nature",
+          "lat": 63.6156,
+          "lng": -19.9928,
+          "address": "Route 249, Hvolsvöllur",
+          "url": "https://example.com/seljalandsfoss",
+          "description_md": "The path goes *behind* the waterfall. Waterproofs, not umbrellas.",
+          "desired_time": "15:00",
+          "visit_minutes": 60,
+          "planned_cost_amount": "8",
+          "cost_per_person": true,
+          "cost_category": "activities",
+          "report": {
+            "status": "visited",
+            "story_md": "Soaked through in two minutes and worth every bit of it. Go early or late; at three it was full.",
+            "rating": 5,
+            "actual_time": "15:20",
+            "actual_cost_amount": "8"
+          }
+        },
+        {
+          "name": "Gljúfrabúi",
+          "category": "sight",
+          "lat": 63.6211,
+          "lng": -20,
+          "address": "Route 249, Hvolsvöllur",
+          "description_md": "Hidden in a cleft a few minutes' walk north. Wet feet guaranteed.",
+          "visit_minutes": 30,
+          "is_optional": true,
+          "cost_category": "activities",
+          "report": {
+            "status": "skipped",
+            "story_md": "Ran out of daylight and patience for wet socks."
+          }
+        }
+      ]
+    },
+    {
+      "title": "Waterfalls and the plane wreck",
+      "notes_md": "The long day. Start early - the wreck is a 45-minute walk each way from the car park.",
+      "places": [
+        {
+          "name": "Skógafoss",
+          "category": "nature",
+          "lat": 63.5321,
+          "lng": -19.5114,
+          "address": "Skógar, 861 Hvolsvöllur",
+          "url": "https://example.com/skogafoss",
+          "description_md": "527 steps to the top. The view back down the valley is the reason.",
+          "desired_time": "09:30",
+          "visit_minutes": 90,
+          "cost_category": "activities",
+          "report": {
+            "status": "visited",
+            "story_md": "Climbed the steps before the buses arrived. Wind at the top took the hat.",
+            "rating": 4,
+            "actual_time": "09:15"
+          }
+        },
+        {
+          "kind": "activity",
+          "activity_type": "walk",
+          "name": "Sólheimasandur plane wreck",
+          "category": "activity",
+          "lat": 63.4591,
+          "lng": -19.3644,
+          "address": "Route 1, Sólheimasandur",
+          "description_md": "Flat black sand, no shade, no shelter. Two hours there and back.",
+          "visit_minutes": 150,
+          "planned_cost_amount": "12",
+          "cost_per_person": true,
+          "cost_category": "activities",
+          "difficulty": 2,
+          "report": {
+            "status": "visited",
+            "story_md": "A long walk for a photograph everyone already has. The sand is the memorable part.",
+            "rating": 3,
+            "actual_time": "11:40",
+            "actual_end_time": "14:05",
+            "actual_cost_amount": "12"
+          }
+        },
+        {
+          "name": "Dyrhólaey",
+          "category": "sight",
+          "lat": 63.402,
+          "lng": -19.1264,
+          "address": "Dyrhólaey, 871 Vík",
+          "description_md": "Puffins on the cliffs in June. The upper road closes in bad weather.",
+          "visit_minutes": 60,
+          "cost_category": "activities",
+          "report": {
+            "status": "skipped",
+            "story_md": "Closed for the evening because of the wind."
+          }
+        }
+      ]
+    },
+    {
+      "title": "Vík and the black beach",
+      "notes_md": "Move to Vík. Short driving day, so there is time to sit still for once.",
+      "places": [
+        {
+          "name": "Reynisfjara",
+          "category": "nature",
+          "lat": 63.4053,
+          "lng": -19.0448,
+          "address": "Reynisfjara, 871 Vík",
+          "url": "https://example.com/reynisfjara",
+          "description_md": "**Do not turn your back on the sea.** The sneaker waves here are lethal.",
+          "desired_time": "11:00",
+          "visit_minutes": 75,
+          "cost_category": "activities",
+          "report": {
+            "status": "visited",
+            "story_md": "Stood well back and watched the water for an hour. The basalt columns do not photograph.",
+            "rating": 5,
+            "actual_time": "11:10"
+          }
+        },
+        {
+          "name": "Suður-Vík",
+          "category": "food",
+          "lat": 63.4186,
+          "lng": -19.0067,
+          "address": "Suðurvíkurvegur 1, Vík",
+          "url": "https://example.com/sudur-vik",
+          "booking_ref": "TBL-19:30",
+          "description_md": "Booked for two. The lamb soup is the thing.",
+          "desired_time": "19:30",
+          "visit_minutes": 90,
+          "planned_cost_amount": "45",
+          "cost_per_person": true,
+          "cost_category": "food",
+          "report": {
+            "status": "visited",
+            "story_md": "The soup lived up to it. Two beers made it dearer than planned.",
+            "rating": 4,
+            "actual_time": "19:40",
+            "actual_cost_amount": "52"
+          }
+        }
+      ]
+    },
+    {
+      "title": "Back to Keflavík",
+      "notes_md": "Straight back, with one stop. Flight is at 17:40, car back by 15:30.",
+      "places": [
+        {
+          "name": "Kvernufoss",
+          "category": "nature",
+          "lat": 63.5299,
+          "lng": -19.4868,
+          "address": "Skógar, behind the folk museum",
+          "description_md": "The quiet one. Fifteen minutes' walk from the museum car park.",
+          "visit_minutes": 45,
+          "is_optional": true,
+          "cost_category": "activities",
+          "report": {
+            "status": "visited",
+            "story_md": "Nobody there. The best half hour of the trip, and it was the afterthought.",
+            "rating": 5,
+            "actual_time": "10:05"
+          }
+        },
+        {
+          "name": "Keflavík airport",
+          "category": "transport",
+          "lat": 63.985,
+          "lng": -22.6056,
+          "address": "Keflavíkurflugvöllur, 235 Reykjanesbær",
+          "description_md": "Fuel the car at the station before the turn-off; the airport one costs more.",
+          "desired_time": "15:30",
+          "visit_minutes": 60,
+          "cost_category": "transport",
+          "report": {
+            "status": "visited",
+            "story_md": "Scratch was already on the form. No argument.",
+            "actual_time": "15:15"
+          }
+        }
+      ]
+    }
+  ],
+  "unassigned": [
+    {
+      "name": "Fjaðrárgljúfur",
+      "category": "nature",
+      "lat": 63.7714,
+      "lng": -18.1725,
+      "description_md": "Two hours further east than we are going. Next time.",
+      "visit_minutes": 90,
+      "cost_category": "activities"
+    },
+    {
+      "name": "Blue Lagoon",
+      "category": "activity",
+      "lat": 63.8804,
+      "lng": -22.4495,
+      "url": "https://example.com/blue-lagoon",
+      "description_md": "Only worth it on the way to the airport, and only if booked weeks ahead.",
+      "visit_minutes": 180,
+      "planned_cost_amount": "95",
+      "cost_per_person": true,
+      "cost_category": "activities"
+    }
+  ],
+  "expenses": [
+    {
+      "note": "Car hire, four days",
+      "category": "car_rental",
+      "planned_amount": "290",
+      "actual_amount": "290"
+    },
+    {
+      "note": "Fuel",
+      "category": "fuel",
+      "planned_amount": "160",
+      "actual_amount": "178"
+    },
+    {
+      "note": "Groceries in Hvolsvöllur",
+      "category": "groceries",
+      "planned_amount": "60",
+      "day": 1,
+      "actual_amount": "71"
+    },
+    {
+      "note": "Wool jumper, regretted nothing",
+      "category": "shopping",
+      "planned_amount": "90",
+      "day": 3,
+      "actual_amount": "120"
+    }
+  ],
+  "legs": [
+    {
+      "day": 1,
+      "from": "Keflavík airport",
+      "mode": "car",
+      "distance_m": 128000,
+      "duration_s": 6300,
+      "planned_cost_amount": "14",
+      "note": "Tunnel toll on the way out of the peninsula."
+    },
+    {
+      "day": 2,
+      "from": "Skógafoss",
+      "mode": "car",
+      "distance_m": 11000,
+      "duration_s": 900
+    },
+    {
+      "day": 2,
+      "from": "Sólheimasandur plane wreck",
+      "mode": "walk",
+      "distance_m": 7600,
+      "duration_s": 6000,
+      "note": "The walk out to the wreck and back; no road."
+    },
+    {
+      "day": 4,
+      "from": "Kvernufoss",
+      "mode": "car",
+      "distance_m": 152000,
+      "duration_s": 7800,
+      "planned_cost_amount": "22",
+      "note": "Filled the tank at Selfoss."
+    }
+  ],
+  "report": {
+    "intro_md": "# Four days on route 1\n\nWe went for the waterfalls and stayed for the wind. Everything below is what actually happened, including the two things we did not do.",
+    "summary_md": "## Worth knowing\n\n- The weather decides the itinerary, not the itinerary.\n- The quiet waterfall we almost skipped was the best of them.\n- Budget more for food than seems reasonable.",
+    "day_notes": {
+      "1": "Landed late, queued for the car, and still made the guesthouse in daylight. June helps with that.",
+      "2": "The long day, and it earned the name. Two waterfalls, one very long walk on black sand, and a cliff road closed by wind.",
+      "4": "Left early, stopped once, and were glad we did."
+    },
+    "unplanned": {
+      "day": 3,
+      "name": "Vík wool shop",
+      "category": "shopping",
+      "lat": 63.4179,
+      "lng": -19.0111,
+      "address": "Austurvegur 20, Vík",
+      "description_md": "Walked past it twice and went in the third time.",
+      "visit_minutes": 40,
+      "cost_category": "shopping",
+      "report": {
+        "story_md": "Not planned, not regretted. The jumper has been worn ever since.",
+        "rating": 4,
+        "actual_time": "16:20",
+        "actual_cost_amount": "120"
+      }
+    },
+    "translation": {
+      "lang": "ru",
+      "title": "Исландия: южное побережье",
+      "summary": "Четыре дня по первой трассе, от Рейкьявика до Вика и обратно. Водопады, чёрный песок и один очень ветреный день.",
+      "intro_md": "# Четыре дня по первой трассе\n\nЕхали за водопадами, а запомнили ветер. Ниже - то, что было на самом деле, включая два места, до которых мы не добрались.",
+      "summary_md": "## Что стоит знать\n\n- Маршрут определяет погода, а не план.\n- Тихий водопад, который мы чуть не пропустили, оказался лучшим.\n- На еду закладывайте больше, чем кажется разумным.",
+      "day_titles": {
+        "1": "Из Рейкьявика в Хвольсвёдлюр",
+        "2": "Водопады и разбившийся самолёт",
+        "3": "Вик и чёрный пляж"
+      },
+      "day_notes": {
+        "1": "Прилетели поздно, отстояли очередь за машиной и всё равно добрались засветло. В июне это нетрудно.",
+        "2": "Самый длинный день, и он это название заслужил. Два водопада, долгая прогулка по чёрному песку и дорога на утёс, закрытая из-за ветра."
+      },
+      "places": {
+        "Kvernufoss": {
+          "name": "Квернюфосс",
+          "story_md": "Ни души. Лучшие полчаса поездки, а ведь заехали туда между делом."
+        },
+        "Reynisfjara": {
+          "name": "Рейнисфьяра",
+          "description_md": "**Не поворачивайтесь к морю спиной.** Внезапные волны здесь смертельно опасны.",
+          "story_md": "Стояли подальше и час смотрели на воду. Базальтовые столбы на фото не передать."
+        },
+        "Seljalandsfoss": {
+          "name": "Сельяландсфосс",
+          "description_md": "Тропа проходит *за* водопадом. Нужен дождевик, а не зонт.",
+          "story_md": "Промокли за две минуты, и оно того стоило. Приезжайте рано или поздно: в три часа там не протолкнуться."
+        },
+        "Skógafoss": {
+          "name": "Скоугафосс",
+          "story_md": "Поднялись по ступеням до автобусов. Наверху ветер унёс шапку."
+        }
+      }
+    }
+  },
+  "completed": true
+}

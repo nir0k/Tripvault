@@ -2,9 +2,11 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
-import type { Trip, TripStatus } from '@/api/types'
+import type { Trip } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import MediaImage from '@/components/media/MediaImage.vue'
+import TagPill from '@/components/TagPill.vue'
+import TripStatusBadge from '@/components/TripStatusBadge.vue'
 import { formatDateRange } from '@/utils/format'
 import { readingLanguage, translateTrip } from '@/utils/translate'
 import { tripRoute } from '@/utils/tripRoutes'
@@ -12,12 +14,6 @@ import { tripRoute } from '@/utils/tripRoutes'
 const props = defineProps<{ trip: Trip }>()
 
 const { t, locale } = useI18n()
-
-const STATUS_CLASSES: Record<TripStatus, string> = {
-  ongoing: 'badge-success',
-  upcoming: 'badge-info',
-  completed: 'badge-neutral',
-}
 
 // A report's title is shown in the reader's language when it has one.
 const title = computed(() => translateTrip(props.trip, readingLanguage(props.trip.languages, locale.value)).title)
@@ -43,7 +39,7 @@ const target = computed(() => tripRoute(props.trip))
     </RouterLink>
     <div class="card-body gap-2 p-4">
       <div class="flex flex-wrap items-center gap-2">
-        <span class="badge badge-sm" :class="STATUS_CLASSES[trip.status]">{{ t(`trips.status.${trip.status}`) }}</span>
+        <TripStatusBadge :trip="trip" />
         <span v-if="trip.role !== 'owner'" class="badge badge-outline badge-sm">{{ t(`trips.roles.${trip.role}`) }}</span>
       </div>
       <h2 class="card-title text-lg">
@@ -56,6 +52,9 @@ const target = computed(() => tripRoute(props.trip))
       </p>
       <p v-if="trip.role !== 'owner'" class="truncate text-sm text-base-content/70">
         {{ t('trips.ownedBy', { name: trip.owner.display_name }) }}
+      </p>
+      <p v-if="trip.tags.length > 0" class="flex flex-wrap gap-1" :aria-label="t('tags.onTrip')">
+        <TagPill v-for="tag in trip.tags" :key="tag.id" :tag="tag" />
       </p>
     </div>
   </article>

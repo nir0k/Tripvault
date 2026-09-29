@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import type { Leg } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import { TRAVEL_MODE_ICONS } from '@/components/icons'
+import LegChain from '@/components/plan/LegChain.vue'
 import { formatDistance } from '@/utils/format'
 import { formatDuration } from '@/utils/plan'
 import { activeUnits } from '@/utils/units'
@@ -11,6 +12,7 @@ import { activeUnits } from '@/utils/units'
 // How the report got to a place: the means, the time and the distance, as one
 // quiet line above the place's card. The figures are calculated like a plan's
 // and may be typed over; while editing, the line opens the form that does it.
+// A journey with changes names its parts and changes in a row.
 const props = defineProps<{
   leg: Leg
   /** Where the journey started, when it was not the place above - the stay. */
@@ -46,7 +48,8 @@ const noRoute = computed(() => props.editing && props.leg.source === 'estimate' 
     @click="editing && emit('edit')"
   >
     <span class="h-4 border-l-2 border-dashed border-base-300" aria-hidden="true"></span>
-    <span class="flex items-center gap-1">
+    <LegChain v-if="leg.segments.length > 0" :segments="leg.segments" />
+    <span v-else class="flex items-center gap-1">
       <AppIcon :name="TRAVEL_MODE_ICONS[leg.mode]" class="size-4!" />
       {{ t(`modes.${leg.mode}`) }}
     </span>

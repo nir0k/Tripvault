@@ -201,9 +201,9 @@ func copyTracks(ctx context.Context, tx pgx.Tx, reportID uuid.UUID, tracks []dom
 		}
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO tracks (id, document_id, item_id, original_name, format, geometry, distance_m, point_count,
-			                     ascent_m, descent_m, started_at, ended_at, file_gz)
+			                     ascent_m, descent_m, started_at, ended_at, file_gz, climb_version, grades)
 			 SELECT $1, $2, $3, original_name, format, geometry, distance_m, point_count,
-			        ascent_m, descent_m, started_at, ended_at, file_gz
+			        ascent_m, descent_m, started_at, ended_at, file_gz, climb_version, grades
 			 FROM tracks WHERE id = $4`,
 			uuid.Must(uuid.NewV7()), reportID, itemID, track.ID); err != nil {
 			return fmt.Errorf("copy track: %w", err)
@@ -294,17 +294,32 @@ func copyLegs(ctx context.Context, tx pgx.Tx, reportID uuid.UUID, legs []domain.
 		if err != nil {
 			return err
 		}
+		id := uuid.Must(uuid.NewV7())
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO legs (id, document_id, day_id, from_item_id, to_item_id, mode, distance_m, duration_s,
 			                   geometry, calc_source, calc_error, calc_input, calculated_at,
 			                   manual_distance_m, manual_duration_s, planned_cost_amount,
 			                   route_preference, via, route_pinned)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::numeric, $17, $18, $19)`,
-			uuid.Must(uuid.NewV7()), reportID, dayID, from, to, leg.Mode, leg.DistanceM, leg.DurationS,
+			id, reportID, dayID, from, to, leg.Mode, leg.DistanceM, leg.DurationS,
 			geometry, leg.Source, calcError, leg.Input, leg.CalculatedAt,
 			leg.ManualDistanceM, leg.ManualDurationS, moneyParam(leg.PlannedCost),
 			leg.Route().Preference, via, leg.Pinned); err != nil {
 			return fmt.Errorf("copy leg: %w", err)
+		}
+		// A journey with changes comes along with its parts and its tickets,
+		// the planned costs included; what they really cost is the report's.
+		tickets := make([]domain.LegTicket, len(leg.Tickets))
+		for index, ticket := range leg.Tickets {
+			ticket.ActualCost = nil
+			tickets[index] = ticket
+		}
+		if leg.Composite() {
+			if err := insertLegParts(ctx, tx, id, leg.Segments, tickets, func() uuid.UUID {
+				return uuid.Must(uuid.NewV7())
+			}); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

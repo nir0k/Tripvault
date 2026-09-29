@@ -400,6 +400,12 @@ function removeTrack(item: PlanItem): void {
   void apply(() => documentsApi.deleteItemTrack(item.id))
 }
 
+// setTrackSpeed times an activity's route at a speed of its own, or at the
+// plan's again when it is null.
+function setTrackSpeed(item: PlanItem, speedKmh: number | null): void {
+  void apply(() => documentsApi.setItemTrackSpeed(item.id, speedKmh))
+}
+
 // openTime opens the time form of a place.
 function openTime(item: PlanItem): void {
   timeItem.value = item
@@ -504,8 +510,9 @@ async function setLegMode(leg: Leg, mode: TravelMode): Promise<void> {
 
 // saveLeg stores what the leg form says: typed values, costs, how the leg is
 // routed, and a route chosen among its alternatives.
-async function saveLeg(leg: Leg, changes: documentsApi.LegChanges, route: RouteOption | null): Promise<void> {
-  if (await apply(() => documentsApi.saveLeg(leg.id, changes, route))) {
+async function saveLeg(leg: Leg, changes: documentsApi.LegChanges, route: RouteOption | null,
+  parts: documentsApi.LegParts | null): Promise<void> {
+  if (await apply(() => documentsApi.saveLeg(leg.id, changes, route, parts))) {
     legDialog.value?.close()
   } else {
     legDialog.value?.fail(error.value)
@@ -743,6 +750,7 @@ async function removeStay(stay: Stay): Promise<void> {
                 @edit-cost="openCost"
                 @import-track="importTrack"
                 @remove-track="removeTrack"
+                @track-speed="setTrackSpeed"
                 @pick-target="(item, mode) => targetDialog?.open(item, mode)"
                 @remove-place="removePlace"
                 @leg-mode="setLegMode"
@@ -773,6 +781,7 @@ async function removeStay(stay: Stay): Promise<void> {
               @edit-cost="openCost"
               @import-track="importTrack"
               @remove-track="removeTrack"
+              @track-speed="setTrackSpeed"
               @pick-target="(item, mode) => targetDialog?.open(item, mode)"
               @remove="removePlace"
             />

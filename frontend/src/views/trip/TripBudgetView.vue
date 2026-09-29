@@ -16,6 +16,7 @@ import PlanPlaceDialog from '@/components/plan/PlanPlaceDialog.vue'
 import PlanStayDialog from '@/components/plan/PlanStayDialog.vue'
 import PlanTransferDialog from '@/components/plan/PlanTransferDialog.vue'
 import { useTripStore } from '@/stores/trip'
+import { categoryRows as layCategories } from '@/utils/budget'
 import { errorMessage } from '@/utils/errors'
 import { formatDayDate, formatMoney } from '@/utils/format'
 
@@ -90,9 +91,9 @@ const untiedRows = computed(() => {
   ].filter((row) => Number(row.amount) !== 0)
 })
 
-// Only the categories that carry something; the rest would be rows of zeroes.
-const categoryRows = computed(() => (budget.value?.categories ?? [])
-  .filter((row) => Number(row.planned) !== 0 || Number(row.actual) !== 0))
+// Only the categories that carry something, with tolls counted in transport
+// and shown beneath it.
+const categoryRows = computed(() => layCategories(budget.value?.categories ?? []))
 
 // entries are the costs left by the day and category filters. Without a day
 // chosen the whole trip is shown: the costs of its days and those of no day,
@@ -383,8 +384,9 @@ async function saveTransfer(fields: documentsApi.TransferFields, transfer: Trans
 }
 
 // saveLeg stores the typed values of a leg edited from the cost list.
-async function saveLeg(leg: Leg, changes: documentsApi.LegChanges): Promise<void> {
-  if (await change(() => documentsApi.updateLeg(leg.id, changes))) {
+async function saveLeg(leg: Leg, changes: documentsApi.LegChanges, _route: unknown,
+  parts: documentsApi.LegParts | null): Promise<void> {
+  if (await change(() => documentsApi.saveLeg(leg.id, changes, null, parts))) {
     legDialog.value?.close()
   } else {
     legDialog.value?.fail(error.value)
@@ -448,7 +450,7 @@ async function saveLeg(leg: Leg, changes: documentsApi.LegChanges): Promise<void
             :disabled="busy"
             @click="amountDialog?.open(budget.budget_amount)"
           >
-            <AppIcon name="wallet" />
+            <AppIcon name="cashStack" />
             {{ t('budget.setBudget') }}
           </button>
           <span v-if="savedAmount" class="text-sm text-success">{{ t('settings.saved') }}</span>
@@ -476,8 +478,8 @@ async function saveLeg(leg: Leg, changes: documentsApi.LegChanges): Promise<void
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="row in categoryRows" :key="row.category">
-                  <td>{{ t(`costCategories.${row.category}`) }}</td>
+                <tr v-for="row in categoryRows" :key="row.category" :class="{ 'text-base-content/70': row.part }">
+                  <td :class="{ 'ps-8': row.part }">{{ t(`costCategories.${row.category}`) }}</td>
                   <td class="text-end whitespace-nowrap">{{ amount(row.planned) }}</td>
                   <td v-if="isReport" class="text-end whitespace-nowrap">{{ amount(row.actual) }}</td>
                 </tr>

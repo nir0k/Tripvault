@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ItemStatus, Media, PlanItem } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
+import { useDropdown } from '@/composables/useDropdown'
 import MediaGallery from '@/components/media/MediaGallery.vue'
 import MediaUploader from '@/components/media/MediaUploader.vue'
 import EditableMarkdown from '@/components/report/EditableMarkdown.vue'
@@ -24,6 +25,11 @@ const props = defineProps<{
   editing: boolean
   /** The trip the place belongs to, which is what pictures are uploaded against. */
   tripId?: string
+  /** First and last of its day: the menu does not offer to move past either end. */
+  first?: boolean
+  last?: boolean
+  /** Show the handle the card is dragged by, as in the plan. */
+  draggable?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -32,6 +38,10 @@ const emit = defineEmits<{
   story: [story: string]
   edit: []
   remove: []
+  up: []
+  down: []
+  /** Move the place to another day, or copy it there as another visit. */
+  pickTarget: [mode: 'move' | 'copy']
   uploaded: [media: Media[]]
   cover: [media: Media | null]
   privacy: [media: Media, isPrivate: boolean]
@@ -44,6 +54,13 @@ const emit = defineEmits<{
 
 const { t, locale } = useI18n()
 const text = useReportText()
+const { close: closeMenu } = useDropdown('placeMenu')
+
+// choose folds the menu and passes on what was chosen in it.
+function choose(action: () => void): void {
+  closeMenu()
+  action()
+}
 
 // structural is editing what every language shares; translating is writing the
 // words of one language.
@@ -76,9 +93,9 @@ const STATUS_BADGES: Partial<Record<ItemStatus, string>> = {
 }
 
 /**
- * setVisited turns the switch: on is visited, off is skipped. A place added in
- * the report has no switch, because unplanned is where it came from rather than
- * a judgement to be changed.
+ * setVisited turns the switch: on is visited, off is skipped. A place marked
+ * as not planned has no switch, because that is where it came from rather than
+ * a judgement; the mark is put on or taken off in the card's menu instead.
  */
 function setVisited(event: Event): void {
   emit('status', (event.target as HTMLInputElement).checked ? 'visited' : 'skipped')
@@ -97,7 +114,14 @@ function rate(stars: number): void {
     :class="{ 'opacity-70': item.status === 'skipped' }"
   >
     <header class="flex flex-wrap items-start justify-between gap-2">
-      <div class="min-w-0 space-y-1">
+      <!-- The handle a card is dragged by, as in the plan: to another place of
+           its day or onto another day in the list of days. -->
+      <span
+        v-if="structural && draggable"
+        class="drag-handle mt-0.5 cursor-grab text-base-content/40"
+        aria-hidden="true"
+      >⋮⋮</span>
+      <div class="min-w-0 flex-1 space-y-1">
         <h4 class="font-medium break-words" :class="{ 'line-through': item.status === 'skipped' }">
           {{ item.name }}
         </h4>
@@ -138,6 +162,23 @@ function rate(stars: number): void {
           {{ t('report.statuses.visited') }}
         </label>
         <button type="button" class="btn btn-ghost btn-sm" @click="emit('edit')">{{ t('plan.edit') }}</button>
+        <details ref="placeMenu" class="dropdown dropdown-end">
+          <summary class="btn btn-ghost btn-sm btn-square" :aria-label="t('plan.itemActions', { name: item.name })">
+            <AppIcon name="dots" />
+          </summary>
+          <ul class="menu dropdown-content z-20 mt-1 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg">
+            <li v-if="!first"><button type="button" @click="choose(() => emit('up'))">{{ t('plan.moveUp') }}</button></li>
+            <li v-if="!last"><button type="button" @click="choose(() => emit('down'))">{{ t('plan.moveDown') }}</button></li>
+            <li><button type="button" @click="choose(() => emit('pickTarget', 'move'))">{{ t('plan.moveToDay') }}</button></li>
+            <li><button type="button" @click="choose(() => emit('pickTarget', 'copy'))">{{ t('plan.copyToDay') }}</button></li>
+            <li v-if="item.status === 'unplanned'">
+              <button type="button" @click="choose(() => emit('status', 'visited'))">{{ t('report.unmarkUnplanned') }}</button>
+            </li>
+            <li v-else-if="item.status === 'visited'">
+              <button type="button" @click="choose(() => emit('status', 'unplanned'))">{{ t('report.markUnplanned') }}</button>
+            </li>
+          </ul>
+        </details>
         <button
           type="button"
           class="btn btn-ghost btn-sm btn-square text-error"

@@ -101,12 +101,17 @@ func TestParseRefusesWhatIsNotATrack(t *testing.T) {
 func TestParseMeasuresClimb(t *testing.T) {
 	var body strings.Builder
 	body.WriteString(`<gpx><trk><trkseg>`)
-	// Up 100 m in steps of 10 with two metres of noise on every point, then
-	// down 60 m: the noise alone never reaches the threshold.
-	heights := []float64{100, 102, 110, 108, 120, 122, 130, 128, 140, 142, 150, 148, 160, 162, 170, 168,
-		180, 182, 190, 188, 200, 190, 180, 170, 160, 150, 140}
-	for index, height := range heights {
-		fmt.Fprintf(&body, `<trkpt lat="%f" lon="-19.5"><ele>%.1f</ele></trkpt>`, 63.5+float64(index)*0.001, height)
+	// A recording of a point a second: up 100 m over 200 seconds, then down
+	// 60 m over 120, with three metres of noise flipping on every point. The
+	// noise alone would add 300 m each way; smoothed, it is gone.
+	start := time.Date(2026, 6, 20, 9, 0, 0, 0, time.UTC)
+	for second := 0; second <= 320; second++ {
+		height := 100 + float64(min(second, 200))*0.5 - float64(max(second-200, 0))*0.5
+		if second%2 == 1 {
+			height += 3
+		}
+		fmt.Fprintf(&body, `<trkpt lat="%f" lon="-19.5"><ele>%.1f</ele><time>%s</time></trkpt>`,
+			63.5+float64(second)*0.0001, height, start.Add(time.Duration(second)*time.Second).Format(time.RFC3339))
 	}
 	body.WriteString(`</trkseg></trk></gpx>`)
 	parsed, err := Parse([]byte(body.String()))
@@ -138,6 +143,56 @@ func TestParseMeasuresClimb(t *testing.T) {
 	kml := []byte(`<kml><Placemark><LineString><coordinates>-19.5,63.5,10 -19.5,63.6,40 -19.5,63.7,25</coordinates></LineString></Placemark></kml>`)
 	if parsed, err := Parse(kml); err != nil || parsed.AscentM == nil || *parsed.AscentM != 30 || *parsed.DescentM != 15 {
 		t.Errorf("a KML line with heights: %+v %v", parsed, err)
+	}
+}
+
+// TestParseMeasuresGrades checks the slopes of a route are counted by how far
+// they run, a slope steeper than the last bucket in that bucket, and a file
+// without heights has none.
+func TestParseMeasuresGrades(t *testing.T) {
+	var body strings.Builder
+	body.WriteString(`<gpx><rte>`)
+	// A route drawn ahead, a point every 0.001 degree of latitude (about 111 m):
+	// fifty stretches up 10 %, fifty down 20 %, and one up a wall of 90 %.
+	height := 100.0
+	for step := 0; step <= 101; step++ {
+		fmt.Fprintf(&body, `<rtept lat="%f" lon="-19.5"><ele>%.2f</ele></rtept>`, 63.5+float64(step)*0.001, height)
+		switch {
+		case step < 50:
+			height += 11.13
+		case step < 100:
+			height -= 22.26
+		default:
+			height += 100
+		}
+	}
+	body.WriteString(`</rte></gpx>`)
+	parsed, err := Parse([]byte(body.String()))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(parsed.Grades) != 2*MaxGrade+1 {
+		t.Fatalf("%d buckets, want %d", len(parsed.Grades), 2*MaxGrade+1)
+	}
+	total := 0
+	for _, metres := range parsed.Grades {
+		total += metres
+	}
+	if math.Abs(float64(total-parsed.DistanceM)) > 5 {
+		t.Errorf("the buckets hold %d m of a %d m line", total, parsed.DistanceM)
+	}
+	if up := parsed.Grades[MaxGrade+10]; up < 5400 || up > 5700 {
+		t.Errorf("%d m at 10 %%, want about 5560", up)
+	}
+	if down := parsed.Grades[MaxGrade-20]; down < 5400 || down > 5700 {
+		t.Errorf("%d m at -20 %%, want about 5560", down)
+	}
+	if wall := parsed.Grades[2*MaxGrade]; wall < 100 || wall > 120 {
+		t.Errorf("%d m in the steepest bucket, want the one stretch of 111", wall)
+	}
+
+	if parsed, err := Parse(kmlOf([][2]float64{{63.5, -19.5}, {63.6, -19.5}})); err != nil || parsed.Grades != nil {
+		t.Errorf("a line without heights: %+v %v", parsed.Grades, err)
 	}
 }
 

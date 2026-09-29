@@ -182,3 +182,36 @@ func newViewerReportServer(t *testing.T) (*Server, *fakeDocuments) {
 	s.trackMaxBytes = 10 * 1024 * 1024
 	return s, docs
 }
+
+// TestTrackSpeedIsSetAndCleared checks a plan's route takes a speed of its
+// own within the bounds, gives it back with null, and a speed out of bounds or
+// an activity without a line is refused.
+func TestTrackSpeedIsSetAndCleared(t *testing.T) {
+	s, docs := newReportServerWithTracks(t)
+	docs.document.Kind = domain.DocumentPlan
+	path := "/api/v1/items/" + docs.place.ID.String() + "/track"
+	if recorder := send(s, http.MethodPatch, path, "good", `{"speed_kmh":3.5}`); recorder.Code != http.StatusNotFound {
+		t.Errorf("an activity without a line: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if recorder := importTrack(t, s, docs.place.ID.String(), "planned.gpx",
+		gpx([][2]float64{{63.5, -19.5}, {63.51, -19.51}})); recorder.Code != http.StatusOK {
+		t.Fatalf("import: %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	recorder := send(s, http.MethodPatch, path, "good", `{"speed_kmh":3.5}`)
+	if recorder.Code != http.StatusOK || docs.track.SpeedKmh == nil || *docs.track.SpeedKmh != 3.5 {
+		t.Fatalf("set the speed: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"speed_kmh":3.5`) {
+		t.Errorf("the document does not carry the speed: %s", recorder.Body.String())
+	}
+	for _, bad := range []string{`{"speed_kmh":0.5}`, `{"speed_kmh":12.5}`} {
+		if recorder := send(s, http.MethodPatch, path, "good", bad); recorder.Code != http.StatusUnprocessableEntity {
+			t.Errorf("%s: %d %s", bad, recorder.Code, recorder.Body.String())
+		}
+	}
+	if recorder := send(s, http.MethodPatch, path, "good", `{"speed_kmh":null}`); recorder.Code != http.StatusOK ||
+		docs.track.SpeedKmh != nil {
+		t.Errorf("clear the speed: %d %v", recorder.Code, docs.track.SpeedKmh)
+	}
+}

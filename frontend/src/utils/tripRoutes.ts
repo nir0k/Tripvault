@@ -7,14 +7,25 @@ import type { DocumentKind } from '@/api/types'
 // tell which section is open and a link can never land a report under the plans.
 
 /** TripSection is a page inside a trip: its document, or one of the pages beside it. */
-export type TripSection = 'document' | 'media' | 'budget' | 'settings'
+export type TripSection = 'document' | 'packing' | 'media' | 'budget' | 'settings'
 
-/** TRIP_SECTIONS lists the pages of a trip in the order its tabs show them. */
-export const TRIP_SECTIONS: readonly TripSection[] = ['document', 'media', 'budget', 'settings']
+/**
+ * tripSections lists the pages of a trip in the order its tabs show them. Only
+ * a plan has a packing list: by the time a report is written, everything was taken.
+ */
+export function tripSections(kind: DocumentKind, shared: boolean): TripSection[] {
+  const sections: TripSection[] = shared ? ['document', 'packing', 'media'] : ['document', 'packing', 'media', 'budget', 'settings']
+  return kind === 'plan' ? sections : sections.filter((section) => section !== 'packing')
+}
+
+// ALL_SECTIONS is every page any trip may have.
+const ALL_SECTIONS: readonly TripSection[] = ['document', 'packing', 'media', 'budget', 'settings']
 
 // The route names of each kind's pages, as the router declares them.
-const ROUTE_NAMES: Record<DocumentKind, Record<TripSection, string>> = {
-  plan: { document: 'trip-plan', media: 'trip-media', budget: 'trip-budget', settings: 'trip-settings' },
+const ROUTE_NAMES: Record<DocumentKind, Partial<Record<TripSection, string>>> = {
+  plan: {
+    document: 'trip-plan', packing: 'trip-packing', media: 'trip-media', budget: 'trip-budget', settings: 'trip-settings',
+  },
   report: { document: 'report-report', media: 'report-media', budget: 'report-budget', settings: 'report-settings' },
 }
 
@@ -25,16 +36,18 @@ const ROUTE_NAMES: Record<DocumentKind, Record<TripSection, string>> = {
  */
 export const SHARED_TRIP_ID = 'shared'
 
-/** SHARED_SECTIONS lists the pages a read-only link opens, in the order its tabs show them. */
-export const SHARED_SECTIONS: readonly TripSection[] = ['document', 'media']
-
 // The route names of a read-only link's pages; the document route serves a plan
 // and a report alike, since the link opens whichever the trip holds.
-const SHARED_ROUTE_NAMES: Partial<Record<TripSection, string>> = { document: 'shared', media: 'shared-media' }
+const SHARED_ROUTE_NAMES: Partial<Record<TripSection, string>> = {
+  document: 'shared', packing: 'shared-packing', media: 'shared-media',
+}
 
-/** tripRouteName names the route of one page of a plan or a report. */
+/**
+ * tripRouteName names the route of one page of a plan or a report; a page the
+ * kind does not have - a report's packing list - is its document.
+ */
 export function tripRouteName(kind: DocumentKind, section: TripSection = 'document'): string {
-  return ROUTE_NAMES[kind][section]
+  return ROUTE_NAMES[kind][section] ?? ROUTE_NAMES[kind].document ?? ''
 }
 
 /**
@@ -58,7 +71,7 @@ export function tripRoute(trip: { id: string; kind: DocumentKind }, section: Tri
 /** sectionOfRoute finds which page of a trip a route name is, or null for any other page. */
 export function sectionOfRoute(name: unknown): TripSection | null {
   for (const names of [...Object.values(ROUTE_NAMES), SHARED_ROUTE_NAMES]) {
-    for (const section of TRIP_SECTIONS) {
+    for (const section of ALL_SECTIONS) {
       if (names[section] === name) {
         return section
       }

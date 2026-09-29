@@ -111,7 +111,7 @@ function onShrink(event: Event): void {
     {{ t('media.add') }}
   </button>
 
-  <dialog ref="dialog" class="modal modal-bottom sm:modal-middle">
+  <dialog ref="dialog" class="modal modal-top sm:modal-middle">
     <div
       class="modal-box flex flex-col gap-4"
       @dragover.prevent="dragging = true"

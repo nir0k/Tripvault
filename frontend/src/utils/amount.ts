@@ -1,22 +1,33 @@
 /**
- * Amounts may be typed as a formula the way a spreadsheet takes one: a leading
- * "=" followed by numbers, the four operators and parentheses, "=120*3+45".
+ * Amounts may be typed as a formula: numbers, the four operators and
+ * parentheses, "120*3+45". A phone's number pad has no "=", so the leading "="
+ * a spreadsheet asks for is accepted but not needed, and the signs the
+ * operator keys of AmountInput type - "×", "÷", "−" - count as "*", "/", "-".
  * Only the result is ever stored; the formula is a way of typing it.
  */
 
-/** isFormula reports whether a typed amount is a formula rather than a number. */
+/** OPERATOR_SIGNS maps the typographic signs onto the ones the grammar reads. */
+const OPERATOR_SIGNS: Record<string, string> = { '×': '*', '÷': '/', '−': '-' }
+
+/**
+ * isFormula reports whether a typed amount is a formula rather than a number:
+ * it starts with "=", or holds an operator or a parenthesis. A minus counts
+ * only after the first character, so "-5" stays a (refused) negative amount.
+ */
 export function isFormula(value: string): boolean {
-  return value.trimStart().startsWith('=')
+  const trimmed = value.trim()
+  return trimmed.startsWith('=') || /[+*/×÷−()]/.test(trimmed) || trimmed.slice(1).includes('-')
 }
 
 /**
  * evaluateFormula computes a formula, with or without its leading "=". A
- * decimal comma is read as a point and spaces are ignored, as in a plain
- * amount. It returns null for anything that is not a well-formed expression of
+ * decimal comma is read as a point, spaces are ignored, as in a plain amount,
+ * and "×", "÷" and "−" are read as "*", "/" and "-". It returns null for anything that is not a well-formed expression of
  * numbers, + - * / and parentheses, and for a division by zero.
  */
 export function evaluateFormula(value: string): number | null {
   const source = value.trim().replace(/^=/, '').replace(/\s/g, '').replace(/,/g, '.')
+    .replace(/[×÷−]/g, (sign) => OPERATOR_SIGNS[sign] ?? sign)
   let index = 0
 
   // expression := term (("+" | "-") term)*

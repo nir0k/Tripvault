@@ -181,7 +181,7 @@ onMounted(load)
       </li>
     </ul>
 
-    <dialog ref="dialog" class="modal modal-bottom sm:modal-middle">
+    <dialog ref="dialog" class="modal modal-top sm:modal-middle">
       <form class="modal-box flex flex-col gap-3" @submit.prevent="submit">
         <h2 class="text-lg font-bold">{{ dialogTitle }}</h2>
 

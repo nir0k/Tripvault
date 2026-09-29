@@ -2,6 +2,7 @@
 import { computed, ref, useTemplateRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
+import { updateDocument } from '@/api/documents'
 import { createTrip } from '@/api/trips'
 import type { DocumentKind } from '@/api/types'
 import TripFields, { type TripFormModel } from '@/components/TripFields.vue'
@@ -19,6 +20,16 @@ const kind = ref<DocumentKind>('plan')
 const form = ref<TripFormModel>(emptyForm())
 const error = ref('')
 const busy = ref(false)
+// intro is the opening text the new plan starts with, when it is made from an idea.
+const intro = ref('')
+
+/** TripPrefill is what a new plan starts with when it is made from something else, such as an idea. */
+export interface TripPrefill {
+  title: string
+  currency: string
+  budget: string
+  intro: string
+}
 
 const title = computed(() => (kind.value === 'plan' ? t('tripForm.createPlanTitle') : t('tripForm.createReportTitle')))
 
@@ -36,10 +47,17 @@ function emptyForm(): TripFormModel {
   }
 }
 
-/** open shows the wizard for a new plan, or for a report written from scratch. */
-function open(next: DocumentKind): void {
+/**
+ * open shows the wizard for a new plan, or for a report written from scratch.
+ * A plan made from an idea starts with its title, currency, budget and text.
+ */
+function open(next: DocumentKind, prefill: TripPrefill | null = null): void {
   kind.value = next
   form.value = emptyForm()
+  intro.value = prefill?.intro ?? ''
+  if (prefill) {
+    Object.assign(form.value, { title: prefill.title, currency: prefill.currency, budget: prefill.budget })
+  }
   error.value = ''
   dialog.value?.showModal()
 }
@@ -59,6 +77,10 @@ async function submit(): Promise<void> {
       budget_amount: normalizeAmount(form.value.budget),
       kind: kind.value,
     })
+    // The text is the plan's own, written into its document once it exists.
+    if (intro.value.trim() !== '' && trip.plan_id) {
+      await updateDocument(trip.plan_id, { intro_md: intro.value })
+    }
     dialog.value?.close()
     await router.push(tripRoute(trip))
   } catch (err) {
@@ -72,7 +94,7 @@ defineExpose({ open })
 </script>
 
 <template>
-  <dialog ref="dialog" class="modal modal-bottom sm:modal-middle">
+  <dialog ref="dialog" class="modal modal-top sm:modal-middle">
     <form class="modal-box flex flex-col gap-3" @submit.prevent="submit">
       <h2 class="text-lg font-bold">{{ title }}</h2>
       <TripFields v-model="form" />

@@ -38,6 +38,7 @@ export const router = createRouter({
       meta: { public: true, bare: true, shared: true },
       children: [
         { path: '', name: 'shared', component: () => import('@/views/SharedDocumentView.vue') },
+        { path: 'packing', name: 'shared-packing', component: () => import('@/views/trip/TripPackingView.vue') },
         { path: 'media', name: 'shared-media', component: () => import('@/views/trip/TripMediaView.vue') },
       ],
     },
@@ -78,6 +79,7 @@ export const router = createRouter({
       children: [
         { path: '', redirect: (to) => ({ name: 'trip-plan', params: to.params }) },
         { path: 'plan', name: 'trip-plan', component: () => import('@/views/trip/TripPlanView.vue') },
+        { path: 'packing', name: 'trip-packing', component: () => import('@/views/trip/TripPackingView.vue') },
         { path: 'media', name: 'trip-media', component: () => import('@/views/trip/TripMediaView.vue') },
         { path: 'budget', name: 'trip-budget', component: () => import('@/views/trip/TripBudgetView.vue') },
         { path: 'settings', name: 'trip-settings', component: () => import('@/views/trip/TripSettingsView.vue') },
@@ -96,6 +98,20 @@ export const router = createRouter({
         { path: 'budget', name: 'report-budget', component: () => import('@/views/trip/TripBudgetView.vue') },
         { path: 'settings', name: 'report-settings', component: () => import('@/views/trip/TripSettingsView.vue') },
       ],
+    },
+    {
+      // The reader's own ideas of where to go, apart from their trips.
+      path: '/ideas',
+      name: 'ideas',
+      component: () => import('@/views/IdeasView.vue'),
+      meta: { wide: true },
+    },
+    {
+      path: '/ideas/:ideaId',
+      name: 'idea',
+      component: () => import('@/views/IdeaView.vue'),
+      props: true,
+      meta: { wide: true },
     },
     { path: '/profile', name: 'profile', component: () => import('@/views/ProfileView.vue') },
     {

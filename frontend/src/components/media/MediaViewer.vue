@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MEDIA_SIZES, mediaThumbnailPath, type MediaSize } from '@/api/media'
+import { MEDIA_SIZES, mediaThumbnailPath, SHARED_MEDIA_BASE, startDownload, type MediaSize } from '@/api/media'
 import type { Media } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import { prefetchMedia, useMediaBase, useMediaUrl } from '@/composables/useMediaUrl'
+import { useTripStore } from '@/stores/trip'
 import { formatDateTime } from '@/utils/format'
 
 // A photograph across nearly the whole window, with the rest of its gallery a
@@ -16,6 +17,26 @@ const props = defineProps<{ items: Media[] }>()
 
 const { t, locale } = useI18n()
 const base = useMediaBase()
+const store = useTripStore()
+// saving is true while the open picture is being downloaded.
+const saving = ref(false)
+
+// save downloads the open picture as it was uploaded, where downloading is
+// allowed: always for a member, for a link when its owner allowed it.
+async function save(): Promise<void> {
+  const item = current.value
+  if (!item || saving.value) {
+    return
+  }
+  saving.value = true
+  try {
+    await startDownload(base === SHARED_MEDIA_BASE ? null : item.trip_id, [item.id])
+  } catch {
+    // The picture stays on the screen; the download can be tried again.
+  } finally {
+    saving.value = false
+  }
+}
 
 const dialog = useTemplateRef<HTMLDialogElement>('dialog')
 // The frame rather than the dialog goes full screen: a browser refuses a
@@ -250,6 +271,18 @@ defineExpose({ open, close })
         </p>
         <div class="flex items-center gap-1">
           <span class="text-sm opacity-70">{{ index + 1 }} / {{ items.length }}</span>
+          <button
+            v-if="store.canDownload"
+            type="button"
+            class="btn btn-ghost btn-sm btn-square"
+            :disabled="saving"
+            :aria-label="t('media.downloadOne')"
+            :title="t('media.downloadOne')"
+            @click="save"
+          >
+            <span v-if="saving" class="loading loading-spinner loading-xs"></span>
+            <AppIcon v-else name="download" />
+          </button>
           <button
             type="button"
             class="btn btn-ghost btn-sm btn-square"

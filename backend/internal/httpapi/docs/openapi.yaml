@@ -51,6 +51,12 @@ tags:
       editor or viewer - is read on every request. A trip the reader has no
       access to answers `404`, exactly like a missing one; an action the role
       does not allow answers `403 forbidden`.
+  - name: Tags
+    description: |
+      A person's own words to mark trips with. Tags belong to the person, not
+      to a trip: every member of a trip tags it in their own way, a viewer
+      included, and nobody sees another's tags. A trip lists the reader's tags
+      on it in `tags`.
   - name: Documents
     description: |
       A trip's plan and report: days, places, stays and stay marks. Every
@@ -81,6 +87,19 @@ tags:
       left out of a read-only link unless that link was created to show private
       files. Previews are rendered on demand at fixed widths and may be cached
       by the browser, because the bytes under an identifier never change.
+  - name: Packing
+    description: |
+      A plan's list of what to take: things, gear, documents, in categories the
+      trip names itself. The list is packed together, so one tick serves the
+      whole group, and an item may name the member who brings it. Every change
+      answers with the whole list. Owners and editors change it; viewers read
+      it. A report has none.
+  - name: Ideas
+    description: |
+      A person's ideas of where to go one day: where, when it is best, how long
+      it takes and roughly what it costs. An idea is its owner's alone, like a
+      tag, and somebody else's reads as missing. The list comes whole, for the
+      interface to filter; a plan is made from an idea through `POST /trips`.
   - name: Places
     description: Place search, reverse lookups and reading positions from map links.
   - name: Administration
@@ -604,9 +623,10 @@ paths:
       tags: [Trips]
       summary: List own and shared trips
       description: |
-        By relevance, the default, ongoing trips come first, then upcoming ones
-        by start date, then trips without dates, newest first, then completed
-        trips from the most recent. By update, the trip whose content anybody
+        By relevance, the default, ongoing trips and overdue plans come first,
+        then upcoming ones by start date, then trips without dates, newest
+        first, then finished trips from the most recent: plans completed or
+        cancelled, and reports whose dates have passed. By update, the trip whose content anybody
         changed last comes first. A plan and a report are separate trips;
         `kind` lists one or the other.
       operationId: listTrips
@@ -755,7 +775,8 @@ paths:
       summary: Change a trip
       description: |
         Owners and editors. Omitted fields are left as they are; `null` clears
-        the dates and the budget. Dates are set and cleared together.
+        the dates and the budget. Dates are set and cleared together. `state`
+        closes a plan as completed or cancelled, and `null` opens it again.
 
         New dates reshape the documents: moving the start moves every day and
         stay by the same number of days, and a period of another length adds
@@ -807,6 +828,393 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /api/v1/tags:
+    get:
+      tags: [Tags]
+      summary: List one's tags
+      description: The reader's own tags by name, each with the number of trips wearing it.
+      operationId: listTags
+      responses:
+        "200":
+          description: The tags.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Tag"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Tags]
+      summary: Create a tag
+      description: A name the reader already uses, in any case, answers `409 already_exists`.
+      operationId: createTag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTagRequest"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tag"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/tags/{tagID}:
+    patch:
+      tags: [Tags]
+      summary: Rename a tag or change its colour
+      description: |
+        Every trip wearing the tag shows the change. A name another of the
+        reader's tags has answers `409 already_exists`.
+      operationId: updateTag
+      parameters:
+        - $ref: "#/components/parameters/TagID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTagRequest"
+      responses:
+        "200":
+          description: Changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tag"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      tags: [Tags]
+      summary: Delete a tag
+      description: The tag leaves the reader's list and every trip it was put on.
+      operationId: deleteTag
+      parameters:
+        - $ref: "#/components/parameters/TagID"
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/ideas:
+    get:
+      tags: [Ideas]
+      summary: List one's ideas
+      description: Every idea of the reader, the last changed first.
+      operationId: listIdeas
+      responses:
+        "200":
+          description: The ideas.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Idea"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Ideas]
+      summary: Add an idea
+      description: Without a currency the idea takes the reader's default one.
+      operationId: createIdea
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdeaRequest"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Idea"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/ideas/{ideaID}:
+    get:
+      tags: [Ideas]
+      summary: Read an idea
+      operationId: getIdea
+      parameters:
+        - $ref: "#/components/parameters/IdeaID"
+      responses:
+        "200":
+          description: The idea.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Idea"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Ideas]
+      summary: Save an idea
+      description: Every field is sent, as the form edits them all at once; the tags are set apart.
+      operationId: updateIdea
+      parameters:
+        - $ref: "#/components/parameters/IdeaID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdeaRequest"
+      responses:
+        "200":
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Idea"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      tags: [Ideas]
+      summary: Delete an idea
+      operationId: deleteIdea
+      parameters:
+        - $ref: "#/components/parameters/IdeaID"
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/ideas/{ideaID}/tags:
+    put:
+      tags: [Ideas]
+      summary: Tag an idea
+      description: |
+        Replaces the reader's tags on one of their ideas. Every identifier must
+        name one of the reader's tags, or the answer is `422` with reason
+        `unknown_tag`; repeats are dropped.
+      operationId: setIdeaTags
+      parameters:
+        - $ref: "#/components/parameters/IdeaID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tag_ids]
+              additionalProperties: false
+              properties:
+                tag_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        "200":
+          description: The idea with its new tags.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Idea"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/ideas/{ideaID}/photos:
+    post:
+      tags: [Ideas]
+      summary: Add a photo to an idea
+      description: |
+        A multipart upload with one `file` part holding a picture. The server
+        renders it into a photo up to 2048 px wide and a preview up to 480 px,
+        both JPEG without the camera's metadata, and adds it at the end of the
+        idea's photos. An idea keeps at most 10; one more answers `422` with
+        reason `too_many`.
+      operationId: addIdeaPhoto
+      parameters:
+        - $ref: "#/components/parameters/IdeaID"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "201":
+          description: The idea with the new photo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Idea"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/ideas/{ideaID}/photos/{photoID}:
+    get:
+      tags: [Ideas]
+      summary: Read a photo of an idea
+      description: The photo as JPEG, or its preview with `size=preview`; only to the idea's owner.
+      operationId: getIdeaPhoto
+      parameters:
+        - $ref: "#/components/parameters/IdeaID"
+        - name: photoID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: size
+          in: query
+          schema:
+            type: string
+            enum: [preview]
+      responses:
+        "200":
+          description: The picture.
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "304":
+          description: The copy the browser holds is current.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Ideas]
+      summary: Remove a photo of an idea
+      operationId: deleteIdeaPhoto
+      parameters:
+        - $ref: "#/components/parameters/IdeaID"
+        - name: photoID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The idea without the photo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Idea"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/trips/{tripID}/tags:
+    put:
+      tags: [Tags]
+      summary: Tag a trip
+      description: |
+        Replaces the reader's tags on a trip; other members' tags stay as they
+        are. Anybody who can open the trip may, a viewer included. Every
+        identifier must name one of the reader's tags, or the answer is `422`
+        with reason `unknown_tag`; repeats are dropped, and a trip wears at
+        most 100 of the reader's tags.
+      operationId: setTripTags
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tag_ids]
+              additionalProperties: false
+              properties:
+                tag_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        "200":
+          description: The trip with its new tags.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Trip"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
 
   /api/v1/trips/{tripID}/members:
     get:
@@ -1041,6 +1449,65 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/Document"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/shared/plan/pdf:
+    get:
+      tags: [Sharing]
+      summary: Download the shared plan as a PDF
+      description: |
+        The plan the link opens, as a document to take on the way. The
+        language and the units come from the query, as a link has no account
+        to read them from.
+      operationId: getSharedPlanPDF
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ShareToken"
+        - $ref: "#/components/parameters/ReportPDFLanguage"
+        - $ref: "#/components/parameters/ReportPDFUnits"
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportPDF"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/shared/packing:
+    get:
+      tags: [Sharing]
+      summary: Read the shared plan's packing list
+      description: |
+        The list of the plan the link opens. A link tells nothing about the
+        people of a trip, so `bringer_id` is always null.
+      operationId: getSharedPackingList
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ShareToken"
+      responses:
+        "200":
+          $ref: "#/components/responses/PackingListChanged"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/shared/packing/pdf:
+    get:
+      tags: [Sharing]
+      summary: Download the shared plan's packing list as a PDF
+      description: The checklist without who brings what, in the language the query names.
+      operationId: getSharedPackingPDF
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ShareToken"
+        - $ref: "#/components/parameters/ReportPDFLanguage"
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportPDF"
         "401":
           $ref: "#/components/responses/Error"
         "404":
@@ -1359,6 +1826,116 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/v1/shared/media:download:
+    post:
+      tags: [Sharing]
+      summary: Download shared pictures
+      description: |
+        As `POST /trips/{tripID}/media:download`, for a link that allows
+        downloads; otherwise `403 download_not_allowed`. A private picture in
+        a link that was not given private files answers `404`.
+      operationId: downloadSharedMedia
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ShareToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MediaDownloadRequest"
+      responses:
+        "201":
+          $ref: "#/components/responses/MediaDownload"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/trips/{tripID}/media:download:
+    post:
+      tags: [Media]
+      summary: Download pictures
+      description: |
+        Issues a download of the chosen pictures of a trip for the browser to
+        open itself, with its own downloader - written to the disk as it
+        comes, never held whole by a page. The answer names the address; the
+        ticket behind it is set as an `HttpOnly` cookie scoped to that address,
+        so no secret is ever in an address a proxy might log. The address
+        serves for 10 minutes, as often as it is opened; a download started
+        within them runs to its end. Every member may; a picture of another
+        trip answers `404`.
+      operationId: downloadMedia
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MediaDownloadRequest"
+      responses:
+        "201":
+          $ref: "#/components/responses/MediaDownload"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/downloads/{downloadID}:
+    get:
+      tags: [Media]
+      summary: Open a download
+      description: |
+        What a download issued by `media:download` serves, read with the
+        cookie it was issued with; no account is needed. One picture is its
+        own file under its original name, and answers a `Range`, so the
+        browser resumes it. Several are a ZIP archive named after the trip,
+        the files stored rather than compressed and written as they are read;
+        a name that repeats is numbered, "IMG_0001 (2).jpg". Without the
+        cookie, or once it has expired, the address answers `404`.
+      operationId: openDownload
+      security: []
+      parameters:
+        - name: downloadID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The picture, or the archive.
+          headers:
+            Content-Disposition:
+              description: "`attachment` with the picture's name, or the trip's for an archive."
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: A range of one picture.
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v1/shared/tracks/{trackID}/file:
     get:
       tags: [Sharing]
@@ -1466,6 +2043,314 @@ paths:
         "409":
           $ref: "#/components/responses/Error"
 
+  /api/v1/trips/{tripID}/plan/pdf:
+    get:
+      tags: [Documents]
+      summary: Download the plan as a PDF
+      description: |
+        The plan as an A4 document to take on the way, read on a phone or
+        printed: a cover whose list of days links to their pages; the stays
+        with their dates, times of the desk, bookings and contacts, and the
+        flights and transfers; the map of the trip; then a page a day with its
+        map, when it starts and ends, and every place in the order it is
+        reached - its time, how long it takes, where it is and what it costs -
+        with the journeys between them; and last the ideas without a day.
+        Every place and stay with a position carries a QR code, and its
+        address a link, that open the way there in a map. It is written in the
+        reader's language and units. Every member may.
+      operationId: getPlanPDF
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportPDF"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/trips/{tripID}/packing:
+    get:
+      tags: [Packing]
+      summary: Read the packing list
+      description: |
+        The plan's list of what to take, with how many of its items are packed.
+        Every member may. A report has no list and answers `409 not_a_plan`.
+      operationId: getPackingList
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+      responses:
+        "200":
+          $ref: "#/components/responses/PackingListChanged"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Error"
+
+  /api/v1/trips/{tripID}/packing/pdf:
+    get:
+      tags: [Packing]
+      summary: Download the packing list as a PDF
+      description: |
+        The list as an A4 checklist to tick with a pen: two columns of cards,
+        one for each category in its colour and with its icon, each item with
+        an empty box, how many, who brings it and its note. Every box is empty,
+        whatever is packed already: the list is printed to pack from. It is
+        written in the reader's language. Every member may.
+      operationId: getPackingPDF
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+      responses:
+        "200":
+          $ref: "#/components/responses/ReportPDF"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Error"
+
+  /api/v1/trips/{tripID}/packing:reset:
+    post:
+      tags: [Packing]
+      summary: Take every tick off
+      description: Unpacks the whole list, to pack it again for the way back.
+      operationId: resetPackingList
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+      responses:
+        "200":
+          $ref: "#/components/responses/PackingListChanged"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Error"
+
+  /api/v1/trips/{tripID}/packing/categories:
+    post:
+      tags: [Packing]
+      summary: Add a category
+      description: Adds a category at the end of the list.
+      operationId: createPackingCategory
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PackingCategoryRequest"
+      responses:
+        "201":
+          $ref: "#/components/responses/PackingListChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/trips/{tripID}/packing/categories:reorder:
+    post:
+      tags: [Packing]
+      summary: Reorder the categories
+      description: Puts the categories in a new order; `order` names every one of them once.
+      operationId: reorderPackingCategories
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReorderRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/PackingListChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/trips/{tripID}/packing/items:
+    post:
+      tags: [Packing]
+      summary: Add an item
+      description: |
+        Adds an item at the end of its category, or among the items without one
+        when `category_id` is null or missing. A bringer must be a member of the
+        trip.
+      operationId: createPackingItem
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PackingItemCreateRequest"
+      responses:
+        "201":
+          $ref: "#/components/responses/PackingListChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/packing-categories/{categoryID}:
+    patch:
+      tags: [Packing]
+      summary: Change a category
+      description: Renames a category or changes its colour or icon; only the fields sent change.
+      operationId: updatePackingCategory
+      parameters:
+        - $ref: "#/components/parameters/PackingCategoryID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PackingCategoryPatch"
+      responses:
+        "200":
+          $ref: "#/components/responses/PackingListChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      tags: [Packing]
+      summary: Delete a category
+      description: Removes the category and every item in it.
+      operationId: deletePackingCategory
+      parameters:
+        - $ref: "#/components/parameters/PackingCategoryID"
+      responses:
+        "200":
+          $ref: "#/components/responses/PackingListChanged"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/packing-items/{itemID}:
+    patch:
+      tags: [Packing]
+      summary: Change an item
+      description: |
+        Changes an item's name, quantity, note, tick or bringer; a field left
+        out keeps its value. A new bringer must be a member of the trip.
+      operationId: updatePackingItem
+      parameters:
+        - $ref: "#/components/parameters/PackingItemID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PackingItemRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/PackingListChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      tags: [Packing]
+      summary: Delete an item
+      operationId: deletePackingItem
+      parameters:
+        - $ref: "#/components/parameters/PackingItemID"
+      responses:
+        "200":
+          $ref: "#/components/responses/PackingListChanged"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/packing-items/{itemID}:move:
+    post:
+      tags: [Packing]
+      summary: Move an item
+      description: |
+        Moves an item to a position of a category - its own or another - or
+        among the items without one when `category_id` is null. A position out
+        of range means the end.
+      operationId: movePackingItem
+      parameters:
+        - $ref: "#/components/parameters/PackingItemID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PackingItemMoveRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/PackingListChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
   /api/v1/trips/{tripID}/report/pdf:
     get:
       tags: [Documents]
@@ -1550,6 +2435,101 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationFailed"
+  /api/v1/documents/{documentID}/translations/{lang}/file:
+    get:
+      tags: [Documents]
+      summary: Write a report's words into a translation file
+      description: |
+        A YAML file of every word of the report a reader sees, for one of the
+        languages it is translated into: the trip's title and summary, the
+        words before and after the days, each day with its places and the
+        notes of its journeys, the stays and the transfers. Every text is a
+        pair, `original` and `translation`, the translation holding what the
+        report has so far; a text that does not exist is left out. The file
+        says in `instructions` what to do with it, for a person or a model.
+        Whoever may edit the report may.
+      operationId: getTranslationFile
+      parameters:
+        - $ref: "#/components/parameters/DocumentID"
+        - name: lang
+          in: path
+          required: true
+          description: A language the report is translated into; not its original.
+          schema:
+            type: string
+            enum: [en, ru]
+      responses:
+        "200":
+          description: The file.
+          headers:
+            Content-Disposition:
+              description: "`attachment` named after the trip and the language, such as “Iceland.ru.yaml”."
+              schema:
+                type: string
+          content:
+            application/yaml:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    put:
+      tags: [Documents]
+      summary: Read the translations back from a file
+      description: |
+        Reads a file written by the `GET` of this path, filled in, and saves
+        every translation in it at once: each field is checked before anything
+        is written. An empty `translation` removes one; the originals are not
+        read. An entry naming an element the report no longer has is skipped
+        and counted. A file of another language answers `422` with reason
+        `wrong_language`, anything else than such a file `invalid_file`.
+      operationId: putTranslationFile
+      parameters:
+        - $ref: "#/components/parameters/DocumentID"
+        - name: lang
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [en, ru]
+      requestBody:
+        required: true
+        content:
+          application/yaml:
+            schema:
+              type: string
+              maxLength: 8388608
+      responses:
+        "200":
+          description: What the file brought.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [saved, skipped]
+                properties:
+                  saved:
+                    type: integer
+                    description: The fields written, the emptied ones included.
+                  skipped:
+                    type: integer
+                    description: Entries naming an element the report no longer has.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
   /api/v1/documents/{documentID}/translations/{lang}:
     put:
       tags: [Documents]
@@ -2025,6 +3005,43 @@ paths:
           $ref: "#/components/responses/Error"
         "422":
           $ref: "#/components/responses/ValidationFailed"
+    patch:
+      tags: [Documents]
+      summary: Set the speed an activity's line is timed at
+      description: |
+        The speed on the flat, in km/h, the time to walk the line is worked out
+        at, overriding the plan's own `track_speed_kmh`; null takes the plan's
+        speed again. The time itself is worked out by the reader from the
+        line's `grades`. Owners and editors may.
+      operationId: updateItemTrack
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [speed_kmh]
+              properties:
+                speed_kmh:
+                  type: [number, "null"]
+                  minimum: 1
+                  maximum: 12
+      responses:
+        "200":
+          $ref: "#/components/responses/Document"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
     delete:
       tags: [Documents]
       summary: Remove the recorded line of a place or an activity
@@ -2297,6 +3314,11 @@ paths:
         Sets the mode, typed distance and time, cost or note. A typed value wins
         over the calculated one until it is set to `null` or `reset_manual`
         drops both. A new mode sends the leg back to `pending`.
+
+        A journey with changes takes only its `note` here, and a cost set to
+        `null` - as the budget clears it - clears what its tickets cost;
+        anything else answers `422` with reason `composite_leg`, since its
+        parts are changed with `PUT /legs/{legID}/segments`.
       operationId: updateLeg
       parameters:
         - $ref: "#/components/parameters/LegID"
@@ -2317,6 +3339,89 @@ paths:
           $ref: "#/components/responses/NotFound"
         "400":
           $ref: "#/components/responses/InvalidRequest"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/legs/{legID}/segments:
+    put:
+      tags: [Documents]
+      summary: Set the changes of a leg
+      description: |
+        Replaces the parts and tickets of a leg. Two parts or more make it a
+        journey with changes; one part or none make it a leg travelled one way
+        again, which takes the part's mode and typed values and what its
+        tickets add up to as its cost. A part refers to its ticket by the
+        ticket's position in `tickets`, so new tickets need no identifier.
+
+        Every part but the last ends at a named change; the last part's `stop`
+        is ignored. A part that kept its mode and both ends keeps its
+        calculation; the others wait for one, which `legs:calculate` makes.
+        Choosing a route among the alternatives, via points and Google Maps
+        links belong to legs without changes and answer `422 composite_leg`
+        on one with them.
+      operationId: setLegSegments
+      parameters:
+        - $ref: "#/components/parameters/LegID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [segments]
+              additionalProperties: false
+              properties:
+                segments:
+                  type: array
+                  maxItems: 10
+                  items:
+                    type: object
+                    required: [mode]
+                    additionalProperties: false
+                    properties:
+                      mode:
+                        $ref: "#/components/schemas/TravelMode"
+                      distance_m:
+                        type: [integer, "null"]
+                        description: A typed distance, which wins over the calculated one.
+                      duration_s:
+                        type: [integer, "null"]
+                        description: A typed time, which wins over the calculated one.
+                      ticket:
+                        type: [integer, "null"]
+                        minimum: 0
+                        description: The position of the part's ticket in `tickets`.
+                      stop:
+                        oneOf:
+                          - $ref: "#/components/schemas/LegStop"
+                          - type: "null"
+                tickets:
+                  type: array
+                  maxItems: 10
+                  items:
+                    type: object
+                    additionalProperties: false
+                    properties:
+                      name:
+                        type: string
+                        maxLength: 200
+                      planned_cost_amount:
+                        $ref: "#/components/schemas/NullableAmount"
+                      actual_cost_amount:
+                        allOf:
+                          - $ref: "#/components/schemas/NullableAmount"
+                        description: Report only.
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationFailed"
 
@@ -3025,6 +4130,34 @@ components:
       schema:
         type: string
         format: uuid
+    PackingCategoryID:
+      name: categoryID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PackingItemID:
+      name: itemID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    IdeaID:
+      name: ideaID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TagID:
+      name: tagID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     SessionID:
       name: sessionID
       in: path
@@ -3214,6 +4347,22 @@ components:
         type: string
 
   responses:
+    MediaDownload:
+      description: Where the browser downloads the pictures.
+      headers:
+        Set-Cookie:
+          description: The ticket, `HttpOnly`, `SameSite=Strict`, scoped to the address and living 10 minutes.
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [url]
+            properties:
+              url:
+                type: string
+                description: The address to open, such as `/api/v1/downloads/…`; it holds no secret.
     TrackFile:
       description: The track file as it was uploaded.
       headers:
@@ -3305,6 +4454,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    PackingListChanged:
+      description: The whole packing list.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PackingList"
     ReportPDF:
       description: The report as a PDF file.
       content:
@@ -3332,6 +4487,170 @@ components:
             $ref: "#/components/schemas/Error"
 
   schemas:
+    PackingList:
+      type: object
+      required: [categories, items, packed, total]
+      properties:
+        categories:
+          type: array
+          description: The categories in their order.
+          items:
+            type: object
+            required: [id, name, color, icon, position]
+            properties:
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+              color:
+                $ref: "#/components/schemas/TagColor"
+              icon:
+                $ref: "#/components/schemas/PackingIcon"
+              position:
+                type: integer
+        items:
+          type: array
+          description: Every item, ordered by its position within its category.
+          items:
+            type: object
+            required: [id, category_id, name, quantity, note, packed, bringer_id, position]
+            properties:
+              id:
+                type: string
+                format: uuid
+              category_id:
+                type: [string, "null"]
+                format: uuid
+                description: Null for an item without a category, listed after the categories.
+              name:
+                type: string
+              quantity:
+                type: integer
+                minimum: 1
+                maximum: 999
+              note:
+                type: string
+              packed:
+                type: boolean
+              bringer_id:
+                type: [string, "null"]
+                format: uuid
+                description: The member who brings the item; always null through a read-only link.
+              position:
+                type: integer
+        packed:
+          type: integer
+          description: How many items are packed.
+        total:
+          type: integer
+          description: How many items there are.
+    PackingCategoryRequest:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        color:
+          allOf:
+            - $ref: "#/components/schemas/TagColor"
+          description: Left out, the category takes the next colour of the palette.
+        icon:
+          allOf:
+            - $ref: "#/components/schemas/PackingIcon"
+          description: Left out, the category takes `other`.
+    PackingCategoryPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        color:
+          $ref: "#/components/schemas/TagColor"
+        icon:
+          $ref: "#/components/schemas/PackingIcon"
+    PackingIcon:
+      type: string
+      enum: [documents, tickets, cards, money, coins, keys, work, clothes, bags, luggage, glasses, rain,
+             first_aid, medicine, thermometer, hygiene, health, cosmetics, electronics, phone, chargers,
+             power_bank, headphones, camera, flash_drive, watch, games, food, snacks, drinks, groceries,
+             books, music, drawing, toys, gifts, kids, sport, swimming, beach, snow, camping, lamp,
+             compass, map, binoculars, hiking, sleep, nature, gear, flight, train, bus, car, fuel, home,
+             tools, stationery, shopping, other]
+      description: |
+        The icon a packing category is shown with, a key of a fixed set drawn
+        alike by the interface and the PDF.
+    PackingItemRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 999
+          default: 1
+        note:
+          type: string
+          maxLength: 500
+        packed:
+          type: boolean
+        bringer_id:
+          type: [string, "null"]
+          format: uuid
+    PackingItemCreateRequest:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        category_id:
+          type: [string, "null"]
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 999
+          default: 1
+        note:
+          type: string
+          maxLength: 500
+        packed:
+          type: boolean
+        bringer_id:
+          type: [string, "null"]
+          format: uuid
+    PackingItemMoveRequest:
+      type: object
+      required: [position]
+      additionalProperties: false
+      properties:
+        category_id:
+          type: [string, "null"]
+          format: uuid
+        position:
+          type: integer
+    ReorderRequest:
+      type: object
+      required: [order]
+      additionalProperties: false
+      properties:
+        order:
+          type: array
+          items:
+            type: string
+            format: uuid
     Error:
       type: object
       required: [code, message]
@@ -3889,11 +5208,13 @@ components:
 
     TravelMode:
       type: string
-      enum: [walk, car, bike, transit, flight, cable_car, other]
+      enum: [walk, car, bike, transit, bus, train, tram, ferry, flight, cable_car, other]
       description: |
-        `walk`, `car`, `bike` and `transit` are routed on roads; `flight`,
-        `cable_car` and `other` follow the straight line, and a flight or a
-        cable car gets an estimated time until one is typed.
+        `walk`, `car`, `bike`, `transit` and `bus` are routed on roads (public
+        transport and buses along the car route); `train`, `tram` (a metro, a
+        tram or a light railway), `ferry`, `flight`, `cable_car` and `other`
+        follow the straight line, and all of them but `other` get an estimated
+        time until one is typed.
 
     Amount:
       type: string
@@ -3916,9 +5237,9 @@ components:
 
     Trip:
       type: object
-      required: [id, kind, source_trip_id, title, summary, start_date, end_date, timezone, currency, travelers,
-                 budget_amount, status, day_count, role, owner, plan_id, report_id, cover_media_id, cover_crop,
-                 languages, translations, created_at, updated_at]
+      required: [id, kind, source_trip_id, from_plan, title, summary, start_date, end_date, timezone, currency, travelers,
+                 budget_amount, day_count, role, owner, plan_id, report_id, cover_media_id, cover_crop,
+                 languages, translations, created_at, updated_at, tags, track_speed_kmh]
       properties:
         id:
           type: string
@@ -3936,6 +5257,12 @@ components:
             The plan a report was copied from; null for a plan, for a report
             written from scratch, once that plan is deleted, and for a reader who
             cannot open that plan.
+        from_plan:
+          type: boolean
+          description: |
+            Whether a report was copied from a plan, told to every reader and
+            kept after the plan is deleted. A place added to such a report
+            without a status arrives `unplanned`.
         title:
           type: string
         summary:
@@ -3960,8 +5287,13 @@ components:
             - type: "null"
         status:
           type: string
-          enum: [upcoming, ongoing, completed]
-          description: Derived from the dates and today in the trip's time zone.
+          enum: [upcoming, ongoing, overdue, completed, cancelled]
+          description: |
+            Where a plan stands; a report has no status and leaves it out. An
+            open plan is upcoming before its first day, ongoing through its
+            last and overdue after it, today read in the trip's time zone. A
+            plan never completes on its own: it is completed or cancelled by
+            `state` in `PATCH /trips/{tripID}`.
         day_count:
           type: integer
         role:
@@ -4009,6 +5341,265 @@ components:
                 type: string
               summary:
                 type: string
+        tags:
+          type: array
+          description: The reader's own tags on the trip, by name.
+          items:
+            $ref: "#/components/schemas/TripTag"
+        track_speed_kmh:
+          type: number
+          minimum: 1
+          maximum: 12
+          description: |
+            The speed on the flat, in km/h, the time of a plan's lines is worked
+            out at when a line names none of its own. 4.7 until changed.
+    TagColor:
+      type: string
+      enum: [red, orange, amber, green, teal, sky, blue, violet, pink, gray, yellow, emerald, indigo, fuchsia,
+             lime, cyan, purple, rose, brown]
+      description: |
+        A colour of the interface's palette. A key rather than a value, so the
+        interface draws it to suit the light and the dark theme alike.
+    IdeaCosts:
+      type: object
+      required: [stay, food, other]
+      description: Rough costs of the whole trip besides getting there, as decimal strings; null while unknown.
+      properties:
+        stay:
+          type: [string, "null"]
+        food:
+          type: [string, "null"]
+        other:
+          type: [string, "null"]
+    IdeaPlace:
+      type: object
+      required: [name, lat, lng]
+      properties:
+        name:
+          type: string
+          maxLength: 500
+        lat:
+          type: [number, "null"]
+        lng:
+          type: [number, "null"]
+    IdeaTransport:
+      type: object
+      required: [modes, cost, minutes]
+      description: |
+        One way of getting there, an alternative to the others: one way of
+        travelling, or several mixed along one route. Its cost is a decimal
+        string, its time in minutes; each null while unknown.
+      properties:
+        modes:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items:
+            type: string
+            enum: [walk, car, bike, transit, bus, train, tram, ferry, flight, cable_car, other]
+        cost:
+          type: [string, "null"]
+        minutes:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 10080
+    IdeaRequest:
+      type: object
+      required: [title]
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        countries:
+          type: array
+          maxItems: 30
+          description: ISO 3166-1 alpha-2 codes, the main country first; repeats are dropped.
+          items:
+            type: string
+            pattern: "^[A-Za-z]{2}$"
+        places:
+          type: array
+          maxItems: 20
+          description: The places the idea goes to, in their order; one with neither a name nor a point is dropped.
+          items:
+            $ref: "#/components/schemas/IdeaPlace"
+        months:
+          type: array
+          description: The best months for going, 1 to 12; none is not said, all twelve any time.
+          items:
+            type: integer
+            minimum: 1
+            maximum: 12
+        days_min:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 30
+        days_max:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 30
+        days_ideal:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 30
+          description: The best length, between days_min and days_max.
+        description_md:
+          type: string
+          maxLength: 20000
+        currency:
+          type: string
+          description: ISO 4217; empty takes the reader's default currency.
+        costs:
+          $ref: "#/components/schemas/IdeaCosts"
+        transports:
+          type: array
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/IdeaTransport"
+        visa:
+          type: string
+          enum: [unknown, not_needed, needed, on_arrival]
+          default: not_needed
+          description: "`on_arrival` is a visa got online or at the border."
+    Idea:
+      type: object
+      required: [id, title, countries, places, photos, months, days_min, days_max, days_ideal, description_md,
+                 currency, costs, transports, transport_min, transport_max, cost_min, cost_max, visa, tags,
+                 created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        countries:
+          type: array
+          items:
+            type: string
+        places:
+          type: array
+          items:
+            $ref: "#/components/schemas/IdeaPlace"
+        months:
+          type: array
+          items:
+            type: integer
+        days_min:
+          type: [integer, "null"]
+        days_max:
+          type: [integer, "null"]
+        days_ideal:
+          type: [integer, "null"]
+        description_md:
+          type: string
+        currency:
+          type: string
+        costs:
+          $ref: "#/components/schemas/IdeaCosts"
+        transports:
+          type: array
+          items:
+            $ref: "#/components/schemas/IdeaTransport"
+        transport_min:
+          type: [string, "null"]
+          description: The cheapest way of getting there; null while none is priced.
+        transport_max:
+          type: [string, "null"]
+          description: The dearest way of getting there.
+        cost_min:
+          type: [string, "null"]
+          description: The costs given with the cheapest way of getting there; null while nothing is priced.
+        cost_max:
+          type: [string, "null"]
+          description: The costs given with the dearest way of getting there.
+        visa:
+          type: string
+          enum: [unknown, not_needed, needed, on_arrival]
+        photos:
+          type: array
+          maxItems: 10
+          description: The idea's pictures in their order, each served by `/ideas/{ideaID}/photos/{photoID}`.
+          items:
+            type: object
+            required: [id, width, height]
+            properties:
+              id:
+                type: string
+                format: uuid
+              width:
+                type: integer
+              height:
+                type: integer
+        tags:
+          type: array
+          items:
+            $ref: "#/components/schemas/TripTag"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    TripTag:
+      type: object
+      required: [id, name, color]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        color:
+          $ref: "#/components/schemas/TagColor"
+    Tag:
+      type: object
+      required: [id, name, color, trip_count, idea_count, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        color:
+          $ref: "#/components/schemas/TagColor"
+        trip_count:
+          type: integer
+          description: How many of the trips the reader can open wear the tag.
+        idea_count:
+          type: integer
+          description: How many of the reader's ideas wear the tag.
+        created_at:
+          type: string
+          format: date-time
+    CreateTagRequest:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: Trimmed, with inner runs of spaces folded into one; unique for the reader whatever the case.
+        color:
+          allOf:
+            - $ref: "#/components/schemas/TagColor"
+          description: |
+            The tag's colour, kept until changed on purpose. Without one the
+            tag takes the colour the reader's tags use least, the earlier in
+            the palette on a tie.
+    UpdateTagRequest:
+      type: object
+      additionalProperties: false
+      description: Omitted fields are left as they are; a tag always has a name and a colour, so neither takes null.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+        color:
+          $ref: "#/components/schemas/TagColor"
     CoverCrop:
       type: object
       required: [x, y, w, h]
@@ -4134,6 +5725,17 @@ components:
           description: |
             A report's languages, the original first. A language left out
             loses its translations. Refused on a plan.
+        state:
+          type: [string, "null"]
+          enum: [completed, cancelled, null]
+          description: |
+            Closes a plan as completed or cancelled; null opens it again, so
+            its status follows its dates. Refused on a report.
+        track_speed_kmh:
+          type: number
+          minimum: 1
+          maximum: 12
+          description: The speed on the flat, in km/h, the plan's lines are timed at by default.
         confirm:
           type: boolean
           default: false
@@ -4203,7 +5805,7 @@ components:
 
     PlaceCategory:
       type: string
-      enum: [sight, nature, museum, food, shopping, activity, transport, other]
+      enum: [sight, nature, museum, food, shopping, activity, transport, parking, other]
 
     ActivityType:
       type: string
@@ -4225,7 +5827,10 @@ components:
         `planned`. A place of a report is `visited` unless marked `skipped`:
         `planned` sent to a report is stored as `visited`, and a plan copied
         into a report arrives with every place visited. `unplanned` marks one
-        added straight into the report.
+        that was not in the plan: a place created without a status in a report
+        copied from a plan (`from_plan`) gets it, one in a report written from
+        scratch arrives `visited`, and either way it may be set or taken off
+        by hand.
       enum: [planned, visited, skipped, unplanned]
 
     TransferKind:
@@ -4392,7 +5997,7 @@ components:
         in a plan. The file it came from
         is downloaded from `/tracks/{id}/file`.
       required: [id, original_name, format, distance_m, point_count, ascent_m, descent_m, geometry,
-                 started_at, ended_at]
+                 grades, speed_kmh, started_at, ended_at]
       properties:
         id:
           type: string
@@ -4429,6 +6034,20 @@ components:
           type: [string, "null"]
           format: date-time
           description: The latest moment the file records; null when its points carry no time.
+        grades:
+          type: [array, "null"]
+          minItems: 101
+          maxItems: 101
+          items:
+            type: integer
+          description: |
+            How many metres of the line run at each slope, in whole percent from
+            -50 (index 0) to +50 (index 100), steeper stretches counted at the
+            ends; null when the file records no heights. The time to walk the
+            line is worked out from it, at a speed on the flat, by Tobler's rule.
+        speed_kmh:
+          type: [number, "null"]
+          description: The speed on the flat the line is timed at; null to take the plan's `track_speed_kmh`.
     Media:
       type: object
       required: [id, trip_id, original_name, mime, size, width, height, taken_at, lat, lng, is_private,
@@ -5201,10 +6820,26 @@ components:
             - $ref: "#/components/schemas/NullableAmount"
           description: Report only.
 
+    MediaDownloadRequest:
+      type: object
+      required: [media_ids]
+      additionalProperties: false
+      properties:
+        media_ids:
+          type: array
+          minItems: 1
+          maxItems: 5000
+          description: |
+            The pictures, in the order they go into the archive; repeats are
+            dropped. One picture downloads as its own file.
+          items:
+            type: string
+            format: uuid
+
     ShareLink:
       type: object
       description: A link as its owner sees it afterwards, without its token.
-      required: [id, label, include_private_media, expires_at, last_used_at, use_count, created_at]
+      required: [id, label, include_private_media, allow_download, expires_at, last_used_at, use_count, created_at]
       properties:
         id:
           type: string
@@ -5214,6 +6849,9 @@ components:
           description: The owner's own note, such as “For my parents”.
         include_private_media:
           type: boolean
+        allow_download:
+          type: boolean
+          description: Whether the link may save the pictures, one by one or as an archive.
         expires_at:
           type: [string, "null"]
           format: date-time
@@ -5255,6 +6893,10 @@ components:
         include_private_media:
           type: boolean
           default: false
+        allow_download:
+          type: boolean
+          default: false
+          description: Let the link download the pictures it shows, with `POST /shared/media:download`.
         expires_at:
           type: [string, "null"]
           format: date-time
@@ -5263,15 +6905,15 @@ components:
     Shared:
       type: object
       description: What a share token opens.
-      required: [trip, label, kind, include_private_media]
+      required: [trip, label, kind, include_private_media, allow_download]
       properties:
         trip:
           type: object
           description: |
             The trip as the link shows it: nothing about the people with access
             or the accounts behind them, and not the trip's own budget.
-          required: [title, summary, start_date, end_date, timezone, currency, travelers, status, day_count,
-                     owner_name, languages, translations]
+          required: [title, summary, start_date, end_date, timezone, currency, travelers, day_count,
+                     owner_name, languages, translations, track_speed_kmh]
           properties:
             title:
               type: string
@@ -5291,11 +6933,15 @@ components:
               type: integer
             status:
               type: string
-              enum: [upcoming, ongoing, completed]
+              enum: [upcoming, ongoing, overdue, completed, cancelled]
+              description: Where a plan stands, as on the trip itself; left out for a report.
             day_count:
               type: integer
             owner_name:
               type: string
+            track_speed_kmh:
+              type: number
+              description: The speed on the flat, in km/h, the plan's lines are timed at unless a line names its own.
             languages:
               $ref: "#/components/schemas/Languages"
             translations:
@@ -5313,6 +6959,9 @@ components:
           description: What the trip holds, and so what the link opens.
         include_private_media:
           type: boolean
+        allow_download:
+          type: boolean
+          description: Whether the link may save the pictures.
 
     Expense:
       type: object
@@ -5573,9 +7222,15 @@ components:
         not open with a stay mark also has one in from the last element of the
         nearest earlier day that has any, listed first among the day's legs; its
         `from_item_id` is then an element of that earlier day.
+        A journey with changes on the way lists its parts in `segments`; its own
+        distance, time, line, cost and `source` are then worked out from them on
+        every read - the time adds the waits at the changes, the cost is what
+        its tickets add up to, and the source is the part that says the least,
+        `pending` while any part waits - and its `mode` is the first part's.
       required: [id, from_item_id, to_item_id, mode, distance_m, duration_s, calculated_distance_m,
                  calculated_duration_s, manual_distance, manual_duration, geometry, source, error, calculated_at,
-                 planned_cost_amount, actual_cost_amount, note, route_preference, via, route_pinned]
+                 planned_cost_amount, actual_cost_amount, note, route_preference, via, route_pinned, segments,
+                 tickets]
       properties:
         id:
           type: string
@@ -5642,6 +7297,96 @@ components:
           description: |
             A route chosen among the alternatives, kept until the leg's ends,
             mode, preference or via points change or it is recalculated.
+        segments:
+          type: array
+          description: The parts of a journey with changes, in order; empty for a leg travelled one way.
+          items:
+            $ref: "#/components/schemas/LegSegment"
+        tickets:
+          type: array
+          description: What the parts of a journey with changes were paid with.
+          items:
+            $ref: "#/components/schemas/LegTicket"
+
+    LegSegment:
+      type: object
+      description: |
+        One part of a journey with changes, calculated like a leg of its own
+        from where the part before it ended - or the leg's start - to its stop,
+        or the leg's end for the last part. A part is routed the default way:
+        its route is not chosen.
+      required: [id, mode, distance_m, duration_s, calculated_distance_m, calculated_duration_s, manual_distance,
+                 manual_duration, geometry, source, error, ticket_id, stop]
+      properties:
+        id:
+          type: string
+          format: uuid
+        mode:
+          $ref: "#/components/schemas/TravelMode"
+        distance_m:
+          type: [integer, "null"]
+        duration_s:
+          type: [integer, "null"]
+        calculated_distance_m:
+          type: [integer, "null"]
+        calculated_duration_s:
+          type: [integer, "null"]
+        manual_distance:
+          type: boolean
+        manual_duration:
+          type: boolean
+        geometry:
+          type: string
+        source:
+          type: string
+          enum: [pending, provider, straight_line, estimate, missing_coordinates]
+        error:
+          type: [string, "null"]
+          enum: [provider_disabled, rate_limited, daily_limit, no_route, provider_error, null]
+        ticket_id:
+          type: [string, "null"]
+          format: uuid
+          description: The ticket the part travels on; null for a part nobody paid for.
+        stop:
+          description: The change where the part ends; null for the last part.
+          oneOf:
+            - $ref: "#/components/schemas/LegStop"
+            - type: "null"
+
+    LegStop:
+      type: object
+      required: [name, lat, lng, wait_minutes]
+      properties:
+        name:
+          type: string
+          maxLength: 200
+          description: A station, a stop, a pier. Not translated in a report.
+        lat:
+          type: [number, "null"]
+        lng:
+          type: [number, "null"]
+          description: A change without a position leaves the parts on either side of it uncalculated.
+        wait_minutes:
+          type: integer
+          minimum: 0
+          maximum: 1440
+          description: The time spent at the change, counted in the leg's time.
+
+    LegTicket:
+      type: object
+      required: [id, name, planned_cost_amount, actual_cost_amount]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        planned_cost_amount:
+          $ref: "#/components/schemas/NullableAmount"
+        actual_cost_amount:
+          allOf:
+            - $ref: "#/components/schemas/NullableAmount"
+          description: Report only.
 
     RoutePreference:
       type: string

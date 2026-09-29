@@ -14,6 +14,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import { LANGUAGE_NAMES } from '@/i18n'
 import PlanLegDialog from '@/components/plan/PlanLegDialog.vue'
+import PlanTargetDialog from '@/components/plan/PlanTargetDialog.vue'
 import PlanMap from '@/components/plan/PlanMap.vue'
 import ContentLanguageSwitch from '@/components/report/ContentLanguageSwitch.vue'
 import EditableMarkdown from '@/components/report/EditableMarkdown.vue'
@@ -76,6 +77,7 @@ const exporting = ref(false)
 const confirmDialog = useTemplateRef<InstanceType<typeof ConfirmDialog>>('confirmDialog')
 const placeDialog = useTemplateRef<InstanceType<typeof ReportPlaceDialog>>('placeDialog')
 const legDialog = useTemplateRef<InstanceType<typeof PlanLegDialog>>('legDialog')
+const targetDialog = useTemplateRef<InstanceType<typeof PlanTargetDialog>>('targetDialog')
 const translateDialog = useTemplateRef<InstanceType<typeof ReportTranslateDialog>>('translateDialog')
 
 const trip = computed(() => store.trip)
@@ -90,6 +92,8 @@ const sourcePlan = computed(() => {
 
 // With room for it the trip column holds the days, as it does for the plan.
 const wideNav = useMediaQuery('(min-width: 1024px)')
+// Dragging needs a pointer and room, as in the plan; phones use the menu.
+const wide = useMediaQuery('(min-width: 1024px) and (pointer: fine)')
 
 const editing = computed(() => canEdit.value && route.query.mode === 'edit')
 // documentItems are the elements of every day, which the journey that opens a
@@ -414,6 +418,29 @@ async function savePlace(fields: documentsApi.PlaceFields, item: PlanItem | null
   }
 }
 
+// movePlace puts a place at a position of a day - dragged there, stepped up or
+// down, dropped on a day of the list - as the plan does; -1 is the day's end.
+async function movePlace(itemId: string, dayId: string, position: number): Promise<void> {
+  const id = documentId.value
+  if (id) {
+    await apply(() => documentsApi.movePlace(id, itemId, dayId, position))
+  }
+}
+
+// chooseTarget performs a move or copy picked in the day dialog. A copy in a
+// report is another visit: the place without its story, rating, times and
+// pictures.
+async function chooseTarget(item: PlanItem, mode: 'move' | 'copy', dayId: string | null): Promise<void> {
+  if (!dayId) {
+    return
+  }
+  if (mode === 'move') {
+    await movePlace(item.id, dayId, -1)
+  } else {
+    await apply(() => documentsApi.copyPlace(item.id, dayId))
+  }
+}
+
 // removePlace deletes a place after confirmation.
 async function removePlace(item: PlanItem): Promise<void> {
   if (!(await confirmDialog.value?.ask(t('report.confirmDeletePlace', { name: item.name }), { danger: true }))) {
@@ -589,10 +616,11 @@ async function removeMedia(media: Media): Promise<void> {
 
 // saveLeg stores what the leg form says: the means, typed figures, costs, how
 // the leg is routed and a route chosen among its alternatives.
-async function saveLeg(leg: Leg, changes: documentsApi.LegChanges, route: RouteOption | null): Promise<void> {
+async function saveLeg(leg: Leg, changes: documentsApi.LegChanges, route: RouteOption | null,
+  parts: documentsApi.LegParts | null): Promise<void> {
   busy.value = true
   try {
-    document.value = await documentsApi.saveLeg(leg.id, changes, route)
+    document.value = await documentsApi.saveLeg(leg.id, changes, route, parts)
     legDialog.value?.close()
   } catch (err) {
     legDialog.value?.fail(errorMessage(err, t, te))
@@ -651,7 +679,7 @@ function setStatus(item: PlanItem, status: ItemStatus): void {
       <!-- With room for it the trip column holds the days; on a narrow screen
            they stay here, as a row of chips above the report. -->
       <Teleport v-if="shown.days.length > 1" defer to="#trip-sidebar-days" :disabled="!wideNav">
-        <ReportDayNav :days="shown.days" />
+        <ReportDayNav :days="shown.days" :droppable="editing && wide" @drop-place="(itemId: string, dayId: string) => movePlace(itemId, dayId, -1)" />
       </Teleport>
 
       <div class="flex flex-wrap items-center justify-between gap-2">
@@ -738,6 +766,7 @@ function setStatus(item: PlanItem, status: ItemStatus): void {
           :trip-id="trip?.id"
           :hints="hintsDayId === day.id ? hints : []"
           :removable="shown.days.length > 1"
+          :draggable="wide"
           @title="(title) => saveDayText(day, 'title', title)"
           @notes="(notes) => saveDayText(day, 'notes_md', notes)"
           @status="setStatus"
@@ -745,6 +774,8 @@ function setStatus(item: PlanItem, status: ItemStatus): void {
           @story="saveStory"
           @edit="(item) => editPlace(day.id, item)"
           @remove="removePlace"
+          @move="movePlace"
+          @pick-target="(item: PlanItem, mode: 'move' | 'copy') => targetDialog?.open(item, mode)"
           @add="(kind) => openPlace(day.id, null, kind)"
           @uploaded="(media) => addDayMedia(day, media)"
           @cover="(media) => setDayCover(day, media)"
@@ -776,7 +807,8 @@ function setStatus(item: PlanItem, status: ItemStatus): void {
         @save="(summary) => saveDocumentText('summary_md', summary)"
       />
 
-      <ReportPlaceDialog ref="placeDialog" :focus="searchFocus" @save="savePlace" />
+      <ReportPlaceDialog ref="placeDialog" :focus="searchFocus" :from-plan="trip?.from_plan ?? false" @save="savePlace" />
+      <PlanTargetDialog v-if="document" ref="targetDialog" :days="document.days" :unassigned="false" @choose="chooseTarget" />
       <PlanLegDialog ref="legDialog" report :busy="busy" @save="saveLeg" @recalculate="recalculateLeg" />
       <ReportTranslateDialog ref="translateDialog" @save="saveTranslation" />
       <ConfirmDialog ref="confirmDialog" />

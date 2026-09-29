@@ -386,7 +386,7 @@ onBeforeUnmount(() => clearInterval(poll))
 
     <ConfirmDialog ref="confirmDialog" />
 
-    <dialog ref="restoreDialog" class="modal modal-bottom sm:modal-middle">
+    <dialog ref="restoreDialog" class="modal modal-top sm:modal-middle">
       <form class="modal-box flex flex-col gap-3" @submit.prevent="submitRestore">
         <h2 class="text-lg font-bold">{{ t('backups.restoreTitle') }}</h2>
         <p class="text-sm text-warning">{{ t('backups.restoreWarning') }}</p>

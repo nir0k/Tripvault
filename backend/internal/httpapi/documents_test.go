@@ -32,6 +32,8 @@ type fakeDocuments struct {
 	// trackFile is the file the stored track was imported from.
 	trackFile []byte
 	changed   int
+	// created is the last place stored by CreatePlace.
+	created domain.Item
 	// copied is the report the last CreateReport was asked to write.
 	copied *domain.Trip
 	// trips is the fake trip this document belongs to.
@@ -65,7 +67,7 @@ func (f *fakeDocuments) Item(_ context.Context, id uuid.UUID) (domain.Item, erro
 // Content returns the whole fake document.
 func (f *fakeDocuments) Content(context.Context, uuid.UUID) (domain.DocumentContent, error) {
 	return domain.DocumentContent{Document: f.document, Days: []domain.Day{f.day},
-		Items: []domain.Item{f.place, f.anchor}, Stays: []domain.Stay{f.stay}, Legs: []domain.Leg{f.leg},
+		Items: []domain.Item{f.place, f.anchor}, Stays: []domain.Stay{f.stay}, Legs: []domain.Leg{f.leg.Fold()},
 		Transfers: f.transfers(), Expenses: f.expenses(), Tracks: f.tracks(), Translations: f.translations}, nil
 }
 
@@ -126,7 +128,8 @@ func (f *fakeDocuments) ReorderDays(context.Context, uuid.UUID, []uuid.UUID) err
 }
 
 // CreatePlace records a change.
-func (f *fakeDocuments) CreatePlace(context.Context, domain.Item, *int) error {
+func (f *fakeDocuments) CreatePlace(_ context.Context, place domain.Item, _ *int) error {
+	f.created = place
 	f.changed++
 	return nil
 }
@@ -233,7 +236,7 @@ func (f *fakeDocuments) DeleteExpense(context.Context, uuid.UUID) error {
 }
 
 // Leg returns the one leg.
-func (f *fakeDocuments) Leg(context.Context, uuid.UUID) (domain.Leg, error) { return f.leg, nil }
+func (f *fakeDocuments) Leg(context.Context, uuid.UUID) (domain.Leg, error) { return f.leg.Fold(), nil }
 
 // UpdateLeg records the stored leg.
 func (f *fakeDocuments) UpdateLeg(_ context.Context, leg domain.Leg) error {
@@ -251,6 +254,57 @@ func (f *fakeDocuments) SaveLegCalculation(_ context.Context, legID uuid.UUID, i
 	f.leg.DistanceM, f.leg.DurationS, f.leg.Source = calculation.DistanceM, calculation.DurationS, calculation.Source
 	f.leg.Geometry, f.leg.Pinned = calculation.Geometry, pinned
 	return true, nil
+}
+
+// StaleTracks lists nothing: the fake's tracks are measured the current way.
+func (f *fakeDocuments) StaleTracks(context.Context, int) ([]uuid.UUID, error) { return nil, nil }
+
+// UpdateTrackClimb stores a track's climb and slopes measured again.
+func (f *fakeDocuments) UpdateTrackClimb(_ context.Context, _ uuid.UUID, ascent, descent *int, grades []int,
+	version int) error {
+	if f.track != nil {
+		f.track.AscentM, f.track.DescentM, f.track.Grades, f.track.ClimbVersion = ascent, descent, grades, version
+	}
+	return nil
+}
+
+// SetTrackSpeed stores the speed the activity's line is timed at.
+func (f *fakeDocuments) SetTrackSpeed(_ context.Context, itemID uuid.UUID, speed *float64) error {
+	if f.track == nil || f.track.ItemID != itemID {
+		return domain.ErrNotFound
+	}
+	f.track.SpeedKmh = speed
+	return nil
+}
+
+// SaveLegParts records the leg with its parts, as the repository stores it.
+func (f *fakeDocuments) SaveLegParts(_ context.Context, leg domain.Leg) error {
+	f.leg = leg
+	f.changed++
+	return nil
+}
+
+// UpdateLegNote records the leg's note.
+func (f *fakeDocuments) UpdateLegNote(_ context.Context, _ uuid.UUID, note string) error {
+	f.leg.Note = note
+	f.changed++
+	return nil
+}
+
+// SaveSegmentCalculation stores a part's calculation when its input still
+// matches.
+func (f *fakeDocuments) SaveSegmentCalculation(_ context.Context, segmentID uuid.UUID, input string,
+	calculation domain.LegCalculation, _ time.Time) (bool, error) {
+	for index := range f.leg.Segments {
+		segment := &f.leg.Segments[index]
+		if segment.ID == segmentID && segment.Input == input {
+			segment.DistanceM, segment.DurationS, segment.Source = calculation.DistanceM, calculation.DurationS,
+				calculation.Source
+			segment.Geometry = calculation.Geometry
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // SaveTranslations keeps what was saved, so a test can see what reached the
@@ -537,6 +591,72 @@ func TestLegs(t *testing.T) {
 	viewerPath := "/api/v1/documents/" + viewerDocs.document.ID.String() + "/legs:calculate"
 	if recorder = send(viewer, http.MethodPost, viewerPath, "good", ""); recorder.Code != http.StatusForbidden {
 		t.Errorf("viewer calculates: %d", recorder.Code)
+	}
+}
+
+// TestLegSegments checks a leg becomes a journey with changes and back: its
+// parts are calculated one by one, its tickets make its cost, only its note is
+// changed on the leg itself, and its route is not chosen.
+func TestLegSegments(t *testing.T) {
+	s, docs, router := newRoutingServer(domain.RoleEditor)
+	legPath := "/api/v1/legs/" + docs.leg.ID.String()
+	body := `{"segments":[
+		{"mode":"walk","stop":{"name":"Rossio","lat":38.7142,"lng":-9.141,"wait_minutes":10}},
+		{"mode":"train","ticket":0,"duration_s":2400,"stop":{"name":"Sintra","wait_minutes":15}},
+		{"mode":"bus","ticket":1,"stop":{"name":"dropped"}}],
+		"tickets":[{"name":"Train","planned_cost_amount":"4.60"},{"name":"Bus 434","planned_cost_amount":"3.90"}]}`
+	recorder := send(s, http.MethodPut, legPath+"/segments", "good", body)
+	if recorder.Code != http.StatusOK || len(docs.leg.Segments) != 3 || len(docs.leg.Tickets) != 2 {
+		t.Fatalf("set parts: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if docs.leg.Segments[2].StopName != "" || *docs.leg.Segments[1].TicketID != docs.leg.Tickets[0].ID {
+		t.Errorf("parts: %+v", docs.leg.Segments)
+	}
+	for _, want := range []string{`"planned_cost_amount":"8.50"`, `"name":"Rossio"`, `"stop":null`, `"source":"pending"`} {
+		if !strings.Contains(recorder.Body.String(), want) {
+			t.Errorf("document lacks %s", want)
+		}
+	}
+
+	recorder = send(s, http.MethodPost, "/api/v1/documents/"+docs.document.ID.String()+"/legs:calculate", "good", "")
+	if recorder.Code != http.StatusOK || router.calculated != 3 || docs.leg.Segments[1].Source != domain.LegProvider {
+		t.Errorf("calculate parts: %d calculated=%d", recorder.Code, router.calculated)
+	}
+	var document documentResponse
+	_ = json.Unmarshal(recorder.Body.Bytes(), &document)
+	// Walk 900 s, wait 10 min, train typed 2400 s, wait 15 min, bus 900 s.
+	if legs := document.Days[0].Legs; len(legs) != 1 || legs[0].DurationS == nil || *legs[0].DurationS != 900+600+2400+900+900 {
+		t.Errorf("folded time: %+v", legs)
+	}
+
+	for _, change := range []string{`{"mode":"car"}`, `{"duration_s":60}`, `{"planned_cost_amount":"5"}`} {
+		if recorder = send(s, http.MethodPatch, legPath, "good", change); recorder.Code != http.StatusUnprocessableEntity ||
+			!strings.Contains(recorder.Body.String(), "composite_leg") {
+			t.Errorf("%s on a leg with changes: %d %s", change, recorder.Code, recorder.Body.String())
+		}
+	}
+	if recorder = send(s, http.MethodPatch, legPath, "good", `{"note":" via Sintra "}`); recorder.Code != http.StatusOK ||
+		docs.leg.Note != "via Sintra" {
+		t.Errorf("note: %d %q", recorder.Code, docs.leg.Note)
+	}
+	if recorder = send(s, http.MethodPatch, legPath, "good", `{"planned_cost_amount":null}`); recorder.Code != http.StatusOK ||
+		docs.leg.Tickets[0].PlannedCost != nil || docs.leg.Tickets[1].PlannedCost != nil {
+		t.Errorf("cost cleared from the budget: %d %+v", recorder.Code, docs.leg.Tickets)
+	}
+	if recorder = send(s, http.MethodPost, legPath+":alternatives", "good", ""); recorder.Code != http.StatusUnprocessableEntity {
+		t.Errorf("alternatives of a leg with changes: %d", recorder.Code)
+	}
+
+	if recorder = send(s, http.MethodPut, legPath+"/segments", "good",
+		`{"segments":[{"mode":"walk"},{"mode":"train"}],"tickets":[{"actual_cost_amount":"3"}]}`); recorder.Code != http.StatusUnprocessableEntity {
+		t.Errorf("unnamed change and a plan's actual cost: %d", recorder.Code)
+	}
+
+	recorder = send(s, http.MethodPut, legPath+"/segments", "good",
+		`{"segments":[{"mode":"bus","duration_s":1200,"ticket":0}],"tickets":[{"planned_cost_amount":"3.90"}]}`)
+	if recorder.Code != http.StatusOK || docs.leg.Composite() || docs.leg.Mode != domain.ModeBus ||
+		*docs.leg.ManualDurationS != 1200 || *docs.leg.PlannedCost != 390 {
+		t.Errorf("back to one part: %d %+v", recorder.Code, docs.leg)
 	}
 }
 

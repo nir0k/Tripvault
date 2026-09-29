@@ -177,3 +177,26 @@ func TestNormalizeDifficulty(t *testing.T) {
 		t.Errorf("a place kept a difficulty: %+v %v", normalized.Difficulty, err)
 	}
 }
+
+// TestWithoutVisit checks a copy of a place of a report keeps the place and
+// leaves the record of the visit behind.
+func TestWithoutVisit(t *testing.T) {
+	rating := 5
+	clock := ClockTime(600)
+	cost := Money(1200)
+	cover := uuid.New()
+	place := Item{Name: "Café", Category: CategoryFood, Status: StatusSkipped, StoryMD: "Great coffee",
+		Rating: &rating, ActualTime: &clock, ActualEndTime: &clock, ActualCost: &cost, CoverMediaID: &cover}
+	copied := place.WithoutVisit()
+	if copied.Name != "Café" || copied.Category != CategoryFood || copied.Status != StatusVisited {
+		t.Errorf("the place: %+v", copied)
+	}
+	if copied.StoryMD != "" || copied.Rating != nil || copied.ActualTime != nil || copied.ActualEndTime != nil ||
+		copied.ActualCost != nil || copied.CoverMediaID != nil {
+		t.Errorf("the visit came along: %+v", copied)
+	}
+	place.Status = StatusUnplanned
+	if place.WithoutVisit().Status != StatusUnplanned {
+		t.Error("a place outside the plan became planned")
+	}
+}

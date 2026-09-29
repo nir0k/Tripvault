@@ -239,16 +239,6 @@ func serve() error {
 		return err
 	}
 
-	// The example trips come after the administrator, since they belong to them.
-	// A failure here is logged rather than fatal: they are a convenience for
-	// looking at the interface, and a service that refuses to start without them
-	// is worse than one that starts empty.
-	if cfg.DemoData {
-		if err := bootstrap.SeedDemo(ctx, users, trips, documents, logger); err != nil {
-			logger.Error("could not create the example trips", slog.Any("error", err))
-		}
-	}
-
 	secret, err := signingSecret(cfg, logger)
 	if err != nil {
 		return err
@@ -295,6 +285,9 @@ func serve() error {
 		Users:             users,
 		Sessions:          sessions,
 		Trips:             trips,
+		Tags:              postgres.NewTagRepository(pool),
+		Packing:           postgres.NewPackingRepository(pool),
+		Ideas:             postgres.NewIdeaRepository(pool),
 		Documents:         documents,
 		Media:             mediaCatalogue,
 		MediaFiles:        mediaFiles,

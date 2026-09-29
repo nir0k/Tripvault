@@ -18,6 +18,7 @@ function sharedTrip(shared: Shared): Trip {
     id: SHARED_TRIP_ID,
     kind: shared.kind,
     source_trip_id: null,
+    from_plan: false,
     title: trip.title,
     summary: trip.summary,
     start_date: trip.start_date,
@@ -38,6 +39,8 @@ function sharedTrip(shared: Shared): Trip {
     translations: trip.translations,
     created_at: '',
     updated_at: '',
+    tags: [],
+    track_speed_kmh: trip.track_speed_kmh,
   }
 }
 
@@ -48,6 +51,9 @@ export const useTripStore = defineStore('trip', () => {
   const loading = ref(false)
   // shared says the trip was opened by a read-only link, and is read through it.
   const shared = ref(false)
+  // canDownload says the pictures may be saved: always for a member, and for a
+  // link only when its owner allowed it.
+  const canDownload = ref(true)
 
   /** load reads a trip, dropping the previous one first so no tab shows stale data. */
   async function load(tripId: string): Promise<void> {
@@ -55,6 +61,7 @@ export const useTripStore = defineStore('trip', () => {
       trip.value = null
     }
     shared.value = false
+    canDownload.value = true
     loading.value = true
     error.value = null
     try {
@@ -72,8 +79,11 @@ export const useTripStore = defineStore('trip', () => {
     shared.value = true
     loading.value = true
     error.value = null
+    canDownload.value = false
     try {
-      trip.value = sharedTrip(await getShared())
+      const opened = await getShared()
+      canDownload.value = opened.allow_download
+      trip.value = sharedTrip(opened)
     } catch (err) {
       error.value = err
     } finally {
@@ -94,5 +104,5 @@ export const useTripStore = defineStore('trip', () => {
     trip.value = next
   }
 
-  return { trip, error, loading, shared, load, loadShared, readDocument, set }
+  return { trip, error, loading, shared, canDownload, load, loadShared, readDocument, set }
 })

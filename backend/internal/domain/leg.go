@@ -148,7 +148,11 @@ type Leg struct {
 	// Pinned marks a route somebody chose among the provider's alternatives:
 	// it is kept, not calculated again, until the leg's input changes or the
 	// leg is recalculated on purpose.
-	Pinned    bool
+	Pinned bool
+	// Segments are the parts of a leg with changes on the way, in order; none
+	// for a leg travelled one way. Tickets are what those parts were paid with.
+	Segments  []LegSegment
+	Tickets   []LegTicket
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -353,6 +357,9 @@ type LegPlan struct {
 	Reset []Leg
 	// Delete lists legs between elements that are no longer neighbours.
 	Delete []uuid.UUID
+	// ResetSegments holds the parts of composite legs whose ends moved, with
+	// the new input; only the first and the last part follow the places.
+	ResetSegments []LegSegment
 }
 
 // ReconcileLegs - works out the legs a document's days need.
@@ -366,7 +373,8 @@ type LegPlan struct {
 // belongs to the later day, whose morning it takes.
 //
 // A pair that already had a leg keeps it, with its mode, typed values, cost and
-// note. A new leg takes the mode of the old leg that started at the same
+// note; a composite leg keeps its parts, and those whose ends moved wait for a
+// new calculation. A new leg takes the mode of the old leg that started at the same
 // element, else the day's default mode, else ModeCar.
 //
 // Arguments:
@@ -399,6 +407,17 @@ func ReconcileLegs(content DocumentContent, existing []Leg, newID func() uuid.UU
 		}
 		if leg, ok := byPair[pair{from.ID, to.ID}]; ok && leg.DayID == day.ID {
 			kept[leg.ID] = true
+			if leg.Composite() {
+				start, end := LegEnds(from, to, stays, content.Tracks)
+				starts, ends := SegmentEnds(leg.Segments, start, end)
+				for index, segment := range leg.Segments {
+					if input := SegmentInput(segment.Mode, starts[index], ends[index]); input != segment.Input {
+						segment.Input = input
+						plan.ResetSegments = append(plan.ResetSegments, segment)
+					}
+				}
+				return
+			}
 			if input := points(leg.Mode, leg.Route()); input != leg.Input {
 				leg.Input = input
 				plan.Reset = append(plan.Reset, leg)

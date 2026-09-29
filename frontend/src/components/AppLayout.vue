@@ -7,10 +7,12 @@ import AppLogo from '@/components/AppLogo.vue'
 import AppSearch from '@/components/AppSearch.vue'
 import LanguageDialog from '@/components/LanguageDialog.vue'
 import UploadPanel from '@/components/media/UploadPanel.vue'
+import TagsDialog from '@/components/TagsDialog.vue'
 import ThemeSelect from '@/components/ThemeSelect.vue'
 import UserAvatar from '@/components/UserAvatar.vue'
 import { useDropdown } from '@/composables/useDropdown'
 import { useSessionStore } from '@/stores/session'
+import { useTagsStore } from '@/stores/tags'
 import { useUploadsStore } from '@/stores/uploads'
 
 interface NavItem {
@@ -24,17 +26,21 @@ const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
 const uploads = useUploadsStore()
+const tags = useTagsStore()
 
 // Files still on their way belong to the reader who picked them, so they stop
-// when that reader signs out or the session ends.
+// when that reader signs out or the session ends; their tags are forgotten
+// with them.
 watch(() => session.user, (user) => {
   if (!user) {
     uploads.reset()
+    tags.reset()
   }
 })
 const userMenu = useDropdown('accountMenu')
 const adminDropdown = useDropdown('adminMenu')
 const languageDialog = useTemplateRef<InstanceType<typeof LanguageDialog>>('languageDialog')
+const tagsDialog = useTemplateRef<InstanceType<typeof TagsDialog>>('tagsDialog')
 
 // Plans and reports are separate trips in separate sections: a journey being
 // prepared, and one written up afterwards. The start page shows a few of each.
@@ -42,6 +48,7 @@ const mainItems = computed<NavItem[]>(() => [
   { name: 'home', label: t('nav.home'), icon: 'home' },
   { name: 'trips', label: t('nav.trips'), icon: 'map' },
   { name: 'reports', label: t('nav.reports'), icon: 'report' },
+  { name: 'ideas', label: t('nav.ideas'), icon: 'lightbulb' },
 ])
 const adminItems = computed<NavItem[]>(() =>
   session.isAdmin
@@ -65,9 +72,12 @@ const inAdmin = computed(() => String(route.name).startsWith('admin-'))
 
 // isActive marks a destination as current, counting every administration page
 // as the administration entry of the bottom bar, and every page of a plan or a
-// report as its own list.
+// report as its own list, and an idea's page as the list of ideas.
 function isActive(name: string): boolean {
   if (name === 'admin-users' && inAdmin.value) {
+    return true
+  }
+  if (name === 'ideas' && route.name === 'idea') {
     return true
   }
   if ((name === 'trips' || name === 'reports') && route.meta.kind !== undefined) {
@@ -82,6 +92,13 @@ function isActive(name: string): boolean {
 function openLanguages(): void {
   userMenu.close()
   languageDialog.value?.open()
+}
+
+// openTags folds the account menu and opens the window the reader's own tags
+// are managed in.
+function openTags(): void {
+  userMenu.close()
+  void tagsDialog.value?.open()
 }
 
 // signOut ends the session and returns to the sign-in page.
@@ -153,6 +170,10 @@ async function signOut(): Promise<void> {
               <AppIcon name="user" />
               {{ t('nav.profile') }}
             </RouterLink>
+            <button type="button" class="btn btn-ghost btn-sm w-full justify-start" @click="openTags">
+              <AppIcon name="tag" />
+              {{ t('tags.title') }}
+            </button>
             <button type="button" class="btn btn-ghost btn-sm w-full justify-start" @click="openLanguages">
               <AppIcon name="globe" />
               {{ t('preferences.language') }}
@@ -186,6 +207,7 @@ async function signOut(): Promise<void> {
 
     <!-- Outside the account menu: a dialog inside it would be hidden with it. -->
     <LanguageDialog ref="languageDialog" />
+    <TagsDialog ref="tagsDialog" />
     <UploadPanel />
   </div>
 </template>

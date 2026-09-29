@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -235,8 +236,15 @@ func (m *memoryFiles) Open(_ context.Context, key string) (io.ReadCloser, error)
 	if !ok {
 		return nil, media.ErrNotFound
 	}
-	return io.NopCloser(bytes.NewReader(data)), nil
+	// Seekable, as a file of the local store is, so a range can be answered.
+	return seekableFile{bytes.NewReader(data)}, nil
 }
+
+// seekableFile is an in-memory file that closes without doing anything.
+type seekableFile struct{ *bytes.Reader }
+
+// Close does nothing; the bytes stay in memory.
+func (seekableFile) Close() error { return nil }
 
 func (m *memoryFiles) Delete(_ context.Context, key string) error {
 	m.mu.Lock()
@@ -951,5 +959,171 @@ func TestDeletingATripTakesItsFilesWithIt(t *testing.T) {
 	}
 	if len(files.files) != 0 {
 		t.Errorf("the store still holds %d files of a deleted trip", len(files.files))
+	}
+}
+
+// sendSharedBody sends a request with a body authenticated by a share token.
+func sendSharedBody(s *Server, method, path, token, body string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	request.Header.Set(shareTokenHeader, token)
+	recorder := httptest.NewRecorder()
+	s.routes().ServeHTTP(recorder, request)
+	return recorder
+}
+
+// readArchive opens a ZIP answer and lists its entries by name, checking that
+// every one was stored rather than compressed.
+func readArchive(t *testing.T, recorder *httptest.ResponseRecorder) map[string][]byte {
+	t.Helper()
+	data := recorder.Body.Bytes()
+	archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("open archive: %v", err)
+	}
+	entries := map[string][]byte{}
+	for _, file := range archive.File {
+		if file.Method != zip.Store {
+			t.Errorf("%s is compressed", file.Name)
+		}
+		reader, err := file.Open()
+		if err != nil {
+			t.Fatalf("open %s: %v", file.Name, err)
+		}
+		content, _ := io.ReadAll(reader)
+		_ = reader.Close()
+		entries[file.Name] = content
+	}
+	return entries
+}
+
+// issueDownload asks for a download and returns the address and the cookie
+// the browser is given for it.
+func issueDownload(t *testing.T, recorder *httptest.ResponseRecorder) (string, *http.Cookie) {
+	t.Helper()
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("issue download: %d %s", recorder.Code, recorder.Body.String())
+	}
+	var body downloadResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode download: %v", err)
+	}
+	cookies := recorder.Result().Cookies()
+	if len(cookies) != 1 || !cookies[0].HttpOnly || cookies[0].Path != body.URL ||
+		cookies[0].SameSite != http.SameSiteStrictMode || strings.Contains(body.URL, cookies[0].Value) {
+		t.Fatalf("the ticket's cookie: %+v for %s", cookies, body.URL)
+	}
+	return body.URL, cookies[0]
+}
+
+// fetchDownload opens a download address the way the browser does: no
+// account, the cookie it was given, and a range when one is asked for.
+func fetchDownload(s *Server, address string, cookie *http.Cookie, byteRange string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodGet, address, nil)
+	if cookie != nil {
+		request.AddCookie(cookie)
+	}
+	if byteRange != "" {
+		request.Header.Set("Range", byteRange)
+	}
+	recorder := httptest.NewRecorder()
+	s.routes().ServeHTTP(recorder, request)
+	return recorder
+}
+
+// TestMediaDownloads checks a download is issued as an address backed by a
+// cookie, serves one picture as its file - resumable - and several as an
+// archive of stored files, keeps serving while it lives, and that a read-only
+// link downloads only when its owner allowed it.
+func TestMediaDownloads(t *testing.T) {
+	s, trips, catalogue, files := newMediaServer(domain.RoleOwner)
+	trips.shares = map[string]domain.ShareLink{}
+	tripID := trips.trip.ID.String()
+	first := uploadedIDs(t, upload(t, s, tripID, "sea.png", picture(t, 20, 20), false))[0]
+	second := uploadedIDs(t, upload(t, s, tripID, "sea.png", picture(t, 21, 21), false))[0]
+	hidden := uploadedIDs(t, upload(t, s, tripID, "secret.png", picture(t, 22, 22), true))[0]
+	stored := files.files[catalogue.items[uuid.MustParse(first.ID)].StorageKey]
+	downloadPath := "/api/v1/trips/" + tripID + "/media:download"
+
+	// One picture is its own file, and a range of it resumes a download.
+	address, cookie := issueDownload(t, send(s, http.MethodPost, downloadPath, "good", `{"media_ids":["`+first.ID+`"]}`))
+	recorder := fetchDownload(s, address, cookie, "")
+	if recorder.Code != http.StatusOK || recorder.Header().Get("Content-Disposition") != `attachment; filename=sea.png` ||
+		!bytes.Equal(recorder.Body.Bytes(), stored) {
+		t.Errorf("one picture: %d %q", recorder.Code, recorder.Header().Get("Content-Disposition"))
+	}
+	if recorder = fetchDownload(s, address, cookie, "bytes=10-"); recorder.Code != http.StatusPartialContent ||
+		!bytes.Equal(recorder.Body.Bytes(), stored[10:]) {
+		t.Errorf("resumed: %d", recorder.Code)
+	}
+	if recorder = fetchDownload(s, address, nil, ""); recorder.Code != http.StatusNotFound {
+		t.Errorf("without the cookie: %d", recorder.Code)
+	}
+	forged := &http.Cookie{Name: cookie.Name, Value: "forged"}
+	if recorder = fetchDownload(s, address, forged, ""); recorder.Code != http.StatusNotFound {
+		t.Errorf("with a forged cookie: %d", recorder.Code)
+	}
+
+	// Several pictures are an archive, repeats dropped and names kept apart.
+	body := `{"media_ids":["` + first.ID + `","` + second.ID + `","` + hidden.ID + `","` + first.ID + `"]}`
+	address, cookie = issueDownload(t, send(s, http.MethodPost, downloadPath, "good", body))
+	recorder = fetchDownload(s, address, cookie, "")
+	if recorder.Code != http.StatusOK || recorder.Header().Get("Content-Type") != "application/zip" {
+		t.Fatalf("archive: %d %s", recorder.Code, recorder.Body.String())
+	}
+	entries := readArchive(t, recorder)
+	if len(entries) != 3 || entries["sea.png"] == nil || entries["sea (2).png"] == nil || entries["secret.png"] == nil {
+		t.Errorf("entries: %v", len(entries))
+	}
+	if !bytes.Equal(entries["sea.png"], stored) {
+		t.Error("the archive changed the file")
+	}
+
+	// A ticket expires.
+	now := s.now()
+	s.now = func() time.Time { return now.Add(downloadLifetime + time.Second) }
+	if recorder = fetchDownload(s, address, cookie, ""); recorder.Code != http.StatusNotFound {
+		t.Errorf("an expired ticket: %d", recorder.Code)
+	}
+	s.now = time.Now
+
+	other := domain.Media{ID: uuid.New(), TripID: uuid.New(), StorageKey: "other", MIME: "image/png", Size: 1,
+		Status: domain.MediaReady}
+	catalogue.items[other.ID] = other
+	if recorder = send(s, http.MethodPost, downloadPath, "good", `{"media_ids":["`+other.ID.String()+`"]}`); recorder.Code != http.StatusNotFound {
+		t.Errorf("a picture of another trip: %d", recorder.Code)
+	}
+	if recorder = send(s, http.MethodPost, downloadPath, "good", `{"media_ids":[]}`); recorder.Code != http.StatusUnprocessableEntity {
+		t.Errorf("an empty download: %d", recorder.Code)
+	}
+
+	onePublic := `{"media_ids":["` + first.ID + `"]}`
+	closed := createLink(t, s, tripID, `{}`)
+	if recorder = sendSharedBody(s, http.MethodPost, "/api/v1/shared/media:download", closed.Token, onePublic); recorder.Code != http.StatusForbidden {
+		t.Errorf("a download through a link without downloads: %d", recorder.Code)
+	}
+	open := createLink(t, s, tripID, `{"allow_download":true}`)
+	if !open.AllowDownload {
+		t.Error("the link did not keep the permission")
+	}
+	address, cookie = issueDownload(t, sendSharedBody(s, http.MethodPost, "/api/v1/shared/media:download", open.Token, onePublic))
+	if recorder = fetchDownload(s, address, cookie, ""); recorder.Code != http.StatusOK {
+		t.Errorf("a download through a link with downloads: %d", recorder.Code)
+	}
+	withHidden := `{"media_ids":["` + first.ID + `","` + hidden.ID + `"]}`
+	if recorder = sendSharedBody(s, http.MethodPost, "/api/v1/shared/media:download", open.Token, withHidden); recorder.Code != http.StatusNotFound {
+		t.Errorf("a private picture through a link without private pictures: %d", recorder.Code)
+	}
+}
+
+// TestUniqueArchiveNames checks repeated names are numbered, whatever their case.
+func TestUniqueArchiveNames(t *testing.T) {
+	seen := map[string]int{}
+	got := []string{uniqueName(seen, "IMG_1.jpg"), uniqueName(seen, "img_1.JPG"), uniqueName(seen, "IMG_1 (2).jpg"),
+		uniqueName(seen, "../evil.jpg"), uniqueName(seen, "")}
+	want := []string{"IMG_1.jpg", "img_1 (2).JPG", "IMG_1 (2) (2).jpg", "evil.jpg", "photo"}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Errorf("name %d: %q, want %q", index, got[index], want[index])
+		}
 	}
 }

@@ -44,6 +44,15 @@ func (s *Server) calculateLegs(ctx context.Context, documentID uuid.UUID, force 
 	done := 0
 	for _, leg := range content.Legs {
 		forced := force[leg.ID]
+		if leg.Composite() {
+			from, to := domain.LegEnds(items[leg.FromItemID], items[leg.ToItemID], stays, content.Tracks)
+			count, err := s.calculateSegments(ctx, leg, from, to, forced, retryEstimates, maxLegsPerCalculation-done)
+			if err != nil {
+				return err
+			}
+			done += count
+			continue
+		}
 		wanted := (leg.Source == domain.LegPending && !leg.Pinned) || forced ||
 			(retryEstimates && leg.RetryableEstimate() && !leg.Pinned)
 		if !wanted || done >= maxLegsPerCalculation {
@@ -166,6 +175,10 @@ func (s *Server) handleUpdateLeg(w http.ResponseWriter, r *http.Request) {
 	}
 	var body updateLegRequest
 	if !s.decodeJSON(w, r, &body) {
+		return
+	}
+	if leg.Composite() {
+		s.updateCompositeLeg(w, r, leg, document, body)
 		return
 	}
 	if body.Mode.Set {
@@ -321,6 +334,10 @@ func (s *Server) handleLegAlternatives(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if leg.Composite() {
+		s.writeDomainError(w, r, "check leg", errCompositeRoute)
+		return
+	}
 	from, to, err := s.legEnds(r.Context(), leg)
 	if err != nil {
 		s.writeDomainError(w, r, "read leg ends", err)
@@ -382,6 +399,10 @@ const maxRouteGeometryLength = 1 << 20
 func (s *Server) handlePinLegRoute(w http.ResponseWriter, r *http.Request) {
 	leg, _, ok := s.legFor(w, r, domain.ActionEdit)
 	if !ok {
+		return
+	}
+	if leg.Composite() {
+		s.writeDomainError(w, r, "check leg", errCompositeRoute)
 		return
 	}
 	var body routeBody
@@ -468,6 +489,10 @@ func linkVia(route googlelink.Route, from, to domain.Point) []domain.Point {
 func (s *Server) handleLegGoogleLink(w http.ResponseWriter, r *http.Request) {
 	leg, _, ok := s.legFor(w, r, domain.ActionEdit)
 	if !ok {
+		return
+	}
+	if leg.Composite() {
+		s.writeDomainError(w, r, "check leg", errCompositeRoute)
 		return
 	}
 	var body googleLinkRequest

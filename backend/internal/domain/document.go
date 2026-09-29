@@ -69,6 +69,7 @@ const (
 	CategoryShopping  PlaceCategory = "shopping"
 	CategoryActivity  PlaceCategory = "activity"
 	CategoryTransport PlaceCategory = "transport"
+	CategoryParking   PlaceCategory = "parking"
 	CategoryOther     PlaceCategory = "other"
 )
 
@@ -82,6 +83,7 @@ var placeCategoryDefaults = map[PlaceCategory]CostCategory{
 	CategoryShopping:  CostShopping,
 	CategoryActivity:  CostActivities,
 	CategoryTransport: CostTransport,
+	CategoryParking:   CostTransport,
 	CategoryOther:     CostOther,
 }
 
@@ -707,6 +709,26 @@ func OrderByActualTime(places []Item) []uuid.UUID {
 		next++
 	}
 	return order
+}
+
+// WithoutVisit - makes a copy of a place of a report for another visit: the
+// place itself - what it is, where, what it costs in the plan - without the
+// record of the visit it was copied from. A café visited twice has a story, a
+// rating, a time and pictures for each visit.
+//
+// Returns:
+//   - the place with no story, rating, actual times, actual cost or cover, and
+//     visited, as a place of a report starts.
+func (i Item) WithoutVisit() Item {
+	i.StoryMD = ""
+	i.Rating = nil
+	i.ActualTime, i.ActualEndTime = nil, nil
+	i.ActualCost = nil
+	i.CoverMediaID = nil
+	if i.Status != StatusUnplanned {
+		i.Status = StatusVisited
+	}
+	return i
 }
 
 // reportOnly is the error for a field only a report may carry.

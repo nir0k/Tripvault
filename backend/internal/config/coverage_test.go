@@ -46,10 +46,9 @@ var (
 		"TRIPVAULT_ENV":             true, // compose sets it outright, per deployment
 		"TRIPVAULT_SECRETS_KEY":     true, // the stand makes one inside the container
 	}
-	// standOnly are meaningless in a real deployment.
-	standOnly = map[string]bool{
-		"TRIPVAULT_DEMO_DATA": true, // refused outside development
-	}
+	// standOnly are meaningless in a real deployment; there are none at present.
+	// The test stand's examples are loaded by a service of the stand itself.
+	standOnly = map[string]bool{}
 )
 
 // TestEveryVariableIsDocumentedAndPassedThrough checks the configuration against

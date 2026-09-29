@@ -17,13 +17,13 @@ import (
 // which is all the table holds, so neither a query log nor a database dump can be
 // replayed as a working link.
 
-var shareLinkColumns = `s.id, s.trip_id, s.label, s.include_private_media, s.expires_at, s.revoked_at,
+var shareLinkColumns = `s.id, s.trip_id, s.label, s.include_private_media, s.allow_download, s.expires_at, s.revoked_at,
 	s.created_by, s.last_used_at, s.use_count, s.created_at`
 
 // scanShareLink reads one row in the order of shareLinkColumns.
 func scanShareLink(row pgx.Row) (domain.ShareLink, error) {
 	var l domain.ShareLink
-	err := row.Scan(&l.ID, &l.TripID, &l.Label, &l.IncludePrivateMedia, &l.ExpiresAt, &l.RevokedAt,
+	err := row.Scan(&l.ID, &l.TripID, &l.Label, &l.IncludePrivateMedia, &l.AllowDownload, &l.ExpiresAt, &l.RevokedAt,
 		&l.CreatedBy, &l.LastUsedAt, &l.UseCount, &l.CreatedAt)
 	return l, err
 }
@@ -41,11 +41,11 @@ func scanShareLink(row pgx.Row) (domain.ShareLink, error) {
 func (r *TripRepository) CreateShareLink(ctx context.Context, link domain.ShareLink, tokenHash []byte) error {
 	tag, err := r.pool.Exec(ctx,
 		`INSERT INTO share_links (id, trip_id, label, token_hash, include_private_media, expires_at,
-		                          created_by, created_at)
-		 SELECT $1, $2, $3, $4, $5, $6, $7, $8
+		                          created_by, created_at, allow_download)
+		 SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9
 		 WHERE EXISTS (SELECT 1 FROM trips WHERE id = $2)`,
 		link.ID, link.TripID, link.Label, tokenHash, link.IncludePrivateMedia, link.ExpiresAt,
-		link.CreatedBy, link.CreatedAt)
+		link.CreatedBy, link.CreatedAt, link.AllowDownload)
 	if err != nil {
 		return fmt.Errorf("create share link: %w", err)
 	}

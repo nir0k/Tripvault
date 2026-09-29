@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { VueDraggable, type DraggableEvent } from 'vue-draggable-plus'
 import { useI18n } from 'vue-i18n'
 import type { ItemStatus, Leg, Media, PlanDay, PlanItem, Stay, Transfer } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
@@ -42,6 +43,8 @@ const props = defineProps<{
   documentItems?: PlanItem[]
   /** Whether the day may be deleted; a document keeps at least one day. */
   removable?: boolean
+  /** Whether places are dragged: on a wide screen with a pointer, as in the plan. */
+  draggable?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -52,6 +55,9 @@ const emit = defineEmits<{
   story: [item: PlanItem, story: string]
   edit: [item: PlanItem]
   remove: [item: PlanItem]
+  /** A place goes to a position of a day, as in the plan. */
+  move: [itemId: string, dayId: string, position: number]
+  pickTarget: [item: PlanItem, mode: 'move' | 'copy']
   add: [kind: 'place' | 'activity']
   uploaded: [media: Media[]]
   cover: [media: Media | null]
@@ -90,8 +96,32 @@ function legEditable(leg: Leg): boolean {
 }
 
 const places = computed(() => props.day.items.filter(isVisit))
+
 const shown = computed(() => (props.hideSkipped ? places.value.filter((item) => item.status !== 'skipped') : places.value))
 const hidden = computed(() => places.value.length - shown.value.length)
+
+// The places are dragged as in the plan - within the day, from and into other
+// days - while every place is shown, so a position means the same to the page
+// and to the server. The drag library reorders this copy while dragging; it is
+// replaced whenever the document changes.
+const dragging = computed(() => !!props.draggable && structural.value && !props.hideSkipped)
+const local = ref<PlanItem[]>([])
+watch(shown, (next) => {
+  local.value = [...next]
+}, { immediate: true })
+
+// onDrop reports a place dropped into this day or moved within it.
+function onDrop(event: DraggableEvent<PlanItem>): void {
+  const item = event.data
+  if (item) {
+    emit('move', item.id, props.day.id, event.newDraggableIndex ?? event.newIndex ?? 0)
+  }
+}
+
+// step moves a place one position up or down among the day's places.
+function step(item: PlanItem, by: number): void {
+  emit('move', item.id, props.day.id, places.value.findIndex((place) => place.id === item.id) + by)
+}
 
 // legTo finds the journey that ends at a place: the day keeps one between every
 // pair of neighbouring elements, stay marks included.
@@ -183,8 +213,19 @@ const spent = computed(() => formatMoney(props.day.summary.actual_cost, props.cu
       </li>
     </ul>
 
-    <div v-if="shown.length > 0" class="space-y-3">
-      <template v-for="item in shown" :key="item.id">
+    <VueDraggable
+      v-model="local"
+      :group="{ name: 'places', pull: true, put: true }"
+      :disabled="!dragging"
+      handle=".drag-handle"
+      :animation="150"
+      ghost-class="opacity-40"
+      class="flex flex-col gap-3"
+      :class="{ 'min-h-12': dragging }"
+      @add="onDrop"
+      @update="onDrop"
+    >
+      <div v-for="(item, index) in local" :key="item.id" class="flex flex-col gap-3">
         <ReportLegLine
           v-if="legTo.get(item.id)"
           :leg="legTo.get(item.id)!"
@@ -197,11 +238,17 @@ const spent = computed(() => formatMoney(props.day.summary.actual_cost, props.cu
           :currency="currency"
           :editing="editing"
           :trip-id="tripId"
+          :first="index === 0"
+          :last="index === local.length - 1"
+          :draggable="dragging"
           @status="(status) => emit('status', item, status)"
           @rate="(rating) => emit('rate', item, rating)"
           @story="(story) => emit('story', item, story)"
           @edit="emit('edit', item)"
           @remove="emit('remove', item)"
+          @up="step(item, -1)"
+          @down="step(item, 1)"
+          @pick-target="(mode) => emit('pickTarget', item, mode)"
           @uploaded="(media) => emit('uploadedToPlace', item, media)"
           @cover="(media) => emit('placeCover', item, media)"
           @privacy="(media, isPrivate) => emit('privacy', media, isPrivate)"
@@ -211,8 +258,8 @@ const spent = computed(() => formatMoney(props.day.summary.actual_cost, props.cu
           @import-track="(file) => emit('importPlaceTrack', item, file)"
           @remove-track="emit('removePlaceTrack', item)"
         />
-      </template>
-    </div>
+      </div>
+    </VueDraggable>
 
     <p v-if="hidden > 0" class="text-sm text-base-content/60">{{ t('report.hiddenSkipped', hidden) }}</p>
 

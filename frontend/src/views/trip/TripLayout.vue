@@ -2,16 +2,22 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, RouterView, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
+import { downloadPlanPDF } from '@/api/documents'
+import { downloadSharedPlanPDF } from '@/api/shared'
+import { setTripTags } from '@/api/tags'
 import { createReportFromPlan } from '@/api/trips'
 import type { DocumentKind } from '@/api/types'
 import AppIcon, { type IconName } from '@/components/AppIcon.vue'
+import TripStatusBadge from '@/components/TripStatusBadge.vue'
+import TagsPicker from '@/components/TagsPicker.vue'
 import { useContentLanguage } from '@/composables/useContentLanguage'
 import { useTripStore } from '@/stores/trip'
 import { errorMessage } from '@/utils/errors'
 import { formatDateRange } from '@/utils/format'
 import { translateTrip } from '@/utils/translate'
+import { activeUnits } from '@/utils/units'
 import {
-  listRouteName, sectionOfRoute, SHARED_SECTIONS, SHARED_TRIP_ID, TRIP_SECTIONS, tripRoute, type TripSection,
+  listRouteName, sectionOfRoute, SHARED_TRIP_ID, tripRoute, tripSections, type TripSection,
 } from '@/utils/tripRoutes'
 
 interface Tab {
@@ -33,7 +39,9 @@ const route = useRoute()
 const router = useRouter()
 const store = useTripStore()
 
-const TAB_ICONS: Record<TripSection, IconName> = { document: 'plan', media: 'image', budget: 'wallet', settings: 'settings' }
+const TAB_ICONS: Record<TripSection, IconName> = {
+  document: 'plan', packing: 'check2Square', media: 'image', budget: 'cashStack', settings: 'settings',
+}
 
 // shared says the trip was opened by a read-only link.
 const shared = computed(() => route.meta.shared === true)
@@ -41,7 +49,7 @@ const shared = computed(() => route.meta.shared === true)
 // read; a link's address is the same for both, so there the trip tells.
 const kind = computed<DocumentKind>(() => (shared.value ? store.trip?.kind : route.meta.kind) ?? 'plan')
 
-const tabs = computed<Tab[]>(() => (shared.value ? SHARED_SECTIONS : TRIP_SECTIONS).map((section) => ({
+const tabs = computed<Tab[]>(() => tripSections(kind.value, shared.value).map((section) => ({
   section,
   to: tripRoute({ id: shared.value ? SHARED_TRIP_ID : tripId.value, kind: kind.value }, section),
   label: section === 'document' ? t(`trip.tabs.${kind.value}`) : t(`trip.tabs.${section}`),
@@ -56,6 +64,8 @@ const period = computed(() => formatDateRange(store.trip?.start_date ?? null, st
 const { lang: contentLang } = useContentLanguage(() => store.trip?.languages ?? [])
 const title = computed(() => (store.trip ? translateTrip(store.trip, contentLang.value).title : ''))
 const loadError = computed(() => (store.error ? errorMessage(store.error, t, te) : ''))
+// A plan is closed or reopened by whoever may change it; a link only reads.
+const canEdit = computed(() => !shared.value && (store.trip?.role === 'owner' || store.trip?.role === 'editor'))
 const writing = ref(false)
 const writeError = ref('')
 
@@ -73,6 +83,39 @@ watch(() => store.trip, (trip) => {
     void router.replace(tripRoute(trip, sectionOfRoute(route.name) ?? 'document'))
   }
 })
+
+// saveTags puts the reader's tags on the trip and shows the trip it answers with.
+async function saveTags(ids: string[]): Promise<void> {
+  if (store.trip) {
+    store.set(await setTripTags(store.trip.id, ids))
+  }
+}
+
+// exporting is true while the plan's PDF is being made.
+const exporting = ref(false)
+
+// exportPlan saves the plan as a PDF to take on the way. A link has no account
+// behind it for the server to take the language and the units from, so those
+// travel with its request.
+async function exportPlan(): Promise<void> {
+  const current = store.trip
+  if (!current || exporting.value) {
+    return
+  }
+  exporting.value = true
+  writeError.value = ''
+  try {
+    if (shared.value) {
+      await downloadSharedPlanPDF(locale.value, activeUnits.value)
+    } else {
+      await downloadPlanPDF(current.id)
+    }
+  } catch (err) {
+    writeError.value = errorMessage(err, t, te)
+  } finally {
+    exporting.value = false
+  }
+}
 
 // writeReport copies the plan into a new report owned by the reader and opens
 // it. Reading the plan is enough: whoever travelled may write it up.
@@ -114,11 +157,12 @@ async function writeReport(): Promise<void> {
           <span aria-hidden="true"> · </span>
           <span>{{ t('trips.days', store.trip.day_count) }}</span>
         </p>
-        <p class="mt-2 flex flex-wrap gap-2">
-          <span class="badge badge-sm">{{ t(`trips.status.${store.trip.status}`) }}</span>
+        <div class="mt-2 flex flex-wrap gap-2">
+          <TripStatusBadge :trip="store.trip" :editable="canEdit" @updated="store.set" />
           <span v-if="shared" class="badge badge-outline badge-sm">{{ t('shared.readOnly') }}</span>
           <span v-else-if="store.trip.role !== 'owner'" class="badge badge-outline badge-sm">{{ t(`trips.roles.${store.trip.role}`) }}</span>
-        </p>
+        </div>
+        <TagsPicker v-if="!shared" :tags="store.trip.tags" kind="trip" :save="saveTags" class="mt-2" />
         <p v-if="shared" class="mt-2 text-sm text-base-content/70">{{ t('trips.ownedBy', { name: store.trip.owner.display_name }) }}</p>
 
         <nav class="mt-4" :aria-label="t('trip.tabsLabel')">
@@ -147,6 +191,17 @@ async function writeReport(): Promise<void> {
           <AppIcon v-else name="report" />
           {{ t('trip.writeReport') }}
         </button>
+        <button
+          v-if="store.trip.kind === 'plan'"
+          type="button"
+          class="btn btn-sm btn-hover-outline mt-2 w-full"
+          :disabled="exporting"
+          @click="exportPlan"
+        >
+          <span v-if="exporting" class="loading loading-spinner loading-xs"></span>
+          <AppIcon v-else name="download" />
+          {{ t('trip.planPdf') }}
+        </button>
         <p v-if="writeError" role="alert" class="mt-2 text-sm text-error">{{ writeError }}</p>
 
         <!-- The plan and the report hang their days here; every other tab
@@ -165,18 +220,19 @@ async function writeReport(): Promise<void> {
 
           <header class="space-y-2">
             <h1 class="text-2xl font-bold break-words">{{ title }}</h1>
-            <p class="flex flex-wrap items-center gap-2 text-sm text-base-content/70">
+            <div class="flex flex-wrap items-center gap-2 text-sm text-base-content/70">
               <span>{{ period }}</span>
               <span aria-hidden="true">·</span>
               <span>{{ t('trips.days', store.trip.day_count) }}</span>
-              <span class="badge badge-sm">{{ t(`trips.status.${store.trip.status}`) }}</span>
+              <TripStatusBadge :trip="store.trip" :editable="canEdit" @updated="store.set" />
               <span v-if="shared" class="badge badge-outline badge-sm">{{ t('shared.readOnly') }}</span>
               <span v-else-if="store.trip.role !== 'owner'" class="badge badge-outline badge-sm">{{ t(`trips.roles.${store.trip.role}`) }}</span>
               <template v-if="shared">
                 <span aria-hidden="true">·</span>
                 <span>{{ t('trips.ownedBy', { name: store.trip.owner.display_name }) }}</span>
               </template>
-            </p>
+            </div>
+            <TagsPicker v-if="!shared" :tags="store.trip.tags" kind="trip" :save="saveTags" />
             <button
               v-if="!shared && store.trip.kind === 'plan'"
               type="button"
@@ -187,6 +243,17 @@ async function writeReport(): Promise<void> {
               <span v-if="writing" class="loading loading-spinner loading-xs"></span>
               <AppIcon v-else name="report" />
               {{ t('trip.writeReport') }}
+            </button>
+            <button
+              v-if="store.trip.kind === 'plan'"
+              type="button"
+              class="btn btn-sm btn-hover-outline"
+              :disabled="exporting"
+              @click="exportPlan"
+            >
+              <span v-if="exporting" class="loading loading-spinner loading-xs"></span>
+              <AppIcon v-else name="download" />
+              {{ t('trip.planPdf') }}
             </button>
             <p v-if="writeError" role="alert" class="text-sm text-error">{{ writeError }}</p>
           </header>

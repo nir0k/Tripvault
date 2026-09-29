@@ -25,7 +25,7 @@ const created = ref<CreatedShareLink | null>(null)
 const error = ref('')
 const busy = ref(false)
 const copied = ref(false)
-const form = reactive({ label: '', includePrivateMedia: false, expires: '' })
+const form = reactive({ label: '', includePrivateMedia: false, allowDownload: false, expires: '' })
 
 const confirmDialog = useTemplateRef<InstanceType<typeof ConfirmDialog>>('confirmDialog')
 
@@ -77,9 +77,10 @@ async function create(): Promise<void> {
     created.value = await createShareLink(props.tripId, {
       label: form.label,
       include_private_media: form.includePrivateMedia,
+      allow_download: form.allowDownload,
       expires_at: expiryTimestamp(form.expires),
     })
-    Object.assign(form, { label: '', includePrivateMedia: false, expires: '' })
+    Object.assign(form, { label: '', includePrivateMedia: false, allowDownload: false, expires: '' })
     await load()
   } catch (err) {
     error.value = errorMessage(err, t, te)
@@ -149,6 +150,9 @@ async function revoke(link: ShareLink): Promise<void> {
                 <span v-if="link.include_private_media" class="badge badge-warning badge-sm">
                   {{ t('share.privateMediaShort') }}
                 </span>
+                <span v-if="link.allow_download" class="badge badge-info badge-sm">
+                  {{ t('share.allowDownloadShort') }}
+                </span>
                 <span>{{
                   link.expires_at
                     ? t('share.expiresOn', { time: formatDateTime(link.expires_at, locale) })
@@ -193,6 +197,10 @@ async function revoke(link: ShareLink): Promise<void> {
           <label class="label cursor-pointer justify-start gap-2">
             <input v-model="form.includePrivateMedia" type="checkbox" class="checkbox checkbox-sm" />
             <span>{{ t('share.privateMedia') }}</span>
+          </label>
+          <label class="label cursor-pointer justify-start gap-2">
+            <input v-model="form.allowDownload" type="checkbox" class="checkbox checkbox-sm" />
+            <span>{{ t('share.allowDownload') }}</span>
           </label>
           <div class="flex justify-end">
             <button type="submit" class="btn btn-primary" :disabled="busy">

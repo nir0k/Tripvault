@@ -217,7 +217,7 @@ defineExpose({ open, close })
 </script>
 
 <template>
-  <dialog ref="dialog" class="modal modal-bottom sm:modal-middle">
+  <dialog ref="dialog" class="modal modal-top sm:modal-middle">
     <div class="modal-box flex w-[min(96vw,44rem)] max-w-none flex-col gap-3">
       <h2 class="text-lg font-bold">{{ t('media.cropTitle') }}</h2>
       <p class="text-sm text-base-content/70">{{ t('media.cropHint') }}</p>

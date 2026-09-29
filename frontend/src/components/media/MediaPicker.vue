@@ -58,7 +58,7 @@ defineExpose({ open, close })
 </script>
 
 <template>
-  <dialog ref="dialog" class="modal modal-bottom sm:modal-middle">
+  <dialog ref="dialog" class="modal modal-top sm:modal-middle">
     <div class="modal-box flex max-h-[85dvh] w-[min(96vw,56rem)] max-w-none flex-col gap-3">
       <h2 class="text-lg font-bold">{{ t('media.pickTitle') }}</h2>
 

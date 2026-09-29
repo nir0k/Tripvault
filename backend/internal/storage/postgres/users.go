@@ -266,8 +266,9 @@ func avatarTime(key string, at time.Time) time.Time {
 }
 
 // Delete - removes an account with everything only it holds: the trips it owns,
-// their documents, costs and files, its memberships of other people's trips and
-// its sessions. The photographs it uploaded into somebody else's trip stay
+// their documents, costs and files, its ideas with their photographs, its
+// memberships of other people's trips and its sessions. The ideas go through
+// the cascade from the account. The photographs it uploaded into somebody else's trip stay
 // there; only the record of who added them is forgotten.
 //
 // Arguments:
@@ -303,8 +304,12 @@ func (r *UserRepository) Delete(ctx context.Context, id uuid.UUID) ([]string, er
 			}
 		}
 
+		// The files of the trips and of the ideas the account owns go with it.
 		rows, err := tx.Query(ctx,
-			`SELECT storage_key FROM media WHERE trip_id IN (SELECT id FROM trips WHERE owner_id = $1)`, id)
+			`SELECT storage_key FROM media WHERE trip_id IN (SELECT id FROM trips WHERE owner_id = $1)
+			 UNION ALL
+			 SELECT unnest(ARRAY[p.storage_key, p.thumb_key]) FROM idea_photos p
+			 JOIN ideas i ON i.id = p.idea_id WHERE i.owner_id = $1`, id)
 		if err != nil {
 			return fmt.Errorf("list the media of the deleted trips: %w", err)
 		}

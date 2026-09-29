@@ -165,7 +165,7 @@ defineExpose({ open })
 </script>
 
 <template>
-  <dialog ref="dialog" class="modal modal-bottom sm:modal-middle">
+  <dialog ref="dialog" class="modal modal-top sm:modal-middle">
     <form class="modal-box flex max-h-[85dvh] flex-col gap-3" @submit.prevent="submit">
       <h2 class="text-lg font-bold">{{ t('media.linkTitle') }}</h2>
       <p class="text-sm text-base-content/70">

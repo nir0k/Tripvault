@@ -57,7 +57,7 @@ defineExpose({ ask })
 </script>
 
 <template>
-  <dialog ref="dialog" class="modal modal-bottom sm:modal-middle" @close="answer(false)">
+  <dialog ref="dialog" class="modal modal-top sm:modal-middle" @close="answer(false)">
     <form class="modal-box flex flex-col gap-3" @submit.prevent="answer(true)">
       <h2 class="text-lg font-bold">{{ t('users.confirmTitle') }}</h2>
       <p>{{ question }}</p>

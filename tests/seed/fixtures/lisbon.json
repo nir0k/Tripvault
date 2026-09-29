@@ -1,0 +1,416 @@
+{
+  "_about": "The trip still being planned: no report, a few open questions in the notes, costs split among the three people, a journey with changes and a packing list half packed.",
+  "title": "Lisbon in spring",
+  "summary": "Three days of tiles, hills and too much coffee. Nothing booked yet except the flights.",
+  "start_date": "2027-04-16",
+  "end_date": "2027-04-18",
+  "timezone": "Europe/Lisbon",
+  "currency": "EUR",
+  "travelers": 3,
+  "budget_amount": "1400",
+  "stays": [
+    {
+      "name": "Alfama rooms",
+      "kind": "apartment",
+      "address": "Rua de São Miguel 44, Lisbon",
+      "lat": 38.7118,
+      "lng": -9.13,
+      "check_in_date": "2027-04-16",
+      "check_out_date": "2027-04-19",
+      "check_in_time": "14:00",
+      "check_out_time": "11:00",
+      "booking_ref": "ALF-77120",
+      "url": "https://example.com/alfama-rooms",
+      "contacts": "+351 900 000 111",
+      "notes_md": "Third floor, no lift. Ask about the luggage room for the last morning.",
+      "planned_cost_amount": "480"
+    }
+  ],
+  "transfers": [
+    {
+      "kind": "flight",
+      "name": "TAP TP 755",
+      "from_name": "Berlin airport",
+      "from_lat": 52.3667,
+      "from_lng": 13.5033,
+      "to_name": "Lisbon airport",
+      "to_lat": 38.7742,
+      "to_lng": -9.1342,
+      "departure_date": "2027-04-16",
+      "departure_time": "07:55",
+      "arrival_time": "11:20",
+      "booking_ref": "TP-X4R81M",
+      "notes_md": "Hand luggage only.",
+      "planned_cost_amount": "145",
+      "cost_per_person": true
+    },
+    {
+      "kind": "transfer",
+      "name": "Aerobus",
+      "from_name": "Lisbon airport",
+      "from_lat": 38.7742,
+      "from_lng": -9.1342,
+      "to_name": "Alfama rooms",
+      "to_lat": 38.7118,
+      "to_lng": -9.13,
+      "departure_date": "2027-04-16",
+      "departure_time": "11:50",
+      "arrival_time": "12:30",
+      "planned_cost_amount": "4",
+      "cost_per_person": true
+    }
+  ],
+  "days": [
+    {
+      "title": "Arrival and Alfama",
+      "notes_md": "Land at 11:20, drop the bags, then nothing but walking. Keep it loose - jet lag is real even on a short flight.",
+      "places": [
+        {
+          "name": "Miradouro das Portas do Sol",
+          "category": "sight",
+          "lat": 38.7118,
+          "lng": -9.1297,
+          "address": "Largo Portas do Sol, Lisbon",
+          "description_md": "The postcard view over Alfama. Busy at sunset, empty at nine in the morning.",
+          "visit_minutes": 30,
+          "cost_category": "activities"
+        },
+        {
+          "name": "Sé de Lisboa",
+          "category": "museum",
+          "lat": 38.7098,
+          "lng": -9.133,
+          "address": "Largo da Sé, Lisbon",
+          "url": "https://example.com/se-lisboa",
+          "description_md": "Cloister costs extra and is worth it.",
+          "visit_minutes": 45,
+          "planned_cost_amount": "5",
+          "cost_per_person": true,
+          "cost_category": "activities"
+        },
+        {
+          "name": "Time Out Market",
+          "category": "food",
+          "lat": 38.7067,
+          "lng": -9.1459,
+          "address": "Av. 24 de Julho 49, Lisbon",
+          "url": "https://example.com/time-out-market",
+          "description_md": "Loud and touristy, and still the easiest first dinner. **Go before seven.**",
+          "desired_time": "18:30",
+          "visit_minutes": 75,
+          "planned_cost_amount": "25",
+          "cost_per_person": true,
+          "cost_category": "food",
+          "cost_note": "Dinner for three",
+          "split": {
+            "paid_by": "editor",
+            "shares": [
+              {
+                "person": "owner"
+              },
+              {
+                "person": "editor"
+              },
+              {
+                "person": "viewer"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "title": "Belém",
+      "notes_md": "Tram 15 out, walk back along the water if the legs hold. Museum tickets not bought yet - check whether they sell out.",
+      "places": [
+        {
+          "name": "Mosteiro dos Jerónimos",
+          "category": "museum",
+          "lat": 38.6979,
+          "lng": -9.2065,
+          "address": "Praça do Império, Lisbon",
+          "url": "https://example.com/jeronimos",
+          "description_md": "Queue before ten or book online. The cloister is the point, not the church.",
+          "desired_time": "09:45",
+          "visit_minutes": 90,
+          "planned_cost_amount": "12",
+          "cost_per_person": true,
+          "cost_category": "activities"
+        },
+        {
+          "name": "Pastéis de Belém",
+          "category": "food",
+          "lat": 38.6975,
+          "lng": -9.2033,
+          "address": "R. de Belém 84, Lisbon",
+          "description_md": "Eat them standing at the counter, not sitting in the garden.",
+          "visit_minutes": 30,
+          "planned_cost_amount": "8",
+          "cost_category": "food",
+          "cost_note": "A box of six and coffee",
+          "split": {
+            "paid_by": "viewer",
+            "shares": [
+              {
+                "person": "owner",
+                "amount": "2"
+              },
+              {
+                "person": "editor",
+                "amount": "4"
+              },
+              {
+                "person": "viewer",
+                "amount": "2"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Padrão dos Descobrimentos",
+          "category": "sight",
+          "lat": 38.6936,
+          "lng": -9.2058,
+          "address": "Av. Brasília, Lisbon",
+          "description_md": "The lift to the top is the only reason to pay.",
+          "visit_minutes": 45,
+          "is_optional": true,
+          "planned_cost_amount": "10",
+          "cost_per_person": true,
+          "cost_category": "activities"
+        }
+      ]
+    },
+    {
+      "title": "Sintra, or not",
+      "notes_md": "Undecided. Sintra is a day in itself and the trains are grim in the afternoon. The alternative is a slow day in Príncipe Real and the botanical garden.",
+      "places": [
+        {
+          "name": "Palácio da Pena",
+          "category": "sight",
+          "lat": 38.7876,
+          "lng": -9.3904,
+          "address": "Estrada da Pena, Sintra",
+          "url": "https://example.com/pena",
+          "description_md": "Timed entry only. The park alone is cheaper and half as crowded.",
+          "desired_time": "10:00",
+          "visit_minutes": 180,
+          "planned_cost_amount": "20",
+          "cost_per_person": true,
+          "cost_category": "activities"
+        },
+        {
+          "name": "Jardim Botânico",
+          "category": "nature",
+          "lat": 38.7175,
+          "lng": -9.1478,
+          "address": "R. da Escola Politécnica 58, Lisbon",
+          "description_md": "The plan B, and honestly the nicer one in April.",
+          "visit_minutes": 90,
+          "is_optional": true,
+          "planned_cost_amount": "6",
+          "cost_per_person": true,
+          "cost_category": "activities"
+        }
+      ]
+    }
+  ],
+  "unassigned": [
+    {
+      "name": "LX Factory",
+      "category": "shopping",
+      "lat": 38.7026,
+      "lng": -9.1783,
+      "description_md": "Sunday market. Only works if we stay the weekend.",
+      "visit_minutes": 120,
+      "cost_category": "shopping"
+    },
+    {
+      "name": "Fado in a small room",
+      "category": "activity",
+      "lat": 38.711,
+      "lng": -9.1315,
+      "description_md": "Ask the flat's owner which one is not a tourist trap. Book on arrival.",
+      "visit_minutes": 120,
+      "planned_cost_amount": "35",
+      "cost_per_person": true,
+      "cost_category": "activities"
+    },
+    {
+      "name": "Cristo Rei",
+      "category": "sight",
+      "lat": 38.6784,
+      "lng": -9.171,
+      "description_md": "Across the river. The ferry is half the appeal.",
+      "visit_minutes": 90,
+      "cost_category": "activities"
+    }
+  ],
+  "expenses": [
+    {
+      "note": "Transport passes",
+      "category": "transport",
+      "planned_amount": "40"
+    },
+    {
+      "note": "Coffee and pastries, daily",
+      "category": "food",
+      "planned_amount": "60"
+    },
+    {
+      "note": "Tiles to take home",
+      "category": "shopping",
+      "planned_amount": "50",
+      "day": 1
+    }
+  ],
+  "legs": [
+    {
+      "day": 1,
+      "from": "Miradouro das Portas do Sol",
+      "mode": "walk",
+      "distance_m": 600,
+      "duration_s": 540
+    },
+    {
+      "day": 1,
+      "from": "Sé de Lisboa",
+      "mode": "transit",
+      "distance_m": 2400,
+      "duration_s": 1080,
+      "planned_cost_amount": "1.80",
+      "note": "Tram 28 if it is not packed, otherwise the metro."
+    },
+    {
+      "day": 2,
+      "from": "Alfama rooms",
+      "mode": "transit",
+      "distance_m": 7100,
+      "duration_s": 2100,
+      "planned_cost_amount": "1.80",
+      "note": "Tram 15 from Praça da Figueira."
+    },
+    {
+      "day": 3,
+      "from": "Alfama rooms",
+      "note": "Only if we decide on Sintra.",
+      "segments": [
+        {
+          "mode": "walk",
+          "duration_s": 900,
+          "stop": {
+            "name": "Rossio station",
+            "lat": 38.7142,
+            "lng": -9.141,
+            "wait_minutes": 10
+          }
+        },
+        {
+          "mode": "train",
+          "duration_s": 2400,
+          "ticket": 1,
+          "stop": {
+            "name": "Sintra station",
+            "lat": 38.7998,
+            "lng": -9.3797,
+            "wait_minutes": 15
+          }
+        },
+        {
+          "mode": "bus",
+          "duration_s": 1200,
+          "ticket": 2
+        }
+      ],
+      "tickets": [
+        {
+          "name": "Train Rossio - Sintra",
+          "planned_cost_amount": "4.60"
+        },
+        {
+          "name": "Bus 434",
+          "planned_cost_amount": "3.90"
+        }
+      ]
+    }
+  ],
+  "packing": [
+    {
+      "name": "Documents",
+      "icon": "documents",
+      "items": [
+        {
+          "name": "Passports",
+          "quantity": 3,
+          "packed": true
+        },
+        {
+          "name": "Boarding passes",
+          "note": "In the airline app, and printed",
+          "bringer": "owner"
+        },
+        {
+          "name": "Travel insurance",
+          "packed": true
+        }
+      ]
+    },
+    {
+      "name": "Clothes",
+      "icon": "clothes",
+      "items": [
+        {
+          "name": "Walking shoes",
+          "note": "The hills are cobbled and steep"
+        },
+        {
+          "name": "Light jacket",
+          "note": "Evenings by the river are cool"
+        },
+        {
+          "name": "T-shirts",
+          "quantity": 3
+        }
+      ]
+    },
+    {
+      "name": "Electronics",
+      "icon": "electronics",
+      "items": [
+        {
+          "name": "Phone chargers",
+          "quantity": 2,
+          "packed": true
+        },
+        {
+          "name": "Power bank",
+          "bringer": "editor"
+        },
+        {
+          "name": "Adapter",
+          "note": "Type F sockets, as at home - probably not needed"
+        }
+      ]
+    },
+    {
+      "name": "First aid",
+      "icon": "first_aid",
+      "items": [
+        {
+          "name": "Plasters",
+          "bringer": "editor"
+        },
+        {
+          "name": "Sun cream"
+        }
+      ]
+    },
+    {
+      "items": [
+        {
+          "name": "Tote bag for the market"
+        }
+      ]
+    }
+  ]
+}

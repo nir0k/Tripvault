@@ -33,7 +33,7 @@ defineExpose({ open })
 </script>
 
 <template>
-  <dialog ref="dialog" class="modal modal-bottom sm:modal-middle">
+  <dialog ref="dialog" class="modal modal-top sm:modal-middle">
     <div class="modal-box flex max-h-[85dvh] flex-col gap-3">
       <h2 class="text-lg font-bold">{{ t('preferences.languageTitle') }}</h2>
 

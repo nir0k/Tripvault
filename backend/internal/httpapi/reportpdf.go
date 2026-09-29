@@ -418,3 +418,67 @@ func pdfFilename(title string) string {
 	}
 	return trimmed + ".pdf"
 }
+
+// handlePlanPDF renders the trip's plan for the signed-in reader, to take on
+// the way.
+func (s *Server) handlePlanPDF(w http.ResponseWriter, r *http.Request) {
+	trip, ok := s.tripFor(w, r, domain.ActionView)
+	if !ok {
+		return
+	}
+	if trip.PlanID == nil {
+		s.writeError(w, r, http.StatusNotFound, "not_found", "This trip has no plan")
+		return
+	}
+	reader := principalFrom(r.Context()).user
+	s.writePlanPDF(w, r, trip, *trip.PlanID, reader.Locale, reader.Units)
+}
+
+// handleSharedPlanPDF renders the plan a read-only link opens, in the language
+// and units the page sends, as a link has no account to read them from.
+func (s *Server) handleSharedPlanPDF(w http.ResponseWriter, r *http.Request) {
+	access := shareFrom(r.Context())
+	if !access.Opens(domain.DocumentPlan) {
+		s.writeError(w, r, http.StatusNotFound, "not_found", "Resource not found")
+		return
+	}
+	s.writePlanPDF(w, r, access.Trip, *access.Trip.PlanID, r.URL.Query().Get("lang"),
+		domain.Units(r.URL.Query().Get("units")))
+}
+
+// writePlanPDF renders one plan with its maps and streams it back. A plan has
+// no photographs and is written in its one language.
+func (s *Server) writePlanPDF(w http.ResponseWriter, r *http.Request, trip domain.TripSummary,
+	documentID uuid.UUID, language string, units domain.Units) {
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(pdfWriteTimeout)); err != nil &&
+		!errors.Is(err, http.ErrNotSupported) {
+		s.logger.Warn("extend the plan deadline failed",
+			slog.String("request_id", RequestIDFrom(r.Context())), slog.Any("error", err))
+	}
+	content, err := s.documents.Content(r.Context(), documentID)
+	if err != nil {
+		s.writeDomainError(w, r, "read plan", err)
+		return
+	}
+	if domain.ValidateUnits(units) != nil {
+		units = domain.UnitsKilometres
+	}
+	plan := pdf.Plan{
+		Trip: trip.Trip, Content: content, Language: language, Units: units,
+		Maps: s.reportMaps(r.Context(), content), MapAttribution: plainText(s.opts.MapAttribution),
+	}
+	var document bytes.Buffer
+	if err := pdf.RenderPlan(&document, plan); err != nil {
+		s.internalError(w, r, "render the plan", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Length", strconv.Itoa(document.Len()))
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(pdfFilename(trip.Title)))
+	if _, err := w.Write(document.Bytes()); err != nil {
+		s.logger.Warn("plan transfer interrupted",
+			slog.String("request_id", RequestIDFrom(r.Context())), slog.Any("error", err))
+	}
+}

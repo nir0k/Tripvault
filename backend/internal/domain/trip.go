@@ -18,21 +18,33 @@ const (
 	ModeCar     TravelMode = "car"
 	ModeBike    TravelMode = "bike"
 	ModeTransit TravelMode = "transit"
-	ModeFlight  TravelMode = "flight"
+	// ModeBus is a bus or a coach: it follows roads, like public transport.
+	ModeBus TravelMode = "bus"
+	// ModeTrain, ModeTram and ModeFerry follow rails and water no routing
+	// service in use knows, so they are drawn as a straight line with an
+	// estimated time. ModeTram is a metro, a tram or a light railway.
+	ModeTrain  TravelMode = "train"
+	ModeTram   TravelMode = "tram"
+	ModeFerry  TravelMode = "ferry"
+	ModeFlight TravelMode = "flight"
 	// ModeCableCar is a cable car, a gondola or a chairlift: it hangs on a
 	// straight cable, so it is drawn as a line rather than routed on roads.
 	ModeCableCar TravelMode = "cable_car"
 	ModeOther    TravelMode = "other"
 )
 
+// TravelModes lists every travel mode in the order the interface offers them.
+var TravelModes = []TravelMode{ModeWalk, ModeCar, ModeBike, ModeTransit, ModeBus, ModeTrain, ModeTram, ModeFerry,
+	ModeFlight, ModeCableCar, ModeOther}
+
 // Routed - reports whether a leg of this mode follows roads, and so is asked
 // of the routing provider, rather than a straight line.
 //
 // Returns:
-//   - true for walking, cycling, driving and public transport.
+//   - true for walking, cycling, driving, public transport and buses.
 func (m TravelMode) Routed() bool {
 	switch m {
-	case ModeWalk, ModeBike, ModeCar, ModeTransit:
+	case ModeWalk, ModeBike, ModeCar, ModeTransit, ModeBus:
 		return true
 	}
 	return false
@@ -47,12 +59,13 @@ func (m TravelMode) Routed() bool {
 // Returns:
 //   - a *ValidationError when the value is unknown.
 func ValidateTravelMode(field string, mode TravelMode) error {
-	switch mode {
-	case ModeWalk, ModeCar, ModeBike, ModeTransit, ModeFlight, ModeCableCar, ModeOther:
-		return nil
-	default:
-		return NewValidationError(field, "unsupported", "must be walk, car, bike, transit, flight, cable_car or other")
+	for _, known := range TravelModes {
+		if mode == known {
+			return nil
+		}
 	}
+	return NewValidationError(field, "unsupported",
+		"must be walk, car, bike, transit, bus, train, tram, ferry, flight, cable_car or other")
 }
 
 // TripRole is what a person may do with one trip. The owner is recorded on the
@@ -123,16 +136,32 @@ func (r TripRole) Can(action TripAction) bool {
 	}
 }
 
-// TripStatus is where a trip stands relative to today, derived from its dates.
+// TripStatus is where a plan stands: derived from its dates while it is open,
+// and the state it was closed with once somebody closed it. A report has none.
 type TripStatus string
 
 // Trip statuses. StatusNoDates cannot be reached through the API, which requires
-// both dates, and stays as the answer for a trip read without them.
+// both dates, and stays as the answer for a trip read without them. A plan whose
+// dates have passed is overdue rather than completed: only a person knows
+// whether the trip was made, so completing it is left to them.
 const (
 	StatusNoDates   TripStatus = "no_dates"
 	StatusUpcoming  TripStatus = "upcoming"
 	StatusOngoing   TripStatus = "ongoing"
+	StatusOverdue   TripStatus = "overdue"
 	StatusCompleted TripStatus = "completed"
+	StatusCancelled TripStatus = "cancelled"
+)
+
+// PlanState is how a plan was closed by hand. The empty state is an open plan,
+// whose status follows its dates.
+type PlanState string
+
+// Plan states.
+const (
+	PlanOpen      PlanState = ""
+	PlanCompleted PlanState = "completed"
+	PlanCancelled PlanState = "cancelled"
 )
 
 // DocumentKind distinguishes the two kinds of trip and the document each holds:
@@ -184,14 +213,19 @@ type Trip struct {
 	// SourceTripID is the plan a report was copied from; nil for a plan, for a
 	// report written from scratch and once that plan is deleted.
 	SourceTripID *uuid.UUID
-	Title        string
-	Summary      string
-	StartDate    *time.Time
-	EndDate      *time.Time
-	Timezone     string
-	Currency     string
-	Travelers    int
-	Budget       *Money
+	// FromPlan says a report was copied from a plan. Unlike SourceTripID it
+	// outlives the plan, so a place added to the report is still marked as not
+	// planned once the plan is deleted. It is set by the store from
+	// SourceTripID when the trip is created.
+	FromPlan  bool
+	Title     string
+	Summary   string
+	StartDate *time.Time
+	EndDate   *time.Time
+	Timezone  string
+	Currency  string
+	Travelers int
+	Budget    *Money
 	// CoverMediaID is the picture the trip is shown by, out of its own media.
 	CoverMediaID *uuid.UUID
 	// CoverCrop is the part of the cover the trip is shown by; nil means the
@@ -200,8 +234,14 @@ type Trip struct {
 	// Languages are a report's languages: the original first, then the ones it
 	// is translated into. A plan has none.
 	Languages []string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	// State is how a plan was closed; always open for a report.
+	State PlanState
+	// TrackSpeedKmh is the speed on the flat, in km/h, the time of a plan's
+	// lines is worked out at when a line names none of its own. A report,
+	// whose lines were travelled, does not use it.
+	TrackSpeedKmh float64
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // Normalize - trims a trip's text fields, fills defaults and checks every rule.
@@ -268,6 +308,18 @@ func (t Trip) Normalize() (Trip, error) {
 			return t, err
 		}
 	}
+	switch {
+	case t.State != PlanOpen && t.State != PlanCompleted && t.State != PlanCancelled:
+		return t, NewValidationError("state", "unsupported", "must be completed, cancelled or null")
+	case t.State != PlanOpen && t.Kind != DocumentPlan:
+		return t, NewValidationError("state", "plan_only", "only a plan is completed or cancelled")
+	}
+	if t.TrackSpeedKmh == 0 {
+		t.TrackSpeedKmh = DefaultTrackSpeed
+	}
+	if err := ValidateTrackSpeed("track_speed_kmh", t.TrackSpeedKmh); err != nil {
+		return t, err
+	}
 	var err error
 	t.Languages, err = NormalizeLanguages(t.Kind, t.Languages, "")
 	return t, err
@@ -316,17 +368,28 @@ func (t Trip) DayCount() *int {
 	return &days
 }
 
-// StatusAt - derives the trip's status from its dates.
+// StatusAt - derives a plan's status from its state and its dates.
 //
-// "Today" is read in the trip's own time zone: a trip in Iceland starts on
-// Icelandic midnight, whatever zone the server or the reader is in.
+// A closed plan is what it was closed as. An open one is upcoming before its
+// first day, ongoing through its last and overdue after it, until somebody
+// completes or cancels it. "Today" is read in the trip's own time zone: a trip
+// in Iceland starts on Icelandic midnight, whatever zone the server or the
+// reader is in.
 //
 // Arguments:
 //   - now: the reference instant, passed in so the rule is testable.
 //
 // Returns:
-//   - the status.
+//   - the status, or the empty status for a report, which has none.
 func (t Trip) StatusAt(now time.Time) TripStatus {
+	switch {
+	case t.Kind == DocumentReport:
+		return ""
+	case t.State == PlanCompleted:
+		return StatusCompleted
+	case t.State == PlanCancelled:
+		return StatusCancelled
+	}
 	if t.StartDate == nil || t.EndDate == nil {
 		return StatusNoDates
 	}
@@ -340,7 +403,7 @@ func (t Trip) StatusAt(now time.Time) TripStatus {
 	case today.Before(dateOnly(*t.StartDate)):
 		return StatusUpcoming
 	case today.After(dateOnly(*t.EndDate)):
-		return StatusCompleted
+		return StatusOverdue
 	default:
 		return StatusOngoing
 	}
@@ -393,6 +456,9 @@ type TripSummary struct {
 	SourceVisible bool
 	// Translations are the report's title and summary in its further languages.
 	Translations TripTranslations
+	// Tags are the reader's own tags on the trip, by name; none when the trip is
+	// read on nobody's behalf.
+	Tags []TripTag
 }
 
 // DocumentID - names the trip's one document.
@@ -429,7 +495,8 @@ type TripSort string
 // Trip list orders.
 const (
 	// SortRelevance puts what matters now first: ongoing trips, then upcoming
-	// ones, then completed ones from the most recent.
+	// ones, then finished ones from the most recent. A plan is finished once it
+	// is completed or cancelled, a report once its dates have passed.
 	SortRelevance TripSort = "relevance"
 	// SortUpdated puts the trip whose content changed last first, whoever
 	// changed it.

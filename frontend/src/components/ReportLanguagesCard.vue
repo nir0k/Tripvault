@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { saveTranslations } from '@/api/documents'
+import { downloadTranslationFile, saveTranslations, uploadTranslationFile } from '@/api/documents'
 import { getTrip, updateTrip } from '@/api/trips'
 import type { TranslationEntry, Trip } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
@@ -34,6 +34,58 @@ const summaries = reactive<Record<string, string>>({})
 const saving = ref(false)
 const message = ref('')
 const error = ref('')
+
+// fileBusy names the language whose translation file is on its way.
+const fileBusy = ref('')
+
+// saved reports whether a language is stored on the report, which a file needs:
+// one just added in the form is not yet.
+function saved(code: string): boolean {
+  return props.trip.languages.slice(1).includes(code)
+}
+
+// exportFile saves the report's words as a file to translate into a language.
+async function exportFile(code: string): Promise<void> {
+  const documentId = props.trip.report_id
+  if (!documentId || fileBusy.value) {
+    return
+  }
+  fileBusy.value = code
+  message.value = ''
+  error.value = ''
+  try {
+    await downloadTranslationFile(documentId, code, props.trip.title)
+  } catch (err) {
+    error.value = errorMessage(err, t, te)
+  } finally {
+    fileBusy.value = ''
+  }
+}
+
+// importFile reads a filled translation file back and says what it brought.
+async function importFile(code: string, event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  const documentId = props.trip.report_id
+  if (!file || !documentId || fileBusy.value) {
+    return
+  }
+  fileBusy.value = code
+  message.value = ''
+  error.value = ''
+  try {
+    const result = await uploadTranslationFile(documentId, code, file)
+    message.value = result.skipped > 0
+      ? t('languages.fileImportedSkipped', { saved: result.saved, skipped: result.skipped })
+      : t('languages.fileImported', { saved: result.saved })
+    emit('changed', await getTrip(props.trip.id))
+  } catch (err) {
+    error.value = errorMessage(err, t, te)
+  } finally {
+    fileBusy.value = ''
+  }
+}
 
 const available = computed(() =>
   SUPPORTED_LOCALES.filter((code) => code !== original.value && !extra.value.includes(code)))
@@ -158,6 +210,25 @@ async function save(): Promise<void> {
           class="fieldset gap-3 rounded-box border border-base-300 p-3"
         >
           <legend class="fieldset-legend">{{ t('languages.tripIn', { language: languageName(code) }) }}</legend>
+          <div v-if="saved(code) && trip.report_id" class="flex flex-wrap items-center gap-2">
+            <button type="button" class="btn btn-sm btn-hover-outline" :disabled="fileBusy !== ''" @click="exportFile(code)">
+              <span v-if="fileBusy === code" class="loading loading-spinner loading-xs"></span>
+              <AppIcon v-else name="download" />
+              {{ t('languages.fileExport') }}
+            </button>
+            <label class="btn btn-sm btn-hover-outline" :class="{ 'btn-disabled': fileBusy !== '' }">
+              <AppIcon name="upload" />
+              {{ t('languages.fileImport') }}
+              <input
+                type="file"
+                accept=".yaml,.yml,application/yaml,text/yaml"
+                class="hidden"
+                :disabled="fileBusy !== ''"
+                @change="importFile(code, $event)"
+              />
+            </label>
+          </div>
+          <p v-if="saved(code) && trip.report_id" class="text-xs text-base-content/60">{{ t('languages.fileHint') }}</p>
           <label class="floating-label">
             <span>{{ t('tripForm.title') }}</span>
             <input v-model="titles[code]" type="text" maxlength="200" class="input w-full" :placeholder="trip.title" />

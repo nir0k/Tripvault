@@ -6,6 +6,18 @@
   themes: false;
 }
 
+/* A grid is one column no wider than itself until a grid-cols utility says
+   otherwise. Without columns of its own a grid makes an "auto" column, which
+   grows to the widest thing inside it - a row of day chips that scrolls
+   sideways counts at its full length - and so pushed the plan page, and every
+   page with a grid, wider than a phone's screen. In the base layer, so every
+   grid-cols utility still wins. */
+@layer base {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* The palette follows the logo: warm orange for primary actions. Colours used
    for text on the page background (error, success, info) are dark enough in the
    light theme, and light enough in the dark one, for WCAG AA contrast. */
@@ -331,4 +343,211 @@
   border-color: var(--difficulty);
   background: var(--difficulty);
   color: var(--difficulty-content);
+}
+
+/*
+ * Dialogs.
+ *
+ * Every form dialog opens at the top of a phone's screen and in the middle of a
+ * wider one (modal-top sm:modal-middle). On a phone it takes the width of the
+ * screen less a margin and at most the height the browser actually shows:
+ * 100vh counts the space behind the address bar and the keyboard, which is where
+ * the buttons of a long form used to end up.
+ *
+ * The row of buttons sticks to the bottom of the dialog, so saving and
+ * cancelling are always in reach while the form scrolls beneath them. While
+ * there is more of the form below, a shadow over that row says so; a browser
+ * without scroll-driven animations just shows the row without it.
+ */
+.modal-top > .modal-box {
+  --modal-pad: 1.5rem;
+}
+@media (max-width: 639.98px) {
+  .modal-top {
+    place-items: start center;
+  }
+  .modal-top > .modal-box {
+    --modal-pad: 1rem;
+    width: calc(100vw - 1rem);
+    max-width: calc(100vw - 1rem);
+    max-height: calc(100dvh - 1rem);
+    margin-top: 0.5rem;
+    padding: var(--modal-pad);
+    border-radius: var(--radius-box);
+  }
+}
+.modal-top > .modal-box .modal-action {
+  position: sticky;
+  /* A sticky box keeps clear of its scroller's padding, so without this the
+     row would rise by the padding and cover the last field of every short
+     dialog; it sits in that padding instead. */
+  bottom: calc(-1 * var(--modal-pad));
+  /* Above the floating labels of the fields, which daisyUI lifts to 1. */
+  z-index: 2;
+  margin-inline: calc(-1 * var(--modal-pad));
+  margin-bottom: calc(-1 * var(--modal-pad));
+  border-top: 1px solid transparent;
+  background: var(--color-base-100);
+  padding: 0.75rem var(--modal-pad) var(--modal-pad);
+}
+@supports (animation-timeline: scroll()) {
+  .modal-top > .modal-box .modal-action {
+    animation: modal-more linear both;
+    animation-timeline: scroll(nearest block);
+  }
+  @keyframes modal-more {
+    from {
+      border-top-color: var(--color-base-300);
+      box-shadow: 0 -10px 12px -10px rgb(0 0 0 / 0.3);
+    }
+    to {
+      border-top-color: transparent;
+      box-shadow: none;
+    }
+  }
+}
+/* A dialog placed by the button that opened it, as a menu would be: the page
+   around it stays as it is, and the box does not slide in from elsewhere. */
+.modal.modal-anchored[open] {
+  background-color: transparent;
+}
+.modal.modal-anchored > .modal-box {
+  --modal-pad: 1rem;
+  padding: var(--modal-pad);
+  translate: 0;
+  scale: 1;
+  box-shadow: 0 10px 30px -8px rgb(0 0 0 / 0.35);
+  border: 1px solid var(--color-base-300);
+}
+
+/* A field in a dialog shrinks with the dialog instead of holding it wider than
+   the screen: a field's own width - a date field's on a phone above all - is
+   otherwise the least a row of the form can be. */
+.modal-box :where(input, select, textarea) {
+  min-width: 0;
+}
+/* A fieldset is as wide as its widest content unless told otherwise. */
+fieldset {
+  min-width: 0;
+}
+
+/* A tag is a pill in its own colour. The palette holds keys rather than
+   values, so a tag reads alike in both themes: its pill is the colour mixed
+   into the page's own. */
+.tag-red { --tag: #dc2626; }
+.tag-orange { --tag: #ea580c; }
+.tag-amber { --tag: #d97706; }
+.tag-green { --tag: #16a34a; }
+.tag-teal { --tag: #0d9488; }
+.tag-sky { --tag: #0284c7; }
+.tag-blue { --tag: #2563eb; }
+.tag-violet { --tag: #7c3aed; }
+.tag-pink { --tag: #db2777; }
+.tag-gray { --tag: #6b7280; }
+.tag-yellow { --tag: #ca8a04; }
+.tag-emerald { --tag: #059669; }
+.tag-indigo { --tag: #4f46e5; }
+.tag-fuchsia { --tag: #c026d3; }
+.tag-lime { --tag: #65a30d; }
+.tag-cyan { --tag: #0891b2; }
+.tag-purple { --tag: #9333ea; }
+.tag-rose { --tag: #e11d48; }
+.tag-brown { --tag: #92400e; }
+.tag-pill {
+  border-color: color-mix(in oklab, var(--tag) 45%, transparent);
+  background: color-mix(in oklab, var(--tag) 18%, transparent);
+  color: color-mix(in oklab, var(--tag) 70%, var(--color-base-content));
+}
+/* The colour itself, as a swatch to choose it by. */
+.tag-swatch {
+  background: var(--tag);
+}
+/* A packing category takes a colour of the same palette, muted: the card is
+   barely tinted and edged in it, and its icon sits on a stronger tint. */
+.packing-card {
+  border-color: color-mix(in oklab, var(--tag) 30%, var(--color-base-300));
+  background: color-mix(in oklab, var(--tag) 6%, var(--color-base-100));
+}
+.packing-badge {
+  background: color-mix(in oklab, var(--tag) 18%, var(--color-base-100));
+  color: color-mix(in oklab, var(--tag) 80%, var(--color-base-content));
+}
+
+/* Two thumbs on one bar, for a range of days: two range inputs laid over each
+   other, transparent but for their thumbs. A layer above takes the pointer, so
+   the inputs keep only the keyboard. */
+.days-range {
+  --days-thumb: 1.25rem;
+}
+.days-range-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  appearance: none;
+  background: transparent;
+  pointer-events: none;
+}
+.days-range-input::-webkit-slider-runnable-track {
+  background: transparent;
+}
+.days-range-input::-moz-range-track {
+  background: transparent;
+}
+.days-range-input::-webkit-slider-thumb {
+  appearance: none;
+  width: var(--days-thumb);
+  height: var(--days-thumb);
+  border: 2px solid var(--color-primary);
+  border-radius: 50%;
+  background: var(--color-base-100);
+}
+.days-range-input::-moz-range-thumb {
+  width: var(--days-thumb);
+  height: var(--days-thumb);
+  box-sizing: border-box;
+  border: 2px solid var(--color-primary);
+  border-radius: 50%;
+  background: var(--color-base-100);
+}
+
+/* The speed a line is walked at: a bar running from green, a stroll, to red, a
+   run, under a round thumb. The marks below it are placed by the thumb's
+   width, which the browser keeps inside the bar at both ends. */
+.speed-slider {
+  --speed-thumb: 1.25rem;
+}
+.speed-range {
+  appearance: none;
+  width: 100%;
+  height: var(--speed-thumb);
+  background: transparent;
+  cursor: pointer;
+}
+.speed-range::-webkit-slider-runnable-track {
+  height: 0.5rem;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--color-success), var(--color-warning) 60%, var(--color-error));
+}
+.speed-range::-moz-range-track {
+  height: 0.5rem;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--color-success), var(--color-warning) 60%, var(--color-error));
+}
+.speed-range::-webkit-slider-thumb {
+  appearance: none;
+  width: var(--speed-thumb);
+  height: var(--speed-thumb);
+  margin-top: calc((0.5rem - var(--speed-thumb)) / 2);
+  border: 2px solid var(--color-base-content);
+  border-radius: 50%;
+  background: var(--color-base-100);
+}
+.speed-range::-moz-range-thumb {
+  width: var(--speed-thumb);
+  height: var(--speed-thumb);
+  box-sizing: border-box;
+  border: 2px solid var(--color-base-content);
+  border-radius: 50%;
+  background: var(--color-base-100);
 }

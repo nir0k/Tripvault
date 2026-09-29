@@ -144,17 +144,64 @@ export interface PageResponse<T> {
   next_cursor: string | null
 }
 
-export type TravelMode = 'walk' | 'car' | 'bike' | 'transit' | 'flight' | 'cable_car' | 'other'
+export type TravelMode =
+  | 'walk' | 'car' | 'bike' | 'transit' | 'bus' | 'train' | 'tram' | 'ferry' | 'flight' | 'cable_car' | 'other'
 
-export const TRAVEL_MODES: readonly TravelMode[] = ['walk', 'car', 'bike', 'transit', 'flight', 'cable_car', 'other']
+export const TRAVEL_MODES: readonly TravelMode[] = [
+  'walk', 'car', 'bike', 'transit', 'bus', 'train', 'tram', 'ferry', 'flight', 'cable_car', 'other',
+]
 
 export type TripRole = 'owner' | 'editor' | 'viewer'
 
 export type MemberRole = Exclude<TripRole, 'owner'>
 
-export type TripStatus = 'upcoming' | 'ongoing' | 'completed'
+/**
+ * TripStatus is where a plan stands: upcoming, ongoing and overdue follow its
+ * dates while it is open, completed and cancelled are set by hand. A report has
+ * none.
+ */
+export type TripStatus = 'upcoming' | 'ongoing' | 'overdue' | 'completed' | 'cancelled'
+
+/** PlanState is how a plan is closed by hand; null opens it again. */
+export type PlanState = 'completed' | 'cancelled'
 
 export type DocumentKind = 'plan' | 'report'
+
+/** TagColor is a colour of the palette tags and packing categories are drawn in. */
+export type TagColor =
+  | 'red' | 'orange' | 'amber' | 'green' | 'teal' | 'sky' | 'blue' | 'violet' | 'pink' | 'gray'
+  | 'yellow' | 'emerald' | 'indigo' | 'fuchsia' | 'lime' | 'cyan' | 'purple' | 'rose' | 'brown'
+
+/**
+ * TAG_COLORS is the palette in the order the server gives it to what is made
+ * without a colour, neighbours far apart in hue.
+ */
+export const TAG_COLORS: readonly TagColor[] = [
+  'red', 'orange', 'amber', 'green', 'teal', 'sky', 'blue', 'violet', 'pink', 'gray',
+  'yellow', 'emerald', 'indigo', 'fuchsia', 'lime', 'cyan', 'purple', 'rose', 'brown',
+]
+
+/** TAG_COLOR_CHOICES is the palette as it is chosen from: round the colour wheel, the neutrals last. */
+export const TAG_COLOR_CHOICES: readonly TagColor[] = [
+  'red', 'rose', 'pink', 'fuchsia', 'purple', 'violet', 'indigo', 'blue', 'sky', 'cyan',
+  'teal', 'emerald', 'green', 'lime', 'yellow', 'amber', 'orange', 'brown', 'gray',
+]
+
+/** TripTag is one of the reader's own tags as a trip wears it. */
+export interface TripTag {
+  id: string
+  name: string
+  color: TagColor
+}
+
+/** Tag is one of the reader's own tags, as the list of them shows it. */
+export interface Tag extends TripTag {
+  /** How many of the trips the reader can open wear it. */
+  trip_count: number
+  /** How many of the reader's ideas wear it. */
+  idea_count: number
+  created_at: string
+}
 
 /** TripUser identifies a person inside a trip. */
 export interface TripUser {
@@ -172,6 +219,11 @@ export interface Trip {
   kind: DocumentKind
   /** The plan a report was copied from, when the reader may open it. */
   source_trip_id: string | null
+  /**
+   * Whether a report was copied from a plan, even one since deleted; a place
+   * added to it arrives marked as not planned.
+   */
+  from_plan: boolean
   title: string
   summary: string
   /** YYYY-MM-DD; a trip always has a period. */
@@ -182,7 +234,8 @@ export interface Trip {
   travelers: number
   /** Decimal string in the trip currency, such as "1240.50". */
   budget_amount: string | null
-  status: TripStatus
+  /** Where a plan stands; absent for a report. */
+  status?: TripStatus
   day_count: number
   /** The reader's role. */
   role: TripRole
@@ -201,6 +254,10 @@ export interface Trip {
   translations: TripTranslations
   created_at: string
   updated_at: string
+  /** The reader's own tags on the trip, by name; nobody else sees them. */
+  tags: TripTag[]
+  /** The speed on the flat, in km/h, a plan's lines are timed at unless a line names its own. */
+  track_speed_kmh: number
 }
 
 /**
@@ -329,10 +386,11 @@ export const ACTIVITY_TYPES: readonly ActivityType[] = [
   'hike', 'walk', 'bike', 'run', 'canyoning', 'climbing', 'via_ferrata', 'kayak', 'swim', 'ski', 'tour', 'other',
 ]
 
-export type PlaceCategory = 'sight' | 'nature' | 'museum' | 'food' | 'shopping' | 'activity' | 'transport' | 'other'
+export type PlaceCategory =
+  | 'sight' | 'nature' | 'museum' | 'food' | 'shopping' | 'activity' | 'transport' | 'parking' | 'other'
 
 export const PLACE_CATEGORIES: readonly PlaceCategory[] = [
-  'sight', 'nature', 'museum', 'food', 'shopping', 'activity', 'transport', 'other',
+  'sight', 'nature', 'museum', 'food', 'shopping', 'activity', 'transport', 'parking', 'other',
 ]
 
 /**
@@ -415,6 +473,13 @@ export interface Track {
   descent_m: number | null
   /** The thinned line, in the encoded polyline format legs use. */
   geometry: string
+  /**
+   * How many metres of the line run at each slope, in whole percent from -50
+   * (index 0) to +50 (index 100); null when the file records no heights.
+   */
+  grades: number[] | null
+  /** The speed on the flat the line is timed at, in km/h; null takes the plan's. */
+  speed_kmh: number | null
   /** The first and last moment the file records; null when it records no time. */
   started_at: string | null
   ended_at: string | null
@@ -505,6 +570,52 @@ export interface Leg {
   via: GeoPoint[]
   /** A route chosen among the alternatives, kept until the leg changes. */
   route_pinned: boolean
+  /**
+   * The parts of a journey with changes, in order; empty for a leg travelled
+   * one way. The leg's own figures, line, cost and source are then worked out
+   * from them.
+   */
+  segments: LegSegment[]
+  /** What the parts of a journey with changes were paid with. */
+  tickets: LegTicket[]
+}
+
+/** LegSegment is one part of a journey with changes. */
+export interface LegSegment {
+  id: string
+  mode: TravelMode
+  distance_m: number | null
+  duration_s: number | null
+  calculated_distance_m: number | null
+  calculated_duration_s: number | null
+  manual_distance: boolean
+  manual_duration: boolean
+  /** Encoded polyline, precision 5. */
+  geometry: string
+  source: LegSource
+  error: Leg['error']
+  /** The ticket the part travels on, or null. */
+  ticket_id: string | null
+  /** The change where the part ends; null for the last part. */
+  stop: LegStop | null
+}
+
+/** LegStop is a change on the way: a station, a stop, a pier. */
+export interface LegStop {
+  name: string
+  lat: number | null
+  lng: number | null
+  /** The time spent there before the next part leaves. */
+  wait_minutes: number
+}
+
+/** LegTicket is what one or more parts of a journey with changes were paid with. */
+export interface LegTicket {
+  id: string
+  name: string
+  planned_cost_amount: string | null
+  /** What it really cost. Report only. */
+  actual_cost_amount: string | null
 }
 
 /** RoutePreference is what a road route is optimised for. */
@@ -706,6 +817,8 @@ export interface ShareLink {
   /** The owner's own note, such as "For my parents". */
   label: string
   include_private_media: boolean
+  /** Whether the link may save the pictures, one by one or as an archive. */
+  allow_download: boolean
   /** When the link stops working; null never expires. */
   expires_at: string | null
   last_used_at: string | null
@@ -727,12 +840,15 @@ export interface SharedTrip {
   timezone: string
   currency: string
   travelers: number
-  status: TripStatus
+  /** Where a plan stands; absent for a report. */
+  status?: TripStatus
   day_count: number
   owner_name: string
   /** A report's languages, the original first. */
   languages: string[]
   translations: TripTranslations
+  /** The speed a plan's lines are timed at unless a line names its own. */
+  track_speed_kmh: number
 }
 
 /** Shared is what a share token opens. */
@@ -742,6 +858,8 @@ export interface Shared {
   /** What the trip holds, and so what the link opens. */
   kind: DocumentKind
   include_private_media: boolean
+  /** Whether the link may save the pictures. */
+  allow_download: boolean
 }
 
 /** BudgetEntryKind says what carries a cost. */
@@ -868,3 +986,140 @@ export interface RemovedDay {
   date: string | null
   title: string
 }
+
+/** PackingIcon is a key of the fixed set of icons a packing category is shown with. */
+export type PackingIcon =
+  | 'documents' | 'tickets' | 'cards' | 'money' | 'coins' | 'keys' | 'work' | 'clothes' | 'bags' | 'luggage'
+  | 'glasses' | 'rain' | 'first_aid' | 'medicine' | 'thermometer' | 'hygiene' | 'health' | 'cosmetics'
+  | 'electronics' | 'phone' | 'chargers' | 'power_bank' | 'headphones' | 'camera' | 'flash_drive' | 'watch'
+  | 'games' | 'food' | 'snacks' | 'drinks' | 'groceries' | 'books' | 'music' | 'drawing' | 'toys' | 'gifts'
+  | 'kids' | 'sport' | 'swimming' | 'beach' | 'snow' | 'camping' | 'lamp' | 'compass' | 'map' | 'binoculars'
+  | 'hiking' | 'sleep' | 'nature' | 'gear' | 'flight' | 'train' | 'bus' | 'car' | 'fuel' | 'home' | 'tools'
+  | 'stationery' | 'shopping' | 'other'
+
+/**
+ * PACKING_ICON_KEYS is the set in the order it is chosen from: things that go
+ * together stand together, documents first and the catch-all last.
+ */
+export const PACKING_ICON_KEYS: readonly PackingIcon[] = [
+  'documents', 'tickets', 'cards', 'money', 'coins', 'keys', 'work', 'clothes', 'bags', 'luggage', 'glasses',
+  'rain', 'first_aid', 'medicine', 'thermometer', 'hygiene', 'health', 'cosmetics', 'electronics', 'phone',
+  'chargers', 'power_bank', 'headphones', 'camera', 'flash_drive', 'watch', 'games', 'food', 'snacks',
+  'drinks', 'groceries', 'books', 'music', 'drawing', 'toys', 'gifts', 'kids', 'sport', 'swimming', 'beach',
+  'snow', 'camping', 'lamp', 'compass', 'map', 'binoculars', 'hiking', 'sleep', 'nature', 'gear', 'flight',
+  'train', 'bus', 'car', 'fuel', 'home', 'tools', 'stationery', 'shopping', 'other',
+]
+
+/**
+ * PackingCategory is one heading of a plan's packing list, named by the trip.
+ * Its colour, a key of the tags' palette, and its icon only tell it apart.
+ */
+export interface PackingCategory {
+  id: string
+  name: string
+  color: TagColor
+  icon: PackingIcon
+  position: number
+}
+
+/** PackingItem is one thing to take; one tick serves the whole group. */
+export interface PackingItem {
+  id: string
+  /** Null for an item without a category, listed after the categories. */
+  category_id: string | null
+  name: string
+  quantity: number
+  note: string
+  packed: boolean
+  /** The member who brings it; always null through a read-only link. */
+  bringer_id: string | null
+  position: number
+}
+
+/** PackingList is a plan's whole list, with how much of it is packed. */
+export interface PackingList {
+  categories: PackingCategory[]
+  items: PackingItem[]
+  packed: number
+  total: number
+}
+
+/** VisaRequirement says whether a visa is needed to go; on_arrival is one got online or at the border. */
+export type VisaRequirement = 'unknown' | 'not_needed' | 'needed' | 'on_arrival'
+
+/** VISA_REQUIREMENTS lists them in the order they are offered. */
+export const VISA_REQUIREMENTS: readonly VisaRequirement[] = ['not_needed', 'on_arrival', 'needed', 'unknown']
+
+/** IdeaCost is one part of an idea's rough cost besides getting there, which each way prices itself. */
+export type IdeaCost = 'stay' | 'food' | 'other'
+
+/** IDEA_COSTS lists the parts of an idea's cost in the order they are shown. */
+export const IDEA_COSTS: readonly IdeaCost[] = ['stay', 'food', 'other']
+
+/** IdeaCosts are the rough costs of an idea's whole trip as decimal strings; null while unknown. */
+export type IdeaCosts = Record<IdeaCost, string | null>
+
+/** IdeaPhoto is one picture of an idea, as big as it is kept. */
+export interface IdeaPhoto {
+  id: string
+  width: number
+  height: number
+}
+
+/** IdeaPlace is one place an idea goes to: a name, and a point when one was found. */
+export interface IdeaPlace {
+  name: string
+  lat: number | null
+  lng: number | null
+}
+
+/**
+ * IdeaTransport is one way of getting there, an alternative to the others:
+ * one way of travelling, or several mixed along one route.
+ */
+export interface IdeaTransport {
+  modes: TravelMode[]
+  /** A decimal string; null while unknown. */
+  cost: string | null
+  minutes: number | null
+}
+
+/**
+ * Idea is somewhere the reader would like to go one day. It is the reader's
+ * own, like a tag, and not a trip: a plan is made from it when the time comes.
+ */
+export interface Idea {
+  id: string
+  title: string
+  /** ISO 3166-1 alpha-2 codes, the main country first. */
+  countries: string[]
+  places: IdeaPlace[]
+  /** The idea's pictures in their order, read from /ideas/{id}/photos/{photoId}. */
+  photos: IdeaPhoto[]
+  /** The best months for going, 1 to 12; none is not said. */
+  months: number[]
+  days_min: number | null
+  days_max: number | null
+  /** The best length, between the two. */
+  days_ideal: number | null
+  description_md: string
+  currency: string
+  costs: IdeaCosts
+  transports: IdeaTransport[]
+  /** The cheapest and the dearest way of getting there; null while none is priced. */
+  transport_min: string | null
+  transport_max: string | null
+  /** The whole trip with the cheapest and with the dearest way; null while nothing is priced. */
+  cost_min: string | null
+  cost_max: string | null
+  visa: VisaRequirement
+  tags: TripTag[]
+  created_at: string
+  updated_at: string
+}
+
+/** IdeaFields are the fields an idea is saved with, all of them at once. */
+export type IdeaFields = Omit<
+  Idea, 'id' | 'photos' | 'transport_min' | 'transport_max' | 'cost_min' | 'cost_max' | 'tags' | 'created_at'
+  | 'updated_at'
+>

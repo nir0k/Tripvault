@@ -4,6 +4,7 @@ go 1.27.0
 
 require (
 	filippo.io/age v1.3.2
+	github.com/boombuler/barcode v1.1.0
 	github.com/caarlos0/env/v11 v11.4.1
 	github.com/davidbyttow/govips/v2 v2.19.0
 	github.com/go-chi/chi/v5 v5.3.2

@@ -196,8 +196,8 @@ func writeTripMap(doc *document, text labels, report Report) error {
 // travelModeOrder is the order the means of travel are listed in, so two reports
 // of the same trip do not shuffle their rows between renders.
 var travelModeOrder = []domain.TravelMode{
-	domain.ModeWalk, domain.ModeCar, domain.ModeBike,
-	domain.ModeTransit, domain.ModeFlight, domain.ModeCableCar, domain.ModeOther,
+	domain.ModeWalk, domain.ModeCar, domain.ModeBike, domain.ModeTransit, domain.ModeBus, domain.ModeTrain,
+	domain.ModeTram, domain.ModeFerry, domain.ModeFlight, domain.ModeCableCar, domain.ModeOther,
 }
 
 // writeDay writes one day: what it was called, what was recorded, where it went
@@ -314,20 +314,34 @@ func writePlace(doc *document, text labels, report Report, place domain.Item, na
 	}
 }
 
-// trackNote says how far a recording went and, when the file had heights, how
-// much it climbed and descended.
+// trackNote says how far a recording went, how long it took when its points
+// carry time, and, when the file had heights, how much it climbed and descended.
 func trackNote(text labels, track *domain.Track) string {
-	note := fmt.Sprintf(text.track, text.distanceOf(track.DistanceM))
+	note := fmt.Sprintf(text.track, text.trackDistanceOf(track.DistanceM))
+	if elapsed := track.Elapsed(); elapsed != nil {
+		note += separator + fmt.Sprintf(text.trackTime, elapsedClock(*elapsed))
+	}
 	if track.AscentM != nil && track.DescentM != nil {
 		note += separator + fmt.Sprintf(text.climb, text.heightOf(*track.AscentM), text.heightOf(*track.DescentM))
 	}
 	return note
 }
 
+// elapsedClock writes a length of time as a watch does: hours, minutes and
+// seconds, "4:57:51".
+func elapsedClock(elapsed time.Duration) string {
+	seconds := int(elapsed.Round(time.Second).Seconds())
+	return fmt.Sprintf("%d:%02d:%02d", seconds/3600, seconds%3600/60, seconds%60)
+}
+
 // writeLeg writes the journey from one place to the next, naming where it
-// started when origin is not empty.
+// started when origin is not empty. A journey with changes names each part and
+// each change in turn before its totals.
 func writeLeg(doc *document, text labels, report Report, leg domain.Leg, origin string) {
 	parts := []string{text.modes[string(leg.Mode)]}
+	if leg.Composite() {
+		parts = []string{legChain(text, leg)}
+	}
 	if distance := leg.Distance(); distance != nil {
 		parts = append(parts, text.distanceOf(*distance))
 	}
@@ -344,6 +358,22 @@ func writeLeg(doc *document, text labels, report Report, leg domain.Leg, origin 
 		parts = append(parts, fmt.Sprintf(text.legFrom, origin))
 	}
 	doc.note(arrowMark + "  " + strings.Join(parts, ", "))
+}
+
+// legChain writes the parts of a journey with changes as one line: each way
+// of travelling with its time, and the changes between them.
+func legChain(text labels, leg domain.Leg) string {
+	var chain strings.Builder
+	for index, segment := range leg.Segments {
+		chain.WriteString(text.modes[string(segment.Mode)])
+		if duration := segment.Duration(); duration != nil {
+			chain.WriteString(" " + text.duration(*duration))
+		}
+		if index < len(leg.Segments)-1 {
+			chain.WriteString(" " + arrowMark + " " + segment.StopName + " " + arrowMark + " ")
+		}
+	}
+	return chain.String()
 }
 
 // originOf names the element a leg starts at: a place by its name, a stay mark

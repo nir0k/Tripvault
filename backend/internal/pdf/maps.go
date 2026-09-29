@@ -164,6 +164,17 @@ func dayLayer(content domain.DocumentContent, day domain.Day, index int, numbere
 		if leg == nil {
 			continue
 		}
+		// A journey with changes is drawn part by part, each dashed unless it
+		// follows roads.
+		if leg.Composite() {
+			for _, segment := range leg.Segments {
+				if points := domain.DecodePolyline(segment.Geometry, 5); len(points) >= 2 {
+					layer.lines = append(layer.lines, mapLine{points: points, color: color,
+						dashed: segment.Source != domain.LegProvider})
+				}
+			}
+			continue
+		}
 		if points := legPoints(*leg, everything, stays, content.Tracks); len(points) >= 2 {
 			layer.lines = append(layer.lines, mapLine{points: points, color: color, dashed: leg.Source != domain.LegProvider})
 		}

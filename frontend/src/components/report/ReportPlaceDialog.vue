@@ -19,6 +19,8 @@ import { normalizeAmount } from '@/utils/format'
 defineProps<{
   /** Ranks place search results near this point first. */
   focus: { lat: number; lng: number } | null
+  /** The report was copied from a plan, so a new place is one it did not have. */
+  fromPlan: boolean
 }>()
 
 const emit = defineEmits<{
@@ -116,8 +118,8 @@ const trackable = computed(() => form.kind === 'activity')
 // or the one the activity already has.
 const timesFromTrack = computed(() => trackable.value && (track.value !== null || editing.value?.track != null))
 
-// submit collects the fields and hands them to the page. A place created here
-// was never in the plan, so it is marked as such.
+// submit collects the fields and hands them to the page. A new place carries no
+// status: the server marks it as not planned when the report has a plan.
 function submit(): void {
   emit('save', {
     kind: form.kind,
@@ -132,7 +134,6 @@ function submit(): void {
     actual_end_time: form.actualEndTime || null,
     actual_cost_amount: normalizeAmount(form.actualCost),
     cost_per_person: form.perPerson,
-    ...(editing.value ? {} : { status: 'unplanned' as const }),
   }, editing.value, trackable.value ? track.value : null)
 }
 
@@ -140,10 +141,10 @@ defineExpose({ open, close, fail })
 </script>
 
 <template>
-  <dialog ref="dialog" class="modal modal-bottom sm:modal-middle">
+  <dialog ref="dialog" class="modal modal-top sm:modal-middle">
     <form class="modal-box flex max-h-[90dvh] flex-col gap-3 overflow-y-auto" @submit.prevent="submit">
-      <h2 class="text-lg font-bold">{{ editing ? t('report.editPlace') : t('report.newPlace') }}</h2>
-      <p v-if="!editing" class="text-sm text-base-content/70">{{ t('report.newPlaceHint') }}</p>
+      <h2 class="text-lg font-bold">{{ editing ? t('report.editPlace') : fromPlan ? t('report.newPlace') : t('report.addedPlace') }}</h2>
+      <p v-if="!editing && fromPlan" class="text-sm text-base-content/70">{{ t('report.newPlaceHint') }}</p>
 
       <PlaceKindFields v-model:kind="form.kind" v-model:category="form.category" v-model:activity-type="form.activityType" />
       <label class="flex flex-col gap-1">

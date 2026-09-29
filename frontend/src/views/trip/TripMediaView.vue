@@ -109,6 +109,10 @@ const more = useTemplateRef<HTMLElement>('more')
 
 const trip = computed(() => store.trip)
 const canEdit = computed(() => trip.value?.role === 'owner' || trip.value?.role === 'editor')
+// canSelect lets the reader pick pictures: to change them, or to download them
+// where downloading is allowed - always for a member, for a link when its owner
+// allowed it.
+const canSelect = computed(() => canEdit.value || store.canDownload)
 // Only a report has favourites: they are the pictures it shows for a day or a place.
 const isReport = computed(() => trip.value?.kind === 'report')
 const document = computed(() => documents.value[0] ?? null)
@@ -377,6 +381,36 @@ function open(tile: Tile): void {
 const selectedMedia = computed(() => [...new Map(order.value
   .filter((picture) => selected.value.has(picture.id))
   .map((picture) => [picture.id, picture])).values()])
+
+// downloading is true while a download is being asked for.
+const downloading = ref(false)
+
+// download hands pictures to the browser to download: one as its own file,
+// several as an archive, in the order the page lays them out.
+async function download(pictures: Media[]): Promise<boolean> {
+  const current = trip.value
+  if (!current || downloading.value || pictures.length === 0) {
+    return false
+  }
+  downloading.value = true
+  error.value = ''
+  try {
+    await mediaApi.startDownload(store.shared ? null : current.id, pictures.map((picture) => picture.id))
+    return true
+  } catch (err) {
+    error.value = errorMessage(err, t, te)
+    return false
+  } finally {
+    downloading.value = false
+  }
+}
+
+// downloadSelected downloads the picked pictures and lets go of them.
+async function downloadSelected(): Promise<void> {
+  if (await download(selectedMedia.value)) {
+    clearSelection()
+  }
+}
 
 // anchor is the tile picked last, where a range picked with Shift starts.
 const anchor = ref<number | null>(null)
@@ -650,7 +684,7 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
       <section v-for="section in laidOut" :key="section.key" class="space-y-3">
         <h2 class="flex items-center gap-2 border-b border-base-300 pb-1 text-base font-semibold">
           <button
-            v-if="canEdit"
+            v-if="canSelect"
             type="button"
             class="flex size-5 shrink-0 items-center justify-center rounded-full border"
             :class="coverageClass(coverage(section.key))"
@@ -665,7 +699,7 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
         <div v-for="group in section.groups" :key="group.key" class="space-y-2">
           <h3 v-if="group.label" class="flex items-center gap-1 text-sm font-medium text-base-content/70">
             <button
-              v-if="canEdit"
+              v-if="canSelect"
               type="button"
               class="me-1 flex size-4 shrink-0 items-center justify-center rounded-full border"
               :class="coverageClass(coverage(group.key))"
@@ -709,7 +743,7 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
                 <!-- The circle appears under the pointer, and stays out where there
                    is no pointer to hover with or something is already picked. -->
                 <button
-                  v-if="canEdit"
+                  v-if="canSelect"
                   type="button"
                   class="absolute start-1 top-1 flex size-6 items-center justify-center rounded-full border border-base-300 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
                   :class="selected.has(tile.picture.id)
@@ -742,7 +776,7 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
                   />
                 </span>
 
-                <details v-if="canEdit" class="dropdown dropdown-end absolute end-1 top-1">
+                <details v-if="canSelect" class="dropdown dropdown-end absolute end-1 top-1">
                   <summary class="btn btn-square btn-xs" :aria-label="t('media.actions')">
                     <AppIcon name="dots" />
                   </summary>
@@ -750,51 +784,59 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
                     class="menu dropdown-content z-20 w-60 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
                     @click="closeMenu"
                   >
-                    <li>
-                      <button
-                        type="button"
-                        :disabled="busy || !document"
-                        :title="document ? undefined : t('media.linkNoDocuments')"
-                        @click="openLinks([tile.picture])"
-                      >
-                        <AppIcon name="calendar" />
-                        {{ t('media.linkAction') }}
+                    <li v-if="store.canDownload">
+                      <button type="button" :disabled="downloading" @click="download([tile.picture])">
+                        <AppIcon name="download" />
+                        {{ t('media.downloadOne') }}
                       </button>
                     </li>
-                    <li>
-                      <button type="button" :disabled="busy" @click="coverCrop?.open(tile.picture.id)">
-                        <AppIcon name="image" />
-                        {{ t('media.setTripCover') }}
-                      </button>
-                    </li>
-                    <li v-if="isReport && group.gallery">
-                      <button
-                        type="button"
-                        :disabled="busy"
-                        @click="setGalleryFavorite(group.gallery, tile.picture, !tile.favorite)"
-                      >
-                        <AppIcon :name="tile.favorite ? 'star' : 'starFill'" />
-                        {{ tile.favorite ? t('media.unsetFavoriteHere') : t('media.setFavoriteHere') }}
-                      </button>
-                    </li>
-                    <li v-else-if="isReport">
-                      <button type="button" :disabled="busy || !document" @click="favoriteLoose([tile.picture])">
-                        <AppIcon name="starFill" />
-                        {{ t('media.setFavorite') }}
-                      </button>
-                    </li>
-                    <li>
-                      <button type="button" :disabled="busy" @click="setPrivacy(tile.picture, !tile.picture.is_private)">
-                        <AppIcon :name="tile.picture.is_private ? 'eye' : 'eyeSlash'" />
-                        {{ tile.picture.is_private ? t('media.makePublic') : t('media.makePrivate') }}
-                      </button>
-                    </li>
-                    <li>
-                      <button type="button" class="text-error" :disabled="busy" @click="remove(tile.picture)">
-                        <AppIcon name="trash" />
-                        {{ t('media.remove') }}
-                      </button>
-                    </li>
+                    <template v-if="canEdit">
+                      <li>
+                        <button
+                          type="button"
+                          :disabled="busy || !document"
+                          :title="document ? undefined : t('media.linkNoDocuments')"
+                          @click="openLinks([tile.picture])"
+                        >
+                          <AppIcon name="calendar" />
+                          {{ t('media.linkAction') }}
+                        </button>
+                      </li>
+                      <li>
+                        <button type="button" :disabled="busy" @click="coverCrop?.open(tile.picture.id)">
+                          <AppIcon name="image" />
+                          {{ t('media.setTripCover') }}
+                        </button>
+                      </li>
+                      <li v-if="isReport && group.gallery">
+                        <button
+                          type="button"
+                          :disabled="busy"
+                          @click="setGalleryFavorite(group.gallery, tile.picture, !tile.favorite)"
+                        >
+                          <AppIcon :name="tile.favorite ? 'star' : 'starFill'" />
+                          {{ tile.favorite ? t('media.unsetFavoriteHere') : t('media.setFavoriteHere') }}
+                        </button>
+                      </li>
+                      <li v-else-if="isReport">
+                        <button type="button" :disabled="busy || !document" @click="favoriteLoose([tile.picture])">
+                          <AppIcon name="starFill" />
+                          {{ t('media.setFavorite') }}
+                        </button>
+                      </li>
+                      <li>
+                        <button type="button" :disabled="busy" @click="setPrivacy(tile.picture, !tile.picture.is_private)">
+                          <AppIcon :name="tile.picture.is_private ? 'eye' : 'eyeSlash'" />
+                          {{ tile.picture.is_private ? t('media.makePublic') : t('media.makePrivate') }}
+                        </button>
+                      </li>
+                      <li>
+                        <button type="button" class="text-error" :disabled="busy" @click="remove(tile.picture)">
+                          <AppIcon name="trash" />
+                          {{ t('media.remove') }}
+                        </button>
+                      </li>
+                    </template>
                   </ul>
                 </details>
               </div>
@@ -809,7 +851,7 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
       </div>
 
       <div
-        v-if="canEdit && selected.size > 0"
+        v-if="canSelect && selected.size > 0"
         ref="selectionBar"
         class="sticky bottom-2 z-30 flex flex-wrap items-center gap-2 rounded-box border border-base-300 bg-base-100 p-3 shadow-lg"
       >
@@ -817,38 +859,52 @@ function applyLinks(pictures: Media[], changes: MediaLinkChange[], favorite: boo
           {{ t('media.selectedCount', { count: selected.size }, { plural: selected.size }) }}
         </span>
         <button
-          type="button"
-          class="btn btn-primary btn-sm"
-          :disabled="busy || !document"
-          :title="document ? undefined : t('media.linkNoDocuments')"
-          @click="openLinks(selectedMedia)"
-        >
-          <AppIcon name="calendar" />
-          {{ t('media.linkAction') }}
-        </button>
-        <button
-          v-if="isReport"
+          v-if="store.canDownload"
           type="button"
           class="btn btn-sm"
-          :disabled="busy || tooManyForReport"
-          :title="tooManyForReport ? t('media.favoriteTooMany') : undefined"
-          @click="setSelectedFavorite"
+          :class="canEdit ? '' : 'btn-primary'"
+          :disabled="downloading"
+          @click="downloadSelected"
         >
-          <AppIcon name="starFill" />
-          {{ t('media.setFavorite') }}
+          <span v-if="downloading" class="loading loading-spinner loading-xs"></span>
+          <AppIcon v-else name="download" />
+          {{ t('media.download') }}
         </button>
-        <button type="button" class="btn btn-sm" :disabled="busy" @click="setSelectedPrivacy(true)">
-          <AppIcon name="eyeSlash" />
-          {{ t('media.makePrivate') }}
-        </button>
-        <button type="button" class="btn btn-sm" :disabled="busy" @click="setSelectedPrivacy(false)">
-          <AppIcon name="eye" />
-          {{ t('media.makePublic') }}
-        </button>
-        <button type="button" class="btn btn-sm btn-error" :disabled="busy" @click="removeSelected">
-          <AppIcon name="trash" />
-          {{ t('media.remove') }}
-        </button>
+        <template v-if="canEdit">
+          <button
+            type="button"
+            class="btn btn-primary btn-sm"
+            :disabled="busy || !document"
+            :title="document ? undefined : t('media.linkNoDocuments')"
+            @click="openLinks(selectedMedia)"
+          >
+            <AppIcon name="calendar" />
+            {{ t('media.linkAction') }}
+          </button>
+          <button
+            v-if="isReport"
+            type="button"
+            class="btn btn-sm"
+            :disabled="busy || tooManyForReport"
+            :title="tooManyForReport ? t('media.favoriteTooMany') : undefined"
+            @click="setSelectedFavorite"
+          >
+            <AppIcon name="starFill" />
+            {{ t('media.setFavorite') }}
+          </button>
+          <button type="button" class="btn btn-sm" :disabled="busy" @click="setSelectedPrivacy(true)">
+            <AppIcon name="eyeSlash" />
+            {{ t('media.makePrivate') }}
+          </button>
+          <button type="button" class="btn btn-sm" :disabled="busy" @click="setSelectedPrivacy(false)">
+            <AppIcon name="eye" />
+            {{ t('media.makePublic') }}
+          </button>
+          <button type="button" class="btn btn-sm btn-error" :disabled="busy" @click="removeSelected">
+            <AppIcon name="trash" />
+            {{ t('media.remove') }}
+          </button>
+        </template>
         <button type="button" class="btn btn-ghost btn-sm" :disabled="selected.size === order.length" @click="pickEverything">
           {{ t('media.selectAll') }}
         </button>

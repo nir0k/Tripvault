@@ -5,8 +5,13 @@ import type { PlanDay, PlanItem } from '@/api/types'
 import { formatDayDate } from '@/utils/format'
 
 // Asks which day a place moves or is copied to. It is how places change days
-// where dragging is not available, and how an unassigned place gets a day.
-const props = defineProps<{ days: PlanDay[] }>()
+// where dragging is not available, and how an unassigned place gets a day. A
+// report keeps no list of unassigned places, so there it offers days only.
+const props = withDefaults(defineProps<{
+  days: PlanDay[]
+  /** Offer the list of places without a day as a target. */
+  unassigned?: boolean
+}>(), { unassigned: true })
 
 const emit = defineEmits<{
   choose: [item: PlanItem, mode: 'move' | 'copy', dayId: string | null]
@@ -24,7 +29,7 @@ const target = ref('')
 function open(next: PlanItem, nextMode: 'move' | 'copy'): void {
   item.value = next
   mode.value = nextMode
-  target.value = props.days.find((day) => day.id !== next.day_id)?.id ?? ''
+  target.value = props.days.find((day) => day.id !== next.day_id)?.id ?? (props.unassigned ? '' : props.days[0]?.id ?? '')
   dialog.value?.showModal()
 }
 
@@ -52,14 +57,14 @@ defineExpose({ open })
 </script>
 
 <template>
-  <dialog ref="dialog" class="modal modal-bottom sm:modal-middle">
+  <dialog ref="dialog" class="modal modal-top sm:modal-middle">
     <form class="modal-box flex flex-col gap-3" @submit.prevent="submit">
       <h2 class="text-lg font-bold">{{ mode === 'move' ? t('plan.moveTitle', { name: item?.name ?? '' }) : t('plan.copyTitle', { name: item?.name ?? '' }) }}</h2>
       <select v-model="target" class="select w-full" :aria-label="t('plan.targetDay')">
         <option v-for="day in days" :key="day.id" :value="day.id" :disabled="mode === 'move' && day.id === item?.day_id">
           {{ dayLabel(day) }}
         </option>
-        <option value="" :disabled="mode === 'move' && item?.day_id === null">{{ t('plan.unassigned') }}</option>
+        <option v-if="unassigned" value="" :disabled="mode === 'move' && item?.day_id === null">{{ t('plan.unassigned') }}</option>
       </select>
       <div class="modal-action">
         <button type="button" class="btn btn-ghost" @click="dialog?.close()">{{ t('common.cancel') }}</button>

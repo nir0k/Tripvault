@@ -1,5 +1,5 @@
 // Package routing calculates legs: road routes from a provider, great-circle
-// lines for flights and cable cars, and estimates when the provider cannot answer. Only the
+// lines for flights, cable cars, trains and ferries, and estimates when the provider cannot answer. Only the
 // backend talks to the provider; its key never reaches a browser.
 package routing
 
@@ -39,8 +39,8 @@ const (
 
 // Profile - names the profile a road mode is routed with.
 //
-// Public transport has no profile of its own: it follows the car route as an
-// approximation, and the interface says so.
+// Public transport and buses have no profile of their own: they follow the car
+// route as an approximation, and the interface says so.
 //
 // Arguments:
 //   - mode: the travel mode.
@@ -53,7 +53,7 @@ func Profile(mode domain.TravelMode) (string, bool) {
 		return profileWalk, true
 	case domain.ModeBike:
 		return profileBike, true
-	case domain.ModeCar, domain.ModeTransit:
+	case domain.ModeCar, domain.ModeTransit, domain.ModeBus:
 		return profileCar, true
 	default:
 		return "", false
@@ -70,6 +70,7 @@ var estimates = map[domain.TravelMode]struct {
 	domain.ModeBike:    {1.25, 15},
 	domain.ModeCar:     {1.3, 60},
 	domain.ModeTransit: {1.3, 45},
+	domain.ModeBus:     {1.3, 45},
 }
 
 // Flight estimate: cruising speed plus the time spent getting up and down.
@@ -84,6 +85,21 @@ const (
 	cableCarSpeedKmH       = 15
 	cableCarOverheadSecond = 5 * 60
 )
+
+// straightSpeeds holds, for the modes drawn as a straight line, a speed along
+// it and the time spent getting on and off, so a leg has a time until somebody
+// types the real one: a train, a metro or a tram, a ferry, a cable car - the
+// wait at the station and the boarding - and a flight - getting up and down.
+var straightSpeeds = map[domain.TravelMode]struct {
+	speedKmH        float64
+	overheadSeconds int
+}{
+	domain.ModeFlight:   {flightSpeedKmH, flightOverheadSecond},
+	domain.ModeCableCar: {cableCarSpeedKmH, cableCarOverheadSecond},
+	domain.ModeTrain:    {80, 10 * 60},
+	domain.ModeTram:     {25, 5 * 60},
+	domain.ModeFerry:    {25, 15 * 60},
+}
 
 // Result is a calculated leg, ready to be stored.
 type Result = domain.LegCalculation
@@ -100,14 +116,14 @@ func straightResult(from, to domain.Point, distance float64, duration *int, sour
 	}
 }
 
-// StraightLine - calculates a flight, a cable car or an "other" leg on the
-// great circle.
+// StraightLine - calculates a leg no road is asked for on the great circle: a
+// flight, a cable car, a train, a metro or a tram, a ferry, or an "other" leg.
 //
-// A flight and a cable car get an estimated time until somebody types the real
-// one; an "other" leg - a ferry, a taxi - gets none.
+// Every one but "other" gets an estimated time until somebody types the real
+// one; an "other" leg - a taxi, a lift from a friend - gets none.
 //
 // Arguments:
-//   - mode: flight, cable_car or other.
+//   - mode: a mode that is not routed on roads.
 //   - from, to: the points.
 //
 // Returns:
@@ -115,12 +131,8 @@ func straightResult(from, to domain.Point, distance float64, duration *int, sour
 func StraightLine(mode domain.TravelMode, from, to domain.Point) Result {
 	distance := Haversine(from, to)
 	var duration *int
-	switch mode {
-	case domain.ModeFlight:
-		seconds := int(math.Round(distance/1000/flightSpeedKmH*3600)) + flightOverheadSecond
-		duration = &seconds
-	case domain.ModeCableCar:
-		seconds := int(math.Round(distance/1000/cableCarSpeedKmH*3600)) + cableCarOverheadSecond
+	if speed, ok := straightSpeeds[mode]; ok {
+		seconds := int(math.Round(distance/1000/speed.speedKmH*3600)) + speed.overheadSeconds
 		duration = &seconds
 	}
 	return straightResult(from, to, distance, duration, domain.LegStraightLine, "")

@@ -23,19 +23,22 @@ import (
 // report with a dozen long recordings reads no faster or slower for them.
 
 var trackColumns = `t.id, t.document_id, t.item_id, t.original_name, t.format, t.geometry, t.distance_m,
-	t.point_count, t.ascent_m, t.descent_m, t.started_at, t.ended_at, t.created_at`
+	t.point_count, t.ascent_m, t.descent_m, t.grades, t.speed_kmh, t.started_at, t.ended_at, t.created_at`
 
 // scanTrack reads one row in the order of trackColumns.
 func scanTrack(row pgx.Row) (domain.Track, error) {
 	var t domain.Track
 	err := row.Scan(&t.ID, &t.DocumentID, &t.ItemID, &t.OriginalName, &t.Format, &t.Geometry,
-		&t.DistanceM, &t.PointCount, &t.AscentM, &t.DescentM, &t.StartedAt, &t.EndedAt, &t.CreatedAt)
+		&t.DistanceM, &t.PointCount, &t.AscentM, &t.DescentM, &t.Grades, &t.SpeedKmh, &t.StartedAt, &t.EndedAt,
+		&t.CreatedAt)
 	return t, err
 }
 
 // SaveTrack - stores the line of an activity, replacing
 // the one it had. The journeys to and from the place leave and reach its
-// recording's ends, so a new line sends them back to be calculated.
+// recording's ends, so a new line sends them back to be calculated. A line
+// replaced keeps the speed its time was worked out at: the activity is the
+// same, and so is its pace.
 //
 // Arguments:
 //   - ctx: context bounding the transaction.
@@ -58,19 +61,20 @@ func (r *DocumentRepository) SaveTrack(ctx context.Context, track domain.Track, 
 		}
 		saved, err = oneRow(scanTrack, tx.QueryRow(ctx,
 			`INSERT INTO tracks AS t (id, document_id, item_id, original_name, format, geometry, distance_m,
-			                          point_count, ascent_m, descent_m, file_gz, started_at, ended_at)
-			 SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+			                          point_count, ascent_m, descent_m, file_gz, started_at, ended_at, climb_version,
+			                          grades, speed_kmh)
+			 SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
 			 WHERE EXISTS (SELECT 1 FROM items WHERE id = $3 AND document_id = $2 AND kind <> 'stay_anchor')
 			 ON CONFLICT (item_id) DO UPDATE
 			   SET original_name = excluded.original_name, format = excluded.format, geometry = excluded.geometry,
 			       distance_m = excluded.distance_m, point_count = excluded.point_count,
 			       ascent_m = excluded.ascent_m, descent_m = excluded.descent_m, file_gz = excluded.file_gz,
 			       started_at = excluded.started_at, ended_at = excluded.ended_at,
-			       created_at = now()
+			       climb_version = excluded.climb_version, grades = excluded.grades, created_at = now()
 			 RETURNING `+trackColumns,
 			track.ID, track.DocumentID, track.ItemID, track.OriginalName, track.Format, track.Geometry,
 			track.DistanceM, track.PointCount, track.AscentM, track.DescentM, compressed,
-			track.StartedAt, track.EndedAt), "save track")
+			track.StartedAt, track.EndedAt, track.ClimbVersion, track.Grades, track.SpeedKmh), "save track")
 		if err != nil {
 			return err
 		}
@@ -115,6 +119,65 @@ func (r *DocumentRepository) TrackFile(ctx context.Context, id uuid.UUID) (domai
 	}
 	file.Data, err = decompress(compressed)
 	return file, err
+}
+
+// StaleTracks - lists the tracks whose climb was measured an older way.
+//
+// Arguments:
+//   - ctx: context bounding the query.
+//   - version: the way the climb is measured now.
+//
+// Returns:
+//   - the tracks to measure again.
+//   - an error if the query fails.
+func (r *DocumentRepository) StaleTracks(ctx context.Context, version int) ([]uuid.UUID, error) {
+	return collect(ctx, r.pool, func(row pgx.Row) (uuid.UUID, error) {
+		var id uuid.UUID
+		return id, row.Scan(&id)
+	}, `SELECT id FROM tracks WHERE climb_version < $1 ORDER BY created_at`, version)
+}
+
+// UpdateTrackClimb - stores the climb and the slopes of a track measured again
+// from its file.
+//
+// Arguments:
+//   - ctx: context bounding the statement.
+//   - id: the track.
+//   - ascent, descent: the metres gained and lost, nil when the file records
+//     no heights.
+//   - grades: the metres run at each slope, nil without heights.
+//   - version: the way they were measured.
+//
+// Returns:
+//   - an error if the statement fails; a track deleted meanwhile is no error.
+func (r *DocumentRepository) UpdateTrackClimb(ctx context.Context, id uuid.UUID, ascent, descent *int,
+	grades []int, version int) error {
+	if _, err := r.pool.Exec(ctx,
+		`UPDATE tracks SET ascent_m = $2, descent_m = $3, grades = $4, climb_version = $5 WHERE id = $1`,
+		id, ascent, descent, grades, version); err != nil {
+		return fmt.Errorf("update track climb: %w", err)
+	}
+	return nil
+}
+
+// SetTrackSpeed - stores the speed an activity's line is timed at.
+//
+// Arguments:
+//   - ctx: context bounding the statement.
+//   - itemID: the activity.
+//   - speed: the speed in km/h, or nil to take the plan's own.
+//
+// Returns:
+//   - domain.ErrNotFound when the activity has no track.
+func (r *DocumentRepository) SetTrackSpeed(ctx context.Context, itemID uuid.UUID, speed *float64) error {
+	tag, err := r.pool.Exec(ctx, `UPDATE tracks SET speed_kmh = $2 WHERE item_id = $1`, itemID, speed)
+	if err != nil {
+		return fmt.Errorf("set track speed: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
 }
 
 // DeleteTrack - removes the line of an activity. Its

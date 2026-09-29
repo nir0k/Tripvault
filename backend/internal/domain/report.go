@@ -107,15 +107,20 @@ func BuildReportTotals(trip Trip, content DocumentContent) ReportTotals {
 	}
 
 	for _, leg := range content.Legs {
-		total := totals.ByMode[leg.Mode]
 		if distance := leg.Distance(); distance != nil {
 			totals.DistanceM += *distance
-			total.DistanceM += *distance
 		}
-		if duration := leg.Duration(); duration != nil {
-			total.DurationS += *duration
+		// A leg with changes counts each part under its own mode.
+		for _, part := range leg.Travel() {
+			total := totals.ByMode[part.Mode]
+			if part.DistanceM != nil {
+				total.DistanceM += *part.DistanceM
+			}
+			if part.DurationS != nil {
+				total.DurationS += *part.DurationS
+			}
+			totals.ByMode[part.Mode] = total
 		}
-		totals.ByMode[leg.Mode] = total
 		totals.PlannedCost += moneyOrZero(leg.PlannedCost)
 		totals.ActualCost += moneyOrZero(leg.ActualCost)
 	}

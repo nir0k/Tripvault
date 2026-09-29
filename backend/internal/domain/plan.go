@@ -285,20 +285,27 @@ func ScheduleDay(day Day, items []Item, opening *Leg, legs []*Leg, travelers int
 			leg = legs[index-1]
 		}
 		if leg != nil {
-			total := summary.ByMode[leg.Mode]
 			if distance := leg.Distance(); distance != nil {
 				summary.DistanceM += *distance
-				total.DistanceM += *distance
 			}
 			if duration := leg.Duration(); duration != nil {
 				minutes := (*duration + 30) / 60
 				cursor += minutes
 				summary.TravelMinutes += minutes
-				total.DurationS += *duration
 			} else {
 				summary.UnknownTravel = true
 			}
-			summary.ByMode[leg.Mode] = total
+			// A leg with changes counts each part under its own mode.
+			for _, part := range leg.Travel() {
+				total := summary.ByMode[part.Mode]
+				if part.DistanceM != nil {
+					total.DistanceM += *part.DistanceM
+				}
+				if part.DurationS != nil {
+					total.DurationS += *part.DurationS
+				}
+				summary.ByMode[part.Mode] = total
+			}
 			if leg.PlannedCost != nil {
 				summary.PlannedCost += *leg.PlannedCost
 			}

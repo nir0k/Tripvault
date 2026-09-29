@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,11 +41,45 @@ type Track struct {
 	// records no heights.
 	AscentM  *int
 	DescentM *int
+	// Grades is how many metres of the line run at each slope, in whole
+	// percent from -50 to +50, the steeper ones counted at the ends; nil when
+	// the file records no heights. The time a line takes to walk is worked out
+	// from it by the reader, at the speed they choose.
+	Grades []int
+	// SpeedKmh is the speed on the flat the time of a plan's line is worked out
+	// at, in km/h; nil to take the plan's own (Trip.TrackSpeedKmh).
+	SpeedKmh *float64
 	// StartedAt and EndedAt are the first and last moment the file records,
 	// nil when its points carry no time.
 	StartedAt *time.Time
 	EndedAt   *time.Time
-	CreatedAt time.Time
+	// ClimbVersion is the way AscentM, DescentM and Grades were measured; a
+	// track measured an older way is measured again from its file.
+	ClimbVersion int
+	CreatedAt    time.Time
+}
+
+// The speeds a track's time may be worked out at, in km/h on the flat, from a
+// stroll to a run. A plan starts at a steady walk.
+const (
+	MinTrackSpeed     = 1.0
+	MaxTrackSpeed     = 12.0
+	DefaultTrackSpeed = 4.7
+)
+
+// ValidateTrackSpeed - checks a speed a track's time may be worked out at.
+//
+// Arguments:
+//   - field: the field the speed came in, named by the error.
+//   - speed: the speed in km/h.
+//
+// Returns:
+//   - a *ValidationError when it is outside MinTrackSpeed to MaxTrackSpeed.
+func ValidateTrackSpeed(field string, speed float64) error {
+	if math.IsNaN(speed) || speed < MinTrackSpeed || speed > MaxTrackSpeed {
+		return NewValidationError(field, "out_of_range", "must be between 1 and 12 km/h")
+	}
+	return nil
 }
 
 // ClockPeriod - reads when a recording started and ended as times of day in the
@@ -65,6 +100,19 @@ func (t Track) ClockPeriod(location *time.Location) (*ClockTime, *ClockTime) {
 		return &value
 	}
 	return clock(*t.StartedAt), clock(*t.EndedAt)
+}
+
+// Elapsed - reports how long a recording took, from its first point to its
+// last, pauses included, as the total time of a watch.
+//
+// Returns:
+//   - the time, or nil when the file records no time.
+func (t Track) Elapsed() *time.Duration {
+	if t.StartedAt == nil || t.EndedAt == nil {
+		return nil
+	}
+	elapsed := t.EndedAt.Sub(*t.StartedAt)
+	return &elapsed
 }
 
 // TrackFile is the file a track was imported from, as it will be downloaded.

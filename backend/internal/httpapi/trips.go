@@ -31,7 +31,10 @@ type tripResponse struct {
 	Kind string `json:"kind"`
 	// SourceTripID is the plan a report was copied from, given only to somebody
 	// who may open that plan.
-	SourceTripID *string          `json:"source_trip_id"`
+	SourceTripID *string `json:"source_trip_id"`
+	// FromPlan says a report was copied from a plan, even one since deleted or
+	// one the reader may not open; a place added to it arrives not planned.
+	FromPlan     bool             `json:"from_plan"`
 	Title        string           `json:"title"`
 	Summary      string           `json:"summary"`
 	StartDate    *string          `json:"start_date"`
@@ -40,7 +43,7 @@ type tripResponse struct {
 	Currency     string           `json:"currency"`
 	Travelers    int              `json:"travelers"`
 	BudgetAmount *string          `json:"budget_amount"`
-	Status       string           `json:"status"`
+	Status       string           `json:"status,omitempty"`
 	DayCount     *int             `json:"day_count"`
 	Role         string           `json:"role"`
 	Owner        tripUserResponse `json:"owner"`
@@ -57,6 +60,11 @@ type tripResponse struct {
 	Translations domain.TripTranslations `json:"translations"`
 	CreatedAt    time.Time               `json:"created_at"`
 	UpdatedAt    time.Time               `json:"updated_at"`
+	// Tags are the reader's own tags on the trip, by name.
+	Tags []tripTagResponse `json:"tags"`
+	// TrackSpeedKmh is the speed on the flat a plan's lines are timed at when
+	// a line names none of its own.
+	TrackSpeedKmh float64 `json:"track_speed_kmh"`
 }
 
 // coverCropBody is the frame of a cover on the wire, as fractions of the
@@ -116,6 +124,7 @@ func newTripResponse(trip domain.TripSummary, now time.Time) tripResponse {
 	response := tripResponse{
 		ID:           trip.ID.String(),
 		Kind:         string(trip.Kind),
+		FromPlan:     trip.FromPlan,
 		Title:        trip.Title,
 		Summary:      trip.Summary,
 		StartDate:    formatDate(trip.StartDate),
@@ -133,8 +142,11 @@ func newTripResponse(trip domain.TripSummary, now time.Time) tripResponse {
 		CoverCrop:    newCoverCropBody(trip.CoverCrop),
 		Languages:    wireLanguages(trip.Languages),
 		Translations: wireTripTranslations(trip.Translations),
+		Tags:         wireTripTags(trip.Tags),
 		CreatedAt:    trip.CreatedAt,
 		UpdatedAt:    trip.UpdatedAt,
+
+		TrackSpeedKmh: trip.TrackSpeedKmh,
 	}
 	if trip.Budget != nil {
 		amount := trip.Budget.String()
@@ -378,6 +390,10 @@ type updateTripRequest struct {
 	// Languages are a report's languages, the original first. A language left
 	// out loses its translations.
 	Languages optional[[]string] `json:"languages"`
+	// State closes a plan as completed or cancelled; null opens it again.
+	State optional[string] `json:"state"`
+	// TrackSpeedKmh is the speed a plan's lines are timed at by default.
+	TrackSpeedKmh optional[float64] `json:"track_speed_kmh"`
 	// Confirm accepts that a shorter period removes days holding content.
 	Confirm bool `json:"confirm"`
 }
@@ -453,6 +469,24 @@ func applyTripChanges(trip domain.Trip, body updateTripRequest) (domain.Trip, er
 			return trip, domain.NewValidationError("languages", "required", "must name the original language")
 		}
 	}
+	if body.State.Set {
+		trip.State = domain.PlanOpen
+		if !body.State.Null {
+			trip.State = domain.PlanState(body.State.Value)
+			// An empty string would silently reopen the plan; that is what null
+			// is for.
+			if trip.State == domain.PlanOpen {
+				return trip, domain.NewValidationError("state", "unsupported", "must be completed, cancelled or null")
+			}
+		}
+	}
+	if body.TrackSpeedKmh.Set {
+		// Null or zero would silently mean the default; a change must name a speed.
+		if body.TrackSpeedKmh.Null || body.TrackSpeedKmh.Value == 0 {
+			return trip, domain.ValidateTrackSpeed("track_speed_kmh", 0)
+		}
+		trip.TrackSpeedKmh = body.TrackSpeedKmh.Value
+	}
 	if err := applyOptionalDate("start_date", body.StartDate, &trip.StartDate); err != nil {
 		return trip, err
 	}
@@ -473,7 +507,7 @@ func applyTripChanges(trip domain.Trip, body updateTripRequest) (domain.Trip, er
 }
 
 // handleUpdateTrip changes a trip's title, dates, currency, travellers or
-// budget. Owners and editors may. New dates reshape the documents; a period
+// budget, or closes a plan as completed or cancelled. Owners and editors may. New dates reshape the documents; a period
 // that drops days with content answers
 // 409 days_would_be_removed until the request carries "confirm": true.
 func (s *Server) handleUpdateTrip(w http.ResponseWriter, r *http.Request) {

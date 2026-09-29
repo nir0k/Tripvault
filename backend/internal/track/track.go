@@ -37,10 +37,39 @@ const MaxPoints = 500_000
 // thousand points without noticing and none of the rest.
 const DrawnPoints = 2000
 
-// ClimbThreshold is the smallest change of height, in metres, that counts as
-// climbing or descending. A GPS height wanders by a few metres from one second
-// to the next, and summing that wandering would turn a flat walk into a climb.
-const ClimbThreshold = 5.0
+// How the climb of a line is measured. The heights of a recording are first
+// smoothed with a moving average over ClimbSmoothing either side of each
+// point, and a change then counts once it reaches ClimbThreshold from the last
+// height counted.
+//
+// The smoothing is what keeps the noise of a GPS out: a height that wanders by
+// a few metres from one second to the next averages out over ten seconds,
+// while a real slope survives it. The small threshold after it keeps the short
+// real climbs a barometric watch records in whole metres, which a coarse
+// threshold alone threw away - and which a coarse threshold did not even keep
+// the noise out of. A line whose points carry no time is a route drawn ahead,
+// its heights read from a map of the terrain: it has no noise to smooth, and
+// its points may lie far apart, so it is measured as it is.
+const (
+	ClimbThreshold = 1.0
+	ClimbSmoothing = 5 * time.Second
+)
+
+// ClimbVersion names the way the climb and the slopes are measured. Raising it
+// when the measurement changes makes the service measure every stored track
+// again from its file when it starts.
+const ClimbVersion = 3
+
+// How the slopes of a line are measured, for the time it takes to walk. The
+// line is cut into stretches of at least GradeStep metres, measured over the
+// heights smoothed as for the climb, and each stretch is counted in the bucket
+// of its slope in whole percent, from -MaxGrade to +MaxGrade; a steeper one
+// counts in the last bucket. A stretch that long keeps the metre or two a
+// height wanders by from passing for a slope of its own.
+const (
+	GradeStep = 20.0
+	MaxGrade  = 50
+)
 
 // Formats a file can be read as.
 const (
@@ -62,6 +91,9 @@ type Track struct {
 	// records no heights.
 	AscentM  *int
 	DescentM *int
+	// Grades is how many metres of the line run at each slope, from -MaxGrade
+	// to +MaxGrade percent; nil when the file records no heights.
+	Grades []int
 	// StartedAt and EndedAt are the earliest and latest moments the file
 	// records, nil when its points carry no time.
 	StartedAt *time.Time
@@ -75,6 +107,8 @@ type recording struct {
 	points []domain.Point
 	// heights holds the height of each point, NaN where the file gives none.
 	heights []float64
+	// moments holds the time of each point, zero where the file gives none.
+	moments []time.Time
 	format  string
 	// first and last are the earliest and latest timestamps, zero without any.
 	first, last time.Time
@@ -122,8 +156,9 @@ func Parse(data []byte) (Track, error) {
 		PointCount: len(points),
 		Start:      points[0],
 	}
-	if ascent, descent, ok := climb(read.heights); ok {
+	if ascent, descent, ok := climb(read.heights, read.moments); ok {
 		parsed.AscentM, parsed.DescentM = &ascent, &descent
+		parsed.Grades = grades(points, read.heights, read.moments)
 	}
 	if !read.first.IsZero() {
 		parsed.StartedAt, parsed.EndedAt = &read.first, &read.last
@@ -131,30 +166,38 @@ func Parse(data []byte) (Track, error) {
 	return parsed, nil
 }
 
-// climb sums the height gained and lost along a line. A change is counted only
-// once it reaches ClimbThreshold from the last height counted, which keeps the
-// noise of a GPS out while a real slope still adds up in full.
+// climb sums the height gained and lost along a line: the heights smoothed
+// over a few seconds either side of each point, then every change that reaches
+// ClimbThreshold from the last height counted.
 //
 // Arguments:
 //   - heights: the height of every point, NaN where a point has none.
+//   - moments: the time of every point, zero where a point has none.
 //
 // Returns:
 //   - the metres gained and lost, rounded.
 //   - false when fewer than two points carry a height, or when every height is
 //     zero: a KML line drawn on the ground writes 0 where it knows nothing.
-func climb(heights []float64) (int, int, bool) {
-	var ascent, descent float64
-	reference, known, flat := math.NaN(), 0, true
-	for _, height := range heights {
+func climb(heights []float64, moments []time.Time) (int, int, bool) {
+	var known []float64
+	var times []time.Time
+	flat := true
+	for index, height := range heights {
 		if math.IsNaN(height) {
 			continue
 		}
-		known++
+		known = append(known, height)
+		times = append(times, moments[index])
 		flat = flat && height == 0
-		if math.IsNaN(reference) {
-			reference = height
-			continue
-		}
+	}
+	if len(known) < 2 || flat {
+		return 0, 0, false
+	}
+
+	var ascent, descent float64
+	smoothed := smooth(known, times)
+	reference := smoothed[0]
+	for _, height := range smoothed[1:] {
 		switch change := height - reference; {
 		case change >= ClimbThreshold:
 			ascent += change
@@ -164,10 +207,98 @@ func climb(heights []float64) (int, int, bool) {
 			reference = height
 		}
 	}
-	if known < 2 || flat {
-		return 0, 0, false
-	}
 	return int(math.Round(ascent)), int(math.Round(descent)), true
+}
+
+// grades measures how much of a line runs at each slope. Only the points with
+// a height count, their heights smoothed as for the climb; the way between two
+// of them is measured over every point in between.
+//
+// Arguments:
+//   - points: every point of the line.
+//   - heights: the height of each point, NaN where a point has none.
+//   - moments: the time of each point, zero where a point has none.
+//
+// Returns:
+//   - the metres run at each slope, index 0 being -MaxGrade percent; nil when
+//     fewer than two points carry a height.
+func grades(points []domain.Point, heights []float64, moments []time.Time) []int {
+	var known []int
+	var values []float64
+	var times []time.Time
+	for index, height := range heights {
+		if !math.IsNaN(height) {
+			known = append(known, index)
+			values = append(values, height)
+			times = append(times, moments[index])
+		}
+	}
+	if len(known) < 2 {
+		return nil
+	}
+	smoothed := smooth(values, times)
+
+	buckets := make([]float64, 2*MaxGrade+1)
+	anchor, run := 0, 0.0
+	for k := 1; k < len(known); k++ {
+		for index := known[k-1] + 1; index <= known[k]; index++ {
+			run += routing.Haversine(points[index-1], points[index])
+		}
+		// The last stretch is counted however short it is, so the whole line is.
+		if run < GradeStep && k < len(known)-1 {
+			continue
+		}
+		if run > 0 {
+			grade := int(math.Round((smoothed[k] - smoothed[anchor]) / run * 100))
+			buckets[min(max(grade, -MaxGrade), MaxGrade)+MaxGrade] += run
+		}
+		anchor, run = k, 0
+	}
+	metres := make([]int, len(buckets))
+	for index, value := range buckets {
+		metres[index] = int(math.Round(value))
+	}
+	return metres
+}
+
+// smooth averages every height of a recording with the heights within
+// ClimbSmoothing of it. A line without a time on every point, or whose times
+// do not run forward, is returned as it is.
+//
+// Arguments:
+//   - heights: the known heights in order.
+//   - times: the time of each, zero where unknown.
+//
+// Returns:
+//   - the smoothed heights, one per height.
+func smooth(heights []float64, times []time.Time) []float64 {
+	for index, moment := range times {
+		if moment.IsZero() || (index > 0 && moment.Before(times[index-1])) {
+			return heights
+		}
+	}
+	// within reports whether the point at other belongs to the window of the
+	// point at centre.
+	within := func(centre, other int) bool {
+		gap := times[other].Sub(times[centre])
+		return gap >= -ClimbSmoothing && gap <= ClimbSmoothing
+	}
+
+	smoothed := make([]float64, len(heights))
+	low, high, sum := 0, 0, 0.0
+	for centre := range heights {
+		// The window slides forward: add what came into it, drop what left it.
+		for high < len(heights) && within(centre, high) {
+			sum += heights[high]
+			high++
+		}
+		for low < centre && !within(centre, low) {
+			sum -= heights[low]
+			low++
+		}
+		smoothed[centre] = sum / float64(high-low)
+	}
+	return smoothed
 }
 
 // readPoints pulls the coordinates, heights and timestamps out of whichever of
@@ -219,6 +350,7 @@ func readPoints(data []byte) (recording, error) {
 				if ok {
 					read.points = append(read.points, point)
 					read.heights = append(read.heights, math.NaN())
+					read.moments = append(read.moments, time.Time{})
 					current = len(read.points) - 1
 				}
 			case "ele":
@@ -256,6 +388,7 @@ func readPoints(data []byte) (recording, error) {
 				points, heights := parseCoordinates(coordinates.String())
 				read.points = append(read.points, points...)
 				read.heights = append(read.heights, heights...)
+				read.moments = append(read.moments, make([]time.Time, len(points))...)
 			case "ele":
 				if inHeight {
 					inHeight = false
@@ -268,6 +401,9 @@ func readPoints(data []byte) (recording, error) {
 					inTime = false
 					if moment, err := time.Parse(time.RFC3339, strings.TrimSpace(stamp.String())); err == nil {
 						read.see(moment.UTC())
+						if current >= 0 {
+							read.moments[current] = moment.UTC()
+						}
 					}
 				}
 			case "trkpt", "rtept", "wpt":

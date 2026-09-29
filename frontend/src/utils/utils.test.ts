@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError } from '@/api/client'
-import type { Media, TripDocument } from '@/api/types'
+import type { CostCategory, Idea, Media, PackingItem, TripDocument } from '@/api/types'
 import { amountCents, centsToAmount, equalShares, evaluateFormula, invalidAmount, resolveAmount } from '@/utils/amount'
+import { categoryRows } from '@/utils/budget'
 import { errorMessage } from '@/utils/errors'
-import { addDays, describeUserAgent, formatClock, formatDayDate, formatDistance, formatDateRange, formatMoney, formatTimeOfDay, fromMetres, normalizeAmount, parseTimeOfDay, splitDuration, toMetres } from '@/utils/format'
+import { packingText, parseQuickItem } from '@/utils/packing'
+import { addDays, describeUserAgent, formatClock, formatDayDate, formatDistance, formatDateRange, formatElapsed, formatMoney, formatSpeed, formatTimeOfDay, fromMetres, normalizeAmount, parseTimeOfDay, splitDuration, toMetres } from '@/utils/format'
 import { markdownExcerpt, renderMarkdown } from '@/utils/markdown'
 import { justifyRows, justifyStrip, previewSize, tileRatio } from '@/utils/justify'
 import { minutesBetween, minutesOfDay, planTimeLabel, timeOfDay } from '@/utils/plan'
@@ -13,6 +15,8 @@ import { decodePolyline } from '@/utils/polyline'
 import { generatePassword } from '@/utils/password'
 import { exifSegment, withExif } from '@/utils/picture'
 import { resolveTheme } from '@/utils/theme'
+import { countryFlag, emptyFilter, filterFromQuery, filterIdeas, filterToQuery, formatDays, formatRange, monthRanges, otherCurrencies, seasonalIdeas } from '@/utils/ideas'
+import { DEFAULT_SPEED, MAX_SPEED, MIN_SPEED, SLIDER_STEPS, SPEED_STOPS, positionOf, speedAt, stopPosition, toblerFactor, walkingSeconds } from '@/utils/trackTime'
 import {
   readingLanguage, translatableTexts, translateDocument, translateTrip, translationProgress,
 } from '@/utils/translate'
@@ -134,6 +138,30 @@ describe('shared costs', () => {
   })
 })
 
+describe('budget by category', () => {
+  const row = (category: CostCategory, planned: string, actual = '0.00') => ({ category, planned, actual })
+
+  it('counts tolls in transport and shows them beneath it', () => {
+    const rows = categoryRows([
+      row('accommodation', '300.00'), row('transport', '100.00', '90.00'), row('fuel', '0.00'), row('tolls', '25.50', '20.00'),
+    ])
+    expect(rows.map((item) => [item.category, item.planned, item.actual, item.part])).toEqual([
+      ['accommodation', '300.00', '0.00', false],
+      ['transport', '125.50', '110.00', false],
+      ['tolls', '25.50', '20.00', true],
+    ])
+  })
+
+  it('shows transport for tolls alone and leaves out what carries nothing', () => {
+    const rows = categoryRows([row('transport', '0.00'), row('tolls', '12.00'), row('food', '0.00')])
+    expect(rows.map((item) => [item.category, item.planned, item.part])).toEqual([
+      ['transport', '12.00', false],
+      ['tolls', '12.00', true],
+    ])
+    expect(categoryRows([row('transport', '5.00'), row('tolls', '0.00')]).map((item) => item.category)).toEqual(['transport'])
+  })
+})
+
 describe('amount formulas', () => {
   it('follows operator precedence and parentheses', () => {
     expect(evaluateFormula('=2+3*4')).toBe(14)
@@ -155,6 +183,16 @@ describe('amount formulas', () => {
     expect(invalidAmount('=5-10')).toBe(true)
     expect(invalidAmount('=5*')).toBe(true)
     expect(invalidAmount('=5*2')).toBe(false)
+  })
+
+  it('takes a formula without "=" and with the signs of the operator keys', () => {
+    expect(resolveAmount('120*3+45')).toBe('405')
+    expect(resolveAmount('10 × 3 ÷ 4 − 1,5')).toBe('6')
+    expect(resolveAmount('(2+3)×4')).toBe('20')
+    expect(resolveAmount('=7-2')).toBe('5')
+    expect(invalidAmount('5×')).toBe(true)
+    expect(invalidAmount('1 234,50')).toBe(false)
+    expect(resolveAmount('-5')).toBe('-5')
   })
 })
 
@@ -213,6 +251,11 @@ describe('schedule formatting', () => {
     expect(formatDistance(800, 'en')).toBe('800 m')
     expect(formatDistance(3450, 'en')).toBe('3.5 km')
     expect(formatDistance(186020, 'en')).toBe('186 km')
+    // The length of a recording keeps its tenth, as a watch shows it.
+    expect(formatDistance(21397, 'en', 'km', true)).toBe('21.4 km')
+    expect(formatDistance(21000, 'en', 'km', true)).toBe('21.0 km')
+    expect(formatElapsed(4 * 3600 + 57 * 60 + 51)).toBe('4:57:51')
+    expect(formatElapsed(59)).toBe('0:00:59')
   })
 
   it('shows a distance in miles for a reader who counts in them', () => {
@@ -405,7 +448,7 @@ describe('media hints', () => {
       id: 'l1', from_item_id: 'x', to_item_id: 'p1', mode: 'walk' as const, distance_m: null, duration_s: null,
       calculated_distance_m: null, calculated_duration_s: null, manual_distance: false, manual_duration: false,
       geometry: '', source: 'pending' as const, error: null, calculated_at: null, planned_cost_amount: null,
-      actual_cost_amount: null, note: 'bus', route_preference: 'fastest' as const, via: [], route_pinned: false,
+      actual_cost_amount: null, note: 'bus', route_preference: 'fastest' as const, via: [], route_pinned: false, segments: [], tickets: [],
     }
     const report: TripDocument = {
       ...document,
@@ -573,5 +616,171 @@ describe('EXIF of a shrunk picture', () => {
   it('finds nothing in a file without EXIF or that is not a JPEG', () => {
     expect(exifSegment(new Uint8Array([0xff, 0xd8, 0xff, 0xda, 0x00, 0x02]))).toBeNull()
     expect(exifSegment(new Uint8Array([0x89, 0x50, 0x4e, 0x47]))).toBeNull()
+  })
+})
+
+describe('parseQuickItem', () => {
+  it('reads a count at the end of the line as the quantity', () => {
+    expect(parseQuickItem('Socks x3')).toEqual({ name: 'Socks', quantity: 3 })
+    expect(parseQuickItem(' Носки ×2 ')).toEqual({ name: 'Носки', quantity: 2 })
+    expect(parseQuickItem('Batteries *12')).toEqual({ name: 'Batteries', quantity: 12 })
+  })
+
+  it('keeps a name that only looks like a count', () => {
+    expect(parseQuickItem('Tent')).toEqual({ name: 'Tent', quantity: 1 })
+    expect(parseQuickItem('x3')).toEqual({ name: 'x3', quantity: 1 })
+    expect(parseQuickItem('Box x0')).toEqual({ name: 'Box x0', quantity: 1 })
+  })
+})
+
+describe('walkingSeconds', () => {
+  // grades builds the slopes of a line: metres at each percent from -50.
+  function grades(runs: Record<number, number>): number[] {
+    const buckets = new Array<number>(101).fill(0)
+    for (const [grade, metres] of Object.entries(runs)) {
+      buckets[Number(grade) + 50] = metres
+    }
+    return buckets
+  }
+
+  it('walks the flat at the speed chosen', () => {
+    expect(walkingSeconds({ distance_m: 4700, grades: null }, 4.7)).toBeCloseTo(3600)
+    expect(walkingSeconds({ distance_m: 4700, grades: grades({ 0: 4700 }) }, 4.7)).toBeCloseTo(3600)
+  })
+
+  it('climbs slower and descends a gentle slope faster', () => {
+    const flat = walkingSeconds({ distance_m: 1000, grades: grades({ 0: 1000 }) }, 4)
+    expect(walkingSeconds({ distance_m: 1000, grades: grades({ 20: 1000 }) }, 4)).toBeGreaterThan(flat * 1.8)
+    expect(walkingSeconds({ distance_m: 1000, grades: grades({ [-5]: 1000 }) }, 4)).toBeLessThan(flat)
+    expect(walkingSeconds({ distance_m: 1000, grades: grades({ [-30]: 1000 }) }, 4)).toBeGreaterThan(flat)
+    expect(toblerFactor(0)).toBeCloseTo(1)
+  })
+
+  it('walks the metres the slopes leave out as flat', () => {
+    const counted = walkingSeconds({ distance_m: 1000, grades: grades({ 0: 1000 }) }, 5)
+    expect(walkingSeconds({ distance_m: 2000, grades: grades({ 0: 1000 }) }, 5)).toBeCloseTo(counted * 2)
+  })
+})
+
+describe('speed scale', () => {
+  it('puts the marks an equal step apart and the ends at the bounds', () => {
+    expect(speedAt(0)).toBe(MIN_SPEED)
+    expect(speedAt(SLIDER_STEPS)).toBe(MAX_SPEED)
+    SPEED_STOPS.forEach((stop, index) => {
+      expect(positionOf(stop)).toBe(stopPosition(index))
+      expect(speedAt(stopPosition(index))).toBe(stop)
+    })
+    expect(positionOf(DEFAULT_SPEED)).toBe(stopPosition(SPEED_STOPS.indexOf(DEFAULT_SPEED)))
+  })
+
+  it('draws the thumb onto a mark nearby and leaves it free between them', () => {
+    const mark = stopPosition(SPEED_STOPS.indexOf(4.7))
+    expect(speedAt(mark + 10)).toBe(4.7)
+    expect(speedAt(mark - 10)).toBe(4.7)
+    expect(speedAt(mark + 50)).toBe(5.1)
+    expect(positionOf(5.1)).toBe(mark + 50)
+    expect(speedAt(-5)).toBe(MIN_SPEED)
+  })
+
+  it('shows a speed in the reader\'s units', () => {
+    expect(formatSpeed(4.7, 'en', 'km')).toBe('4.7 km/h')
+    expect(formatSpeed(16.09344, 'en', 'mi')).toBe('10 mph')
+    expect(formatSpeed(6.5, 'en', 'km', false)).toBe('6.5')
+  })
+})
+
+describe('ideas', () => {
+  // idea builds an idea with only what a test cares about.
+  function idea(fields: Partial<Idea>): Idea {
+    return {
+      id: fields.title ?? 'x', title: 'x', countries: [], places: [], photos: [], months: [],
+      days_min: null, days_max: null, days_ideal: null, description_md: '', currency: 'EUR',
+      costs: { stay: null, food: null, other: null }, transports: [], transport_min: null, transport_max: null,
+      cost_min: null, cost_max: null, visa: 'not_needed', tags: [], created_at: '', updated_at: '2026-01-01T00:00:00Z',
+      ...fields,
+    }
+  }
+  const ideas = [
+    idea({ title: 'Westfjords', countries: ['IS'], months: [6, 7, 8], days_min: 5, days_max: 7, cost_min: '1200.00',
+      cost_max: '1500.00', transport_min: '400.00', costs: { stay: '800.00', food: null, other: null },
+      transports: [{ modes: ['car', 'flight'], cost: '400.00', minutes: null }],
+      places: [{ name: 'Ísafjörður', lat: null, lng: null }], tags: [{ id: 't1', name: 'nature', color: 'green' }] }),
+    idea({ title: 'Baltic tour', countries: ['EE', 'LV', 'LT'], months: [5, 9], days_ideal: 10, cost_min: '900.00',
+      transports: [{ modes: ['train'], cost: null, minutes: 600 }], updated_at: '2026-03-01T00:00:00Z' }),
+    idea({ title: 'Tokyo', countries: ['JP'], months: [4], days_min: 12, days_max: 20, currency: 'JPY',
+      cost_min: '300000.00', visa: 'on_arrival', description_md: 'Cherry **blossom**' }),
+  ]
+  const titles = (list: Idea[]): string[] => list.map((item) => item.title)
+
+  it('narrows by every field and leaves out what an idea does not say', () => {
+    const base = emptyFilter('EUR')
+    expect(titles(filterIdeas(ideas, { ...base, query: 'blossom' }, 'en'))).toEqual(['Tokyo'])
+    expect(titles(filterIdeas(ideas, { ...base, query: 'latvia' }, 'en'))).toEqual(['Baltic tour'])
+    expect(titles(filterIdeas(ideas, { ...base, query: 'ísafj' }, 'en'))).toEqual(['Westfjords'])
+    expect(titles(filterIdeas(ideas, { ...base, countries: ['LT', 'JP'] }, 'en'))).toEqual(['Baltic tour', 'Tokyo'])
+    expect(titles(filterIdeas(ideas, { ...base, months: [7, 9] }, 'en'))).toEqual(['Baltic tour', 'Westfjords'])
+    expect(titles(filterIdeas(ideas, { ...base, days: [7, 10] }, 'en'))).toEqual(['Baltic tour', 'Westfjords'])
+    expect(titles(filterIdeas(ideas, { ...base, days: [21, 30] }, 'en'))).toEqual([])
+    expect(titles(filterIdeas(ideas, { ...base, maxCost: 1000 }, 'en'))).toEqual(['Baltic tour'])
+    expect(titles(filterIdeas(ideas, { ...base, tags: ['t1'] }, 'en'))).toEqual(['Westfjords'])
+    expect(titles(filterIdeas(ideas, { ...base, visas: ['on_arrival'] }, 'en'))).toEqual(['Tokyo'])
+    expect(titles(filterIdeas(ideas, { ...base, modes: ['train', 'flight'] }, 'en'))).toEqual(['Baltic tour', 'Westfjords'])
+    expect(otherCurrencies(ideas, { ...base, maxCost: 1000 }, 'en')).toBe(1)
+  })
+
+  it('sorts either way, the ideas without the figure last', () => {
+    const base = emptyFilter('EUR')
+    expect(titles(filterIdeas(ideas, { ...base, sort: 'title', desc: false }, 'en'))).toEqual(['Baltic tour', 'Tokyo', 'Westfjords'])
+    expect(titles(filterIdeas(ideas, { ...base, sort: 'title', desc: true }, 'en'))).toEqual(['Westfjords', 'Tokyo', 'Baltic tour'])
+    expect(titles(filterIdeas(ideas, { ...base, sort: 'days', desc: false }, 'en'))).toEqual(['Westfjords', 'Baltic tour', 'Tokyo'])
+    expect(titles(filterIdeas(ideas, { ...base, sort: 'cost', desc: false }, 'en'))).toEqual(['Baltic tour', 'Westfjords', 'Tokyo'])
+    expect(titles(filterIdeas(ideas, base, 'en'))[0]).toBe('Baltic tour')
+  })
+
+  it('keeps the filter in the address and reads it back', () => {
+    const filter = { ...emptyFilter('EUR'), query: 'fjord', countries: ['IS'], months: [6, 7], days: [5, 9] as [number, number],
+      maxCost: 900, currency: 'USD', visas: ['needed' as const], modes: ['car' as const],
+      sort: 'cost' as const, desc: true }
+    const query = filterToQuery(filter, 'EUR')
+    expect(filterFromQuery(query as Record<string, string>, 'EUR')).toEqual(filter)
+    expect(filterToQuery(emptyFilter('EUR'), 'EUR')).toEqual({})
+    expect(filterFromQuery({ month: '13,2', country: 'zz,fr', visa: 'maybe', days: '9-3' }, 'EUR')).toMatchObject({
+      months: [2], countries: ['FR'], visas: [], days: null })
+  })
+
+  it('picks the ideas whose season is now or next, over the new year', () => {
+    const season = [
+      idea({ title: 'Winter', months: [1, 2] }), idea({ title: 'Autumn', months: [10] }),
+      idea({ title: 'Now', months: [9] }), idea({ title: 'Always', months: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] }),
+      idea({ title: 'Someday', months: [] }), idea({ title: 'Summer', months: [7, 8] }),
+    ]
+    expect(titles(seasonalIdeas(season, 9, 5))).toEqual(['Now', 'Always', 'Autumn', 'Winter', 'Summer'].slice(0, 5))
+    expect(titles(seasonalIdeas(season, 9, 2))).toHaveLength(2)
+  })
+
+  it('reads months as runs over the new year, days with the ideal, ranges and flags', () => {
+    expect(monthRanges([6, 7, 8])).toEqual([[6, 8]])
+    expect(monthRanges([12, 1, 2, 5])).toEqual([[5, 5], [12, 2]])
+    expect(monthRanges([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])).toEqual([[1, 12]])
+    expect(countryFlag('is')).toBe('🇮🇸')
+    const t = (key: string, named?: Record<string, unknown>): string => `${key}:${JSON.stringify(named)}`
+    expect(formatDays(idea({ days_min: 5, days_max: 9, days_ideal: 7 }), t)).toContain('ideas.daysIdeally')
+    expect(formatDays(idea({ days_min: 7, days_max: 7, days_ideal: 7 }), t)).toBe('ideas.days:{"n":7}')
+    expect(formatRange('10', '20', (amount) => `€${amount}`)).toBe('€10 – €20')
+    expect(formatRange('10', '10', (amount) => `€${amount}`)).toBe('€10')
+  })
+})
+
+describe('packingText', () => {
+  it('writes a list for a chat: a heading, categories and plain lines', () => {
+    const item = (name: string, fields: Partial<PackingItem> = {}): PackingItem => ({
+      id: name, category_id: null, name, quantity: 1, note: '', packed: false, bringer_id: null, position: 0, ...fields,
+    })
+    const text = packingText([
+      { title: 'Documents', items: [item('Passports', { quantity: 3, packed: true }), item('Tickets', { note: 'printed', bringer_id: 'u1' })] },
+      { title: 'Empty', items: [] },
+      { title: 'Clothes', items: [item('Shoes')] },
+    ], { u1: 'Ada' }, 'Lisbon — Packing list')
+    expect(text).toBe('Lisbon — Packing list\n\nDocuments\n- Passports ×3\n- Tickets — printed (Ada)\n\nClothes\n- Shoes')
   })
 })

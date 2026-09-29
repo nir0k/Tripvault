@@ -40,6 +40,7 @@ type shareLinkResponse struct {
 	ID                  string     `json:"id"`
 	Label               string     `json:"label"`
 	IncludePrivateMedia bool       `json:"include_private_media"`
+	AllowDownload       bool       `json:"allow_download"`
 	ExpiresAt           *time.Time `json:"expires_at"`
 	LastUsedAt          *time.Time `json:"last_used_at"`
 	UseCount            int64      `json:"use_count"`
@@ -60,6 +61,7 @@ func newShareLinkResponse(link domain.ShareLink) shareLinkResponse {
 		ID:                  link.ID.String(),
 		Label:               link.Label,
 		IncludePrivateMedia: link.IncludePrivateMedia,
+		AllowDownload:       link.AllowDownload,
 		ExpiresAt:           link.ExpiresAt,
 		LastUsedAt:          link.LastUsedAt,
 		UseCount:            link.UseCount,
@@ -91,6 +93,7 @@ func (s *Server) handleListShareLinks(w http.ResponseWriter, r *http.Request) {
 type createShareLinkRequest struct {
 	Label               string  `json:"label"`
 	IncludePrivateMedia bool    `json:"include_private_media"`
+	AllowDownload       bool    `json:"allow_download"`
 	ExpiresAt           *string `json:"expires_at"`
 }
 
@@ -111,6 +114,7 @@ func (s *Server) handleCreateShareLink(w http.ResponseWriter, r *http.Request) {
 		TripID:              trip.ID,
 		Label:               body.Label,
 		IncludePrivateMedia: body.IncludePrivateMedia,
+		AllowDownload:       body.AllowDownload,
 		CreatedBy:           principalFrom(r.Context()).user.ID,
 		CreatedAt:           s.now(),
 	}
@@ -210,13 +214,16 @@ type sharedTripResponse struct {
 	Timezone  string  `json:"timezone"`
 	Currency  string  `json:"currency"`
 	Travelers int     `json:"travelers"`
-	Status    string  `json:"status"`
+	Status    string  `json:"status,omitempty"`
 	DayCount  *int    `json:"day_count"`
 	// OwnerName says whose trip it is, without naming their account.
 	OwnerName string `json:"owner_name"`
 	// Languages and Translations are a report's, as the trip itself gives them.
 	Languages    []string                `json:"languages"`
 	Translations domain.TripTranslations `json:"translations"`
+	// TrackSpeedKmh is the speed a plan's lines are timed at, which a reader
+	// of the link sees the times at like a member.
+	TrackSpeedKmh float64 `json:"track_speed_kmh"`
 }
 
 // sharedResponse is what a share token opens.
@@ -227,6 +234,8 @@ type sharedResponse struct {
 	// Kind is what the trip holds, plan or report, and so what the link opens.
 	Kind                string `json:"kind"`
 	IncludePrivateMedia bool   `json:"include_private_media"`
+	// AllowDownload says the link may download the pictures it shows.
+	AllowDownload bool `json:"allow_download"`
 }
 
 // handleShared returns the trip a token opens and what may be read of it.
@@ -255,10 +264,13 @@ func (s *Server) handleShared(w http.ResponseWriter, r *http.Request) {
 			OwnerName:    trip.Owner.DisplayName,
 			Languages:    wireLanguages(trip.Languages),
 			Translations: wireTripTranslations(trip.Translations),
+
+			TrackSpeedKmh: trip.TrackSpeedKmh,
 		},
 		Label:               access.Link.Label,
 		Kind:                string(trip.Kind),
 		IncludePrivateMedia: access.Link.IncludePrivateMedia,
+		AllowDownload:       access.Link.AllowDownload,
 	})
 }
 

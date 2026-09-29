@@ -51,6 +51,7 @@ type labels struct {
 
 	day         string
 	track       string
+	trackTime   string
 	stay        string
 	checkIn     string
 	checkOut    string
@@ -84,6 +85,31 @@ type labels struct {
 	climb string
 	// legFrom names where the journey that opens a day started.
 	legFrom string
+
+	// The words of a plan's document, which is read on the way rather than
+	// afterwards: where to sleep, how to get there, what comes next.
+	contents        string
+	overview        string
+	stays           string
+	transfers       string
+	ideas           string
+	optional        string
+	onSite          string
+	wantedAt        string
+	late            string
+	booking         string
+	dayStarts       string
+	dayEnds         string
+	onTheRoad       string
+	night           string
+	qrHint          string
+	placeCategories map[string]string
+
+	// The words of a packing list: its title, the items without a category
+	// and a list with nothing in it.
+	packingTitle string
+	packingOther string
+	packingEmpty string
 }
 
 // english is the wording every instance has.
@@ -107,6 +133,7 @@ var english = labels{
 	rated:       "%d rated",
 	day:         "Day %d",
 	track:       "Recorded track: %s",
+	trackTime:   "time %s",
 	stay:        "Stay",
 	checkIn:     "from",
 	checkOut:    "to",
@@ -121,7 +148,8 @@ var english = labels{
 	},
 	modes: map[string]string{
 		"walk": "On foot", "car": "By car", "bike": "By bicycle",
-		"transit": "By public transport", "flight": "By air", "cable_car": "By cable car", "other": "Other",
+		"transit": "By public transport", "bus": "By bus", "train": "By train", "tram": "By metro or tram",
+		"ferry": "By ferry", "flight": "By air", "cable_car": "By cable car", "other": "Other",
 	},
 	activities: map[string]string{
 		"hike": "Hike", "walk": "Walk", "bike": "Bike ride", "run": "Run",
@@ -163,6 +191,29 @@ var english = labels{
 
 	difficulty:   "Difficulty: %s",
 	difficulties: [domain.MaxDifficulty]string{"very easy", "easy", "moderate", "hard", "extreme"},
+
+	contents:     "Days",
+	overview:     "Stays and journeys",
+	stays:        "Where to sleep",
+	transfers:    "Flights and transfers",
+	ideas:        "Ideas without a day",
+	optional:     "optional",
+	onSite:       "%s on site",
+	wantedAt:     "wanted at %s",
+	late:         "later than wanted",
+	booking:      "Booking: %s",
+	dayStarts:    "starts at %s",
+	dayEnds:      "ends at %s",
+	onTheRoad:    "%s on the road",
+	night:        "Night: %s",
+	qrHint:       "The QR code beside a place opens the way there in a map on the phone; on the screen, its address does.",
+	packingTitle: "Packing list",
+	packingOther: "Other things",
+	packingEmpty: "Nothing is on the list yet.",
+	placeCategories: map[string]string{
+		"sight": "Sight", "nature": "Nature", "museum": "Museum", "food": "Food", "shopping": "Shopping",
+		"activity": "Activity", "transport": "Transport", "parking": "Parking", "other": "Other",
+	},
 }
 
 // russian is the wording of the Russian interface, the one place in the backend
@@ -188,6 +239,7 @@ var russian = labels{
 	rated:       "с оценкой: %d",
 	day:         "День %d",
 	track:       "Записанный трек: %s",
+	trackTime:   "время %s",
 	stay:        "Проживание",
 	checkIn:     "с",
 	checkOut:    "по",
@@ -202,7 +254,8 @@ var russian = labels{
 	},
 	modes: map[string]string{
 		"walk": "Пешком", "car": "На машине", "bike": "На велосипеде",
-		"transit": "Общественным транспортом", "flight": "Самолётом", "cable_car": "Канатной дорогой", "other": "Иначе",
+		"transit": "Общественным транспортом", "bus": "Автобусом", "train": "Поездом", "tram": "На метро или трамвае",
+		"ferry": "Паромом", "flight": "Самолётом", "cable_car": "Канатной дорогой", "other": "Иначе",
 	},
 	activities: map[string]string{
 		"hike": "Поход", "walk": "Прогулка", "bike": "Велопрогулка", "run": "Пробежка",
@@ -244,6 +297,30 @@ var russian = labels{
 
 	difficulty:   "Сложность: %s",
 	difficulties: [domain.MaxDifficulty]string{"очень легко", "легко", "средне", "сложно", "экстрим"},
+
+	contents:     "Дни",
+	overview:     "Проживание и переезды",
+	stays:        "Где ночуем",
+	transfers:    "Перелёты и трансферы",
+	ideas:        "Идеи без дня",
+	optional:     "необязательно",
+	onSite:       "на месте %s",
+	wantedAt:     "желательно к %s",
+	late:         "позже желаемого",
+	booking:      "Бронь: %s",
+	dayStarts:    "начало в %s",
+	dayEnds:      "конец в %s",
+	onTheRoad:    "в пути %s",
+	night:        "Ночёвка: %s",
+	qrHint:       "QR-код рядом с местом открывает дорогу к нему в картах на телефоне; на экране то же делает его адрес.",
+	packingTitle: "Что взять",
+	packingOther: "Без категории",
+	packingEmpty: "В списке пока ничего нет.",
+	placeCategories: map[string]string{
+		"sight": "Достопримечательность", "nature": "Природа", "museum": "Музей", "food": "Еда",
+		"shopping": "Покупки", "activity": "Активность", "transport": "Транспорт", "parking": "Парковка",
+		"other": "Другое",
+	},
 }
 
 // wording - picks the language a document is written in and the units it counts in.
@@ -374,6 +451,23 @@ func (l labels) distanceOf(metres int) string {
 		return fmt.Sprintf(format, fmt.Sprintf("%.1f", value))
 	}
 	return fmt.Sprintf(format, fmt.Sprintf("%.0f", value))
+}
+
+// trackDistanceOf - formats the length of a recording with a tenth of a
+// kilometre or a mile whatever its length, as a watch shows it: a hike of
+// 21.4 km is not a hike of 21.
+//
+// Arguments:
+//   - metres: the length.
+//
+// Returns:
+//   - the length in the reader's units.
+func (l labels) trackDistanceOf(metres int) string {
+	format, value := l.kilometres, float64(metres)/1000
+	if l.units == domain.UnitsMiles {
+		format, value = l.miles, float64(metres)/metresPerMile
+	}
+	return fmt.Sprintf(format, fmt.Sprintf("%.1f", value))
 }
 
 // heightOf - formats a height gained or lost in the reader's units: metres, or

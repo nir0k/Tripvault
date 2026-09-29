@@ -50,6 +50,7 @@ const emit = defineEmits<{
   editCost: [item: PlanItem]
   importTrack: [item: PlanItem, file: File]
   removeTrack: [item: PlanItem]
+  trackSpeed: [item: PlanItem, speedKmh: number | null]
   pickTarget: [item: PlanItem, mode: 'move' | 'copy']
   removePlace: [item: PlanItem]
   legMode: [leg: Leg, mode: TravelMode]
@@ -282,6 +283,7 @@ function setMode(value: string): void {
         @edit-cost="(item) => emit('editCost', item)"
         @import-track="(item, file) => emit('importTrack', item, file)"
         @remove-track="(item) => emit('removeTrack', item)"
+        @track-speed="(item, speed) => emit('trackSpeed', item, speed)"
         @pick-target="(item, mode) => emit('pickTarget', item, mode)"
         @remove="(item) => emit('removePlace', item)"
         @leg-mode="(leg, mode) => emit('legMode', leg, mode)"

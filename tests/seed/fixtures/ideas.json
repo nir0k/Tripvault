@@ -1,0 +1,249 @@
+{
+  "_about": "The administrator's ideas, chosen so every filter of the list has something to tell apart.",
+  "tags": {
+    "city": "violet",
+    "mountains": "sky",
+    "nature": "green"
+  },
+  "ideas": [
+    {
+      "title": "Westfjords",
+      "countries": [
+        "IS"
+      ],
+      "places": [
+        {
+          "name": "Ísafjörður",
+          "lat": 66.0749,
+          "lng": -23.135
+        },
+        {
+          "name": "Dynjandi",
+          "lat": 65.7329,
+          "lng": -23.1996
+        },
+        {
+          "name": "Látrabjarg",
+          "lat": 65.5028,
+          "lng": -24.5311
+        }
+      ],
+      "months": [
+        6,
+        7,
+        8
+      ],
+      "days_min": 5,
+      "days_max": 9,
+      "days_ideal": 7,
+      "description_md": "The quiet corner of Iceland: fjords, **puffins** at Látrabjarg and the falls of Dynjandi. Most of it is gravel roads, so a car with some clearance.",
+      "currency": "EUR",
+      "costs": {
+        "stay": "900.00",
+        "food": "350.00",
+        "other": "150.00"
+      },
+      "visa": "not_needed",
+      "transports": [
+        {
+          "modes": [
+            "flight"
+          ],
+          "cost": "420.00",
+          "minutes": 300
+        },
+        {
+          "modes": [
+            "flight",
+            "car"
+          ],
+          "cost": "780.00",
+          "minutes": 600
+        }
+      ],
+      "tags": [
+        "nature"
+      ]
+    },
+    {
+      "title": "Baltic capitals",
+      "countries": [
+        "EE",
+        "LV",
+        "LT"
+      ],
+      "places": [
+        {
+          "name": "Tallinn",
+          "lat": 59.437,
+          "lng": 24.7536
+        },
+        {
+          "name": "Riga",
+          "lat": 56.9496,
+          "lng": 24.1052
+        },
+        {
+          "name": "Vilnius",
+          "lat": 54.6872,
+          "lng": 25.2797
+        }
+      ],
+      "months": [
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "days_min": 7,
+      "days_max": 10,
+      "days_ideal": 8,
+      "description_md": "Three old towns a few hours apart by bus or train, with a day on the coast between Tallinn and Riga.",
+      "currency": "EUR",
+      "costs": {
+        "stay": "560.00",
+        "food": "280.00",
+        "other": "120.00"
+      },
+      "visa": "not_needed",
+      "transports": [
+        {
+          "modes": [
+            "train"
+          ],
+          "cost": "190.00",
+          "minutes": 840
+        },
+        {
+          "modes": [
+            "bus",
+            "ferry"
+          ],
+          "cost": "140.00",
+          "minutes": 1080
+        },
+        {
+          "modes": [
+            "car"
+          ],
+          "cost": "260.00",
+          "minutes": 720
+        }
+      ],
+      "tags": [
+        "city"
+      ]
+    },
+    {
+      "title": "Dolomites hut to hut",
+      "countries": [
+        "IT"
+      ],
+      "places": [
+        {
+          "name": "Cortina d'Ampezzo",
+          "lat": 46.5405,
+          "lng": 12.1357
+        },
+        {
+          "name": "Tre Cime di Lavaredo",
+          "lat": 46.6186,
+          "lng": 12.3024
+        },
+        {
+          "name": "Seceda",
+          "lat": 46.6,
+          "lng": 11.7247
+        }
+      ],
+      "months": [
+        7,
+        8,
+        9
+      ],
+      "days_min": 5,
+      "days_max": 7,
+      "days_ideal": 6,
+      "description_md": "A few days from hut to hut on the Alta Via 1. The huts are booked out by spring, so this one needs planning early.",
+      "currency": "EUR",
+      "costs": {
+        "stay": "480.00",
+        "food": "300.00",
+        "other": "90.00"
+      },
+      "visa": "not_needed",
+      "transports": [
+        {
+          "modes": [
+            "car"
+          ],
+          "cost": "320.00",
+          "minutes": 960
+        },
+        {
+          "modes": [
+            "flight",
+            "bus"
+          ],
+          "cost": "380.00",
+          "minutes": 540
+        }
+      ],
+      "tags": [
+        "mountains",
+        "nature"
+      ]
+    },
+    {
+      "title": "Kyoto in autumn",
+      "countries": [
+        "JP"
+      ],
+      "places": [
+        {
+          "name": "Kyoto",
+          "lat": 35.0116,
+          "lng": 135.7681
+        },
+        {
+          "name": "Nara",
+          "lat": 34.6851,
+          "lng": 135.8048
+        },
+        {
+          "name": "Arashiyama",
+          "lat": 35.0094,
+          "lng": 135.6668
+        }
+      ],
+      "months": [
+        10,
+        11
+      ],
+      "days_min": 10,
+      "days_max": 16,
+      "days_ideal": 14,
+      "description_md": "Temples in the maples at their reddest, late in November. Check the visa rules for the passport well ahead.",
+      "currency": "EUR",
+      "costs": {
+        "stay": "1400.00",
+        "food": "700.00",
+        "other": "400.00"
+      },
+      "visa": "needed",
+      "transports": [
+        {
+          "modes": [
+            "flight"
+          ],
+          "cost": "950.00",
+          "minutes": 1800
+        }
+      ],
+      "tags": [
+        "city"
+      ]
+    }
+  ]
+}

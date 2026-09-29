@@ -38,19 +38,24 @@ func NewTripRepository(pool *pgxpool.Pool) *TripRepository {
 // subquery without ambiguity.
 //
 // reader is the query parameter holding the person the trip is read for, or ""
-// when it is read on nobody's behalf. It decides only whether the plan a report
-// was copied from may be pointed at: somebody who cannot open that plan is not
-// told which it is.
+// when it is read on nobody's behalf. It decides whether the plan a report was
+// copied from may be pointed at - somebody who cannot open that plan is not
+// told which it is - and whose tags the trip is read with, since tags are a
+// person's own.
 func tripSummaryColumns(reader string) string {
-	sourceVisible := "false"
+	sourceVisible, tags := "false", "NULL::jsonb"
 	if reader != "" {
 		sourceVisible = `EXISTS (SELECT 1 FROM trips st
 		   LEFT JOIN trip_members sm ON sm.trip_id = st.id AND sm.user_id = ` + reader + `
 		   WHERE st.id = t.source_trip_id AND (st.owner_id = ` + reader + ` OR sm.user_id IS NOT NULL))`
+		tags = `(SELECT jsonb_agg(jsonb_build_object('id', tg.id, 'name', tg.name, 'color', tg.color) ORDER BY lower(tg.name), tg.id)
+		   FROM trip_tags tt JOIN tags tg ON tg.id = tt.tag_id
+		   WHERE tt.trip_id = t.id AND tg.user_id = ` + reader + `)`
 	}
-	return `t.id, t.owner_id, t.kind, t.source_trip_id, t.title, t.summary, t.start_date, t.end_date,
+	return `t.id, t.owner_id, t.kind, t.source_trip_id, t.from_plan, t.title, t.summary, t.start_date, t.end_date,
 	t.timezone, t.currency, t.travelers, (t.budget_amount * 100)::bigint, t.cover_media_id,
-	t.cover_crop_x, t.cover_crop_y, t.cover_crop_w, t.cover_crop_h, t.languages,
+	t.cover_crop_x, t.cover_crop_y, t.cover_crop_w, t.cover_crop_h, t.languages, coalesce(t.state, '') AS state,
+	t.track_speed_kmh,
 	(SELECT jsonb_object_agg(tr.lang, tr.fields) FROM (
 	   SELECT lang, jsonb_object_agg(field, value) AS fields FROM translations
 	   WHERE trip_id = t.id AND num_nonnulls(document_id, day_id, stay_id, item_id, leg_id, transfer_id) = 0
@@ -58,7 +63,14 @@ func tripSummaryColumns(reader string) string {
 	t.created_at, t.updated_at, o.display_name, o.email,
 	(SELECT d.id FROM documents d WHERE d.trip_id = t.id AND d.kind = 'plan') AS plan_id,
 	(SELECT d.id FROM documents d WHERE d.trip_id = t.id AND d.kind = 'report') AS report_id,
-	` + sourceVisible + ` AS source_visible`
+	` + sourceVisible + ` AS source_visible, ` + tags + ` AS tags`
+}
+
+// tripTagRow is a tag as the trip query aggregates it into JSON.
+type tripTagRow struct {
+	ID    uuid.UUID `json:"id"`
+	Name  string    `json:"name"`
+	Color string    `json:"color"`
 }
 
 // scanTripSummary reads one row in the order of tripSummaryColumns followed by
@@ -69,16 +81,20 @@ func scanTripSummary(row pgx.Row, extra ...any) (domain.TripSummary, error) {
 		budget *int64
 		role   *string
 		crop   [4]*float64
+		tags   []tripTagRow
 	)
-	dest := []any{&s.ID, &s.OwnerID, &s.Kind, &s.SourceTripID, &s.Title, &s.Summary, &s.StartDate, &s.EndDate,
+	dest := []any{&s.ID, &s.OwnerID, &s.Kind, &s.SourceTripID, &s.FromPlan, &s.Title, &s.Summary, &s.StartDate, &s.EndDate,
 		&s.Timezone, &s.Currency, &s.Travelers, &budget, &s.CoverMediaID,
-		&crop[0], &crop[1], &crop[2], &crop[3], &s.Languages, &s.Translations,
+		&crop[0], &crop[1], &crop[2], &crop[3], &s.Languages, &s.State, &s.TrackSpeedKmh, &s.Translations,
 		&s.CreatedAt, &s.UpdatedAt, &s.Owner.DisplayName, &s.Owner.Email,
-		&s.PlanID, &s.ReportID, &s.SourceVisible, &role}
+		&s.PlanID, &s.ReportID, &s.SourceVisible, &tags, &role}
 	if err := row.Scan(append(dest, extra...)...); err != nil {
 		return domain.TripSummary{}, err
 	}
 	s.Owner.ID = s.OwnerID
+	for _, tag := range tags {
+		s.Tags = append(s.Tags, domain.TripTag{ID: tag.ID, Name: tag.Name, Color: domain.TagColor(tag.Color)})
+	}
 	if crop[0] != nil && crop[1] != nil && crop[2] != nil && crop[3] != nil {
 		s.CoverCrop = &domain.CoverCrop{X: *crop[0], Y: *crop[1], W: *crop[2], H: *crop[3]}
 	}
@@ -125,6 +141,25 @@ func cropParams(crop *domain.CoverCrop) (x, y, w, h *float64) {
 	return &crop.X, &crop.Y, &crop.W, &crop.H
 }
 
+// stateParam gives a plan's state as its column takes it: NULL for an open plan.
+func stateParam(state domain.PlanState) *string {
+	if state == domain.PlanOpen {
+		return nil
+	}
+	value := string(state)
+	return &value
+}
+
+// trackSpeedParam gives the speed a plan's lines are timed at as its column
+// takes it: a trip written without one, as a report copied in code may be,
+// starts at the default.
+func trackSpeedParam(speed float64) float64 {
+	if speed == 0 {
+		return domain.DefaultTrackSpeed
+	}
+	return speed
+}
+
 // Create - inserts a trip with its document, empty days one per date: a plan
 // for a plan, a report for a report.
 //
@@ -153,10 +188,11 @@ func (r *TripRepository) Create(ctx context.Context, trip domain.Trip) (domain.T
 func insertTrip(ctx context.Context, tx pgx.Tx, trip domain.Trip) error {
 	_, err := tx.Exec(ctx,
 		`INSERT INTO trips (id, owner_id, kind, source_trip_id, title, summary, start_date, end_date, timezone,
-		                    currency, travelers, budget_amount, languages)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::numeric, $13)`,
+		                    currency, travelers, budget_amount, languages, state, from_plan, track_speed_kmh)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::numeric, $13, $14, $4::uuid IS NOT NULL, $15)`,
 		trip.ID, trip.OwnerID, trip.Kind, trip.SourceTripID, trip.Title, trip.Summary, trip.StartDate,
-		trip.EndDate, trip.Timezone, trip.Currency, trip.Travelers, moneyParam(trip.Budget), languagesParam(trip.Languages))
+		trip.EndDate, trip.Timezone, trip.Currency, trip.Travelers, moneyParam(trip.Budget), languagesParam(trip.Languages),
+		stateParam(trip.State), trackSpeedParam(trip.TrackSpeedKmh))
 	if err != nil {
 		return fmt.Errorf("create trip: %w", err)
 	}
@@ -262,7 +298,10 @@ func likePattern(query string) string {
 //
 // By relevance the order puts what matters now first: ongoing trips, then
 // upcoming ones by start date, then trips without dates by creation, newest
-// first, then completed trips from the most recent. By update the trip whose
+// first, then finished trips from the most recent. A plan is finished once it
+// is completed or cancelled; until then a plan whose dates have passed stays
+// with the ongoing ones, since it still asks to be closed. A report is finished
+// once its dates have passed. By update the trip whose
 // content changed last comes first, in a single group. Either order is
 // expressed as a (group, key, id) triple sorted ascending, which is also the
 // keyset of the cursor.
@@ -292,9 +331,11 @@ func (r *TripRepository) List(ctx context.Context, userID uuid.UUID, filter doma
 	if filter.Sort != domain.SortUpdated {
 		today := arg(now)
 		group = `CASE
+		       WHEN t.state IS NOT NULL THEN 3
 		       WHEN t.start_date IS NULL THEN 2
 		       WHEN (` + today + `::timestamptz AT TIME ZONE t.timezone)::date < t.start_date THEN 1
-		       WHEN (` + today + `::timestamptz AT TIME ZONE t.timezone)::date > t.end_date THEN 3
+		       WHEN (` + today + `::timestamptz AT TIME ZONE t.timezone)::date > t.end_date
+		            AND t.kind = 'report' THEN 3
 		       ELSE 0
 		     END`
 		key = `CASE g.sort_group
@@ -446,11 +487,11 @@ func (r *TripRepository) Update(ctx context.Context, trip domain.Trip, confirm b
 			 SET title = $2, summary = $3, start_date = $4, end_date = $5, timezone = $6, currency = $7,
 			     travelers = $8, budget_amount = $9::numeric, cover_media_id = $10, languages = $11,
 			     cover_crop_x = $12, cover_crop_y = $13, cover_crop_w = $14, cover_crop_h = $15,
-			     updated_at = now()
+			     state = $16, track_speed_kmh = $17, updated_at = now()
 			 WHERE id = $1`,
 			trip.ID, trip.Title, trip.Summary, trip.StartDate, trip.EndDate, trip.Timezone, trip.Currency,
 			trip.Travelers, moneyParam(trip.Budget), trip.CoverMediaID, languagesParam(trip.Languages),
-			cropX, cropY, cropW, cropH); err != nil {
+			cropX, cropY, cropW, cropH, stateParam(trip.State), trackSpeedParam(trip.TrackSpeedKmh)); err != nil {
 			return fmt.Errorf("update trip: %w", err)
 		}
 		translated := []string{}
@@ -688,14 +729,21 @@ func (r *TripRepository) UpdateMember(ctx context.Context, tripID, userID uuid.U
 // Returns:
 //   - domain.ErrNotFound when the person is not a member.
 func (r *TripRepository) RemoveMember(ctx context.Context, tripID, userID uuid.UUID) error {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM trip_members WHERE trip_id = $1 AND user_id = $2`, tripID, userID)
-	if err != nil {
-		return fmt.Errorf("remove member: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return domain.ErrNotFound
-	}
-	return nil
+	return pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `DELETE FROM trip_members WHERE trip_id = $1 AND user_id = $2`, tripID, userID)
+		if err != nil {
+			return fmt.Errorf("remove member: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return domain.ErrNotFound
+		}
+		// Somebody who left the trip brings nothing on it any more.
+		if _, err := tx.Exec(ctx, `UPDATE packing_items SET bringer_id = NULL WHERE trip_id = $1 AND bringer_id = $2`,
+			tripID, userID); err != nil {
+			return fmt.Errorf("clear bringer: %w", err)
+		}
+		return nil
+	})
 }
 
 // AdminList - returns one page of every live trip, newest first, whoever owns

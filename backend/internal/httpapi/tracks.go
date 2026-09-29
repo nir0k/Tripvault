@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -64,8 +66,10 @@ func (s *Server) handleImportItemTrack(w http.ResponseWriter, r *http.Request) {
 		PointCount:   parsed.PointCount,
 		AscentM:      parsed.AscentM,
 		DescentM:     parsed.DescentM,
+		Grades:       parsed.Grades,
 		StartedAt:    parsed.StartedAt,
 		EndedAt:      parsed.EndedAt,
+		ClimbVersion: track.ClimbVersion,
 	}, data)
 	if err != nil {
 		s.writeDomainError(w, r, "save track", err)
@@ -140,6 +144,36 @@ func (s *Server) handleDeleteItemTrack(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.documents.DeleteTrack(r.Context(), item.ID); err != nil {
 		s.writeDomainError(w, r, "delete track", err)
+		return
+	}
+	s.writeDocument(w, r, http.StatusOK, document.ID)
+}
+
+// trackSpeedRequest is the body that sets the speed an activity's line is
+// timed at; null gives the line the plan's speed back.
+type trackSpeedRequest struct {
+	SpeedKmh *float64 `json:"speed_kmh"`
+}
+
+// handleUpdateItemTrack sets the speed on the flat the time of an activity's
+// line is worked out at, overriding the plan's own.
+func (s *Server) handleUpdateItemTrack(w http.ResponseWriter, r *http.Request) {
+	item, document, ok := s.placeFor(w, r)
+	if !ok {
+		return
+	}
+	var body trackSpeedRequest
+	if !s.decodeJSON(w, r, &body) {
+		return
+	}
+	if body.SpeedKmh != nil {
+		if err := domain.ValidateTrackSpeed("speed_kmh", *body.SpeedKmh); err != nil {
+			s.writeDomainError(w, r, "validate track speed", err)
+			return
+		}
+	}
+	if err := s.documents.SetTrackSpeed(r.Context(), item.ID, body.SpeedKmh); err != nil {
+		s.writeDomainError(w, r, "set track speed", err)
 		return
 	}
 	s.writeDocument(w, r, http.StatusOK, document.ID)
@@ -270,4 +304,51 @@ func (s *Server) writeTrackError(w http.ResponseWriter, r *http.Request, err err
 	default:
 		s.writeDomainError(w, r, "read track", err)
 	}
+}
+
+// remeasureTracks measures again, in the background, the climb of every track
+// measured an older way than this build measures it, from the file the track
+// was imported from. It runs when the service starts and after a restore,
+// which may bring tracks measured by an older build. A track whose file cannot
+// be read keeps what it had and is tried again on the next start.
+func (s *Server) remeasureTracks() {
+	if s.documents == nil {
+		return
+	}
+	go func() {
+		var stale []uuid.UUID
+		var err error
+		s.inBackground(func(ctx context.Context) {
+			stale, err = s.documents.StaleTracks(ctx, track.ClimbVersion)
+		})
+		if err != nil {
+			s.logger.Warn("list tracks to measure again failed", slog.Any("error", err))
+			return
+		}
+		measured := 0
+		for _, id := range stale {
+			s.inBackground(func(ctx context.Context) {
+				file, err := s.documents.TrackFile(ctx, id)
+				if err != nil {
+					s.logger.Warn("read track file failed", slog.String("track_id", id.String()), slog.Any("error", err))
+					return
+				}
+				parsed, err := track.Parse(file.Data)
+				if err != nil {
+					s.logger.Warn("measure track failed", slog.String("track_id", id.String()), slog.Any("error", err))
+					return
+				}
+				if err := s.documents.UpdateTrackClimb(ctx, id, parsed.AscentM, parsed.DescentM, parsed.Grades,
+					track.ClimbVersion); err != nil {
+					s.logger.Warn("store track climb failed", slog.String("track_id", id.String()), slog.Any("error", err))
+					return
+				}
+				measured++
+			})
+		}
+		if len(stale) > 0 {
+			s.logger.Info("measured the climb of tracks again",
+				slog.Int("measured", measured), slog.Int("stale", len(stale)), slog.Int("version", track.ClimbVersion))
+		}
+	}()
 }

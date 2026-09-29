@@ -134,3 +134,29 @@ export const MEDIA_FAVORITE_LIMIT = 7
 export async function setMediaFavorites(mediaIds: string[], favorite: boolean): Promise<void> {
   await http.post('/api/v1/media-favorites', { media_ids: mediaIds, favorite })
 }
+
+/**
+ * startDownload has the browser download pictures with its own downloader:
+ * the server issues an address - its ticket in a cookie scoped to it - and the
+ * browser opens it, writing to the disk as the bytes come, showing its
+ * progress and resuming a single picture. The page never holds the file. One
+ * picture comes as its own file, several as a ZIP archive of the files as they
+ * were uploaded.
+ *
+ * Arguments:
+ *   - tripId: the trip, or null for the one a read-only link opens.
+ *   - ids: the pictures, in the order wanted.
+ */
+export async function startDownload(tripId: string | null, ids: string[]): Promise<void> {
+  const path = tripId === null
+    ? '/api/v1/shared/media:download'
+    : `/api/v1/trips/${encodeURIComponent(tripId)}/media:download`
+  const { url } = (await http.post<{ url: string }>(path, { media_ids: ids })).data
+  // A link marked as a download keeps the page where it is, whatever the
+  // address answers.
+  const link = document.createElement('a')
+  link.href = url
+  link.download = ''
+  link.rel = 'noopener'
+  link.click()
+}

@@ -180,7 +180,7 @@ defineExpose({ open })
 </script>
 
 <template>
-  <dialog ref="dialog" class="modal modal-bottom sm:modal-middle">
+  <dialog ref="dialog" class="modal modal-top sm:modal-middle">
     <form class="modal-box flex max-h-[90vh] flex-col gap-3 overflow-y-auto sm:max-w-2xl" @submit.prevent="submit">
       <h2 class="text-lg font-bold">{{ editing ? t('backups.editTitle') : t('backups.createTitle') }}</h2>
 

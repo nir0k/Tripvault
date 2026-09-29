@@ -115,7 +115,7 @@ function trackEndIcon(end: 'start' | 'finish', color: string, muted: boolean): L
 // and the glyph a fixed path, so the HTML carries nothing people typed.
 function trackLabel(distance: number): string {
   const glyph = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${OUTLINE.activityHike}"/></svg>`
-  return `<span class="map-track-label">${glyph}${formatDistance(distance, locale.value, activeUnits.value)}</span>`
+  return `<span class="map-track-label">${glyph}${formatDistance(distance, locale.value, activeUnits.value, true)}</span>`
 }
 
 // arrowIcon is a white chevron turned to the direction of travel.
@@ -307,6 +307,25 @@ function draw(): void {
     }
 
     for (const leg of day.legs) {
+      // A journey with changes is drawn part by part - a walk on roads, a
+      // train in a straight line - with a small ring at each change.
+      if (leg.segments.length > 0) {
+        for (const segment of leg.segments) {
+          const part = decodePolyline(segment.geometry)
+          if (part.length >= 2) {
+            collect(part)
+            L.polyline(part, {
+              color, ...line, dashArray: segment.source === 'provider' ? undefined : '8 8', interactive: false,
+            }).addTo(layers)
+          }
+          if (segment.stop && segment.stop.lat !== null && segment.stop.lng !== null) {
+            L.circleMarker([segment.stop.lat, segment.stop.lng], {
+              radius: 4, color, weight: 2, fillColor: '#ffffff', fillOpacity: 1,
+            }).bindTooltip(segment.stop.name).addTo(layers)
+          }
+        }
+        continue
+      }
       const route = legPoints(leg, items)
       if (route.length < 2) {
         continue

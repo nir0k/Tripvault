@@ -1,0 +1,16 @@
+{
+  "_about": "The two accounts that join the example trips beside the administrator. Their password is published here on purpose: the stand is for looking, never for real data.",
+  "password": "demo-password",
+  "accounts": [
+    {
+      "role": "editor",
+      "email": "editor@example.com",
+      "display_name": "Erik the Editor"
+    },
+    {
+      "role": "viewer",
+      "email": "viewer@example.com",
+      "display_name": "Vera the Viewer"
+    }
+  ]
+}

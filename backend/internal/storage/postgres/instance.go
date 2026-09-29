@@ -207,18 +207,24 @@ func (s *backupSnapshot) AllMedia(ctx context.Context) ([]domain.Media, error) {
 	return allMedia(ctx, s.tx)
 }
 
-// AdditionalFiles lists account avatars visible in the snapshot.
+// AdditionalFiles lists account avatars and the photos of ideas visible in the snapshot.
 func (s *backupSnapshot) AdditionalFiles(ctx context.Context) ([]backup.FileMetadata, error) {
 	return additionalFiles(ctx, s.tx)
 }
 
-// additionalFiles reads every avatar key in the snapshot. The archive builder
-// measures the bytes because users do not store an avatar size or checksum.
+// additionalFiles reads every avatar key and every idea photo, with its
+// preview, in the snapshot: files the server rendered itself, all JPEG. The
+// archive builder measures the bytes because neither stores a size or checksum.
 func additionalFiles(ctx context.Context, q pgx.Tx) ([]backup.FileMetadata, error) {
 	rows, err := q.Query(ctx,
-		`SELECT avatar_key, avatar_updated_at FROM users WHERE avatar_key <> '' ORDER BY id`)
+		`SELECT avatar_key, 'avatar.jpg', avatar_updated_at FROM users WHERE avatar_key <> ''
+		 UNION ALL
+		 SELECT storage_key, 'photo.jpg', created_at FROM idea_photos
+		 UNION ALL
+		 SELECT thumb_key, 'preview.jpg', created_at FROM idea_photos
+		 ORDER BY 1`)
 	if err != nil {
-		return nil, fmt.Errorf("list account avatars: %w", err)
+		return nil, fmt.Errorf("list account avatars and idea photos: %w", err)
 	}
 	defer rows.Close()
 
@@ -226,10 +232,9 @@ func additionalFiles(ctx context.Context, q pgx.Tx) ([]backup.FileMetadata, erro
 	for rows.Next() {
 		var file backup.FileMetadata
 		var updated *time.Time
-		if err := rows.Scan(&file.Name, &updated); err != nil {
-			return nil, fmt.Errorf("scan account avatar: %w", err)
+		if err := rows.Scan(&file.Name, &file.OriginalName, &updated); err != nil {
+			return nil, fmt.Errorf("scan additional file: %w", err)
 		}
-		file.OriginalName = "avatar.jpg"
 		file.MIME = "image/jpeg"
 		if updated != nil {
 			file.UploadedAt = updated.UTC()

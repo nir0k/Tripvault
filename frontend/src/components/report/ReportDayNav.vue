@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { VueDraggable, type DraggableEvent } from 'vue-draggable-plus'
 import { useI18n } from 'vue-i18n'
-import type { PlanDay } from '@/api/types'
+import type { PlanDay, PlanItem } from '@/api/types'
 import { formatDayDate } from '@/utils/format'
 import { dayColor, isVisit } from '@/utils/plan'
 import { revealElement } from '@/utils/reveal'
@@ -12,7 +13,21 @@ import { revealElement } from '@/utils/reveal'
 // one marked. A column on wide screens, a row that scrolls sideways on phones.
 const props = defineProps<{
   days: PlanDay[]
+  /** Take places dropped on a day, as the plan's list of days does. */
+  droppable?: boolean
 }>()
+
+const emit = defineEmits<{
+  /** A place was dropped onto a day. */
+  dropPlace: [itemId: string, dayId: string]
+}>()
+
+// onPlaceDrop reports a place dropped onto a day.
+function onPlaceDrop(day: PlanDay, event: DraggableEvent<PlanItem>): void {
+  if (event.data) {
+    emit('dropPlace', event.data.id, day.id)
+  }
+}
 
 const { t, locale } = useI18n()
 
@@ -78,24 +93,35 @@ watch(() => props.days, onScroll)
   <nav :aria-label="t('report.contents')">
     <ul class="-mx-4 flex gap-1 overflow-x-auto px-4 pb-1 lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0 lg:pb-0">
       <li v-for="day in days" :key="day.id" class="shrink-0">
-        <button
-          type="button"
-          class="btn btn-sm h-auto min-h-8 w-full flex-nowrap justify-start gap-2 px-2 py-1 font-normal"
-          :class="current === day.position ? 'btn-primary' : 'btn-ghost'"
-          :aria-current="current === day.position ? 'location' : undefined"
-          @click="revealElement(sectionId(day), false)"
+        <!-- A day takes a place dropped on it, as a day of the plan does, and
+             never gives one back: nothing here is dragged. -->
+        <VueDraggable
+          :model-value="[]"
+          :group="{ name: 'places', pull: false, put: true }"
+          :disabled="!droppable"
+          draggable=".never"
+          class="w-full"
+          @add="(event: DraggableEvent<PlanItem>) => onPlaceDrop(day, event)"
         >
-          <span
-            class="size-2.5 shrink-0 rounded-full ring-1 ring-base-100"
-            :style="{ backgroundColor: dayColor(day.position) }"
-            aria-hidden="true"
-          ></span>
-          <span class="font-semibold tabular-nums lg:w-5 lg:text-right">{{ day.position + 1 }}</span>
-          <span class="max-w-40 min-w-0 flex-1 truncate text-left lg:max-w-none">
-            {{ day.title || formatDayDate(day.date, locale) || t('plan.dayNumber', { n: day.position + 1 }) }}
-          </span>
-          <span v-if="placeCount(day) > 0" class="badge badge-xs">{{ placeCount(day) }}</span>
-        </button>
+          <button
+            type="button"
+            class="btn btn-sm h-auto min-h-8 w-full flex-nowrap justify-start gap-2 px-2 py-1 font-normal"
+            :class="current === day.position ? 'btn-primary' : 'btn-ghost'"
+            :aria-current="current === day.position ? 'location' : undefined"
+            @click="revealElement(sectionId(day), false)"
+          >
+            <span
+              class="size-2.5 shrink-0 rounded-full ring-1 ring-base-100"
+              :style="{ backgroundColor: dayColor(day.position) }"
+              aria-hidden="true"
+            ></span>
+            <span class="font-semibold tabular-nums lg:w-5 lg:text-right">{{ day.position + 1 }}</span>
+            <span class="max-w-40 min-w-0 flex-1 truncate text-left lg:max-w-none">
+              {{ day.title || formatDayDate(day.date, locale) || t('plan.dayNumber', { n: day.position + 1 }) }}
+            </span>
+            <span v-if="placeCount(day) > 0" class="badge badge-xs">{{ placeCount(day) }}</span>
+          </button>
+        </VueDraggable>
       </li>
     </ul>
   </nav>

@@ -7,6 +7,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import IconSelect from '@/components/IconSelect.vue'
 import MarkdownText from '@/components/MarkdownText.vue'
 import ReportTrackLine from '@/components/report/ReportTrackLine.vue'
+import { useTripStore } from '@/stores/trip'
 import { formatClock, formatMoney, formatTimeOfDay } from '@/utils/format'
 import {
   activityTypeOptions, formatDuration, itemIcon, itemKindLabel, placeCategoryOptions, planTimeLabel,
@@ -40,6 +41,7 @@ const emit = defineEmits<{
   editCost: []
   importTrack: [file: File]
   removeTrack: []
+  trackSpeed: [speedKmh: number | null]
   up: []
   down: []
   move: []
@@ -60,6 +62,10 @@ const isAnchor = computed(() => props.item.kind === 'stay_anchor')
 // somebody who may change the plan.
 const editable = computed(() => props.canEdit && !isAnchor.value)
 const isActivity = computed(() => props.item.kind === 'activity')
+
+// The plan's speed its routes are timed at, unless a route names its own.
+const tripStore = useTripStore()
+const planSpeed = computed(() => tripStore.trip?.track_speed_kmh ?? null)
 
 // The type is a category for a place and a kind of activity for an activity.
 const typeOptions = computed(() => (isActivity.value ? activityTypeOptions(t) : placeCategoryOptions(t)))
@@ -297,9 +303,11 @@ const host = computed(() => {
         :track="item.track"
         :editing="editable"
         hint=""
+        :plan-speed="planSpeed"
         class="mt-2"
         @import="(file) => emit('importTrack', file)"
         @remove="emit('removeTrack')"
+        @speed="(speed) => emit('trackSpeed', speed)"
       />
     </div>
 

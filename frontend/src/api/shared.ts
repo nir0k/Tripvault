@@ -38,3 +38,16 @@ export async function downloadSharedReportPDF(
   })
   saveBlob(response.data, filenameFrom(response.headers['content-disposition'], 'report.pdf'))
 }
+
+/**
+ * downloadSharedPlanPDF saves the plan a read-only link opens as a PDF, in the
+ * language and the units the page is showing, since a link has no account.
+ */
+export async function downloadSharedPlanPDF(language: string, units: Units): Promise<void> {
+  const response = await http.get<Blob>('/api/v1/shared/plan/pdf', {
+    params: { lang: language, units },
+    responseType: 'blob',
+    timeout: PDF_TIMEOUT_MS,
+  })
+  saveBlob(response.data, filenameFrom(response.headers['content-disposition'], 'plan.pdf'))
+}

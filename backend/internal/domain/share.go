@@ -27,6 +27,9 @@ type ShareLink struct {
 	Label string
 	// IncludePrivateMedia lets the link show media marked private; off by default.
 	IncludePrivateMedia bool
+	// AllowDownload lets the link download the pictures it shows, one by one or
+	// as an archive; off by default.
+	AllowDownload bool
 	// ExpiresAt is when the link stops working; nil never expires.
 	ExpiresAt *time.Time
 	RevokedAt *time.Time

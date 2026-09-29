@@ -70,10 +70,6 @@ services:
       TRIPVAULT_ADMIN_EMAIL: ${TRIPVAULT_ADMIN_EMAIL:-admin@example.com}
       TRIPVAULT_ADMIN_PASSWORD: ${TRIPVAULT_ADMIN_PASSWORD:-stand-admin-password}
       TRIPVAULT_ADMIN_DISPLAY_NAME: ${TRIPVAULT_ADMIN_DISPLAY_NAME:-Administrator}
-      # Two example trips on an empty database, so there is something to look at
-      # the moment the stand comes up. Development only; the configuration
-      # refuses the flag in production.
-      TRIPVAULT_DEMO_DATA: ${TRIPVAULT_DEMO_DATA:-true}
       # A stand keeps its photographs inside the container, so they die with
       # it like everything else. The limits are the production defaults.
       TRIPVAULT_MEDIA_MAX_SIZE_MB: ${TRIPVAULT_MEDIA_MAX_SIZE_MB:-25}
@@ -109,6 +105,27 @@ services:
       - "127.0.0.1:${TRIPVAULT_API_PORT:-8070}:8080"
     logging: *logging
 
+  # Fills the stand with its examples once the backend is healthy: two trips,
+  # two more accounts and a few ideas, written through the public API from the
+  # fixtures in ./seed/fixtures, so they pass the validation of the build the
+  # stand runs. It runs once and exits; a stand that has them already is left
+  # alone, and TRIPVAULT_SEED=false leaves a new one empty.
+  tripvault-seed:
+    build:
+      context: ./seed
+    image: tripvault-seed:stand
+    pull_policy: build
+    restart: "no"
+    depends_on:
+      tripvault-backend:
+        condition: service_healthy
+    environment:
+      TRIPVAULT_SEED: ${TRIPVAULT_SEED:-true}
+      TRIPVAULT_API_URL: http://tripvault-backend:8080
+      TRIPVAULT_ADMIN_EMAIL: ${TRIPVAULT_ADMIN_EMAIL:-admin@example.com}
+      TRIPVAULT_ADMIN_PASSWORD: ${TRIPVAULT_ADMIN_PASSWORD:-stand-admin-password}
+    logging: *logging
+
   tripvault-frontend:
     build:
       context: ../frontend
@@ -127,5 +144,6 @@ services:
       # The proxy in front whose X-Forwarded-For names the real client.
       TRIPVAULT_TRUSTED_PROXY: ${TRIPVAULT_TRUSTED_PROXY:-127.0.0.1/32}
     ports:
-      - "127.0.0.1:${TRIPVAULT_WEB_PORT:-8071}:8080"
+      # Bound to localhost unless TRIPVAULT_BIND_ADDRESS opens it to the network.
+      - "${TRIPVAULT_BIND_ADDRESS:-127.0.0.1}:${TRIPVAULT_WEB_PORT:-8071}:8080"
     logging: *logging
