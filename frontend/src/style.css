@@ -551,3 +551,18 @@ fieldset {
   border-radius: 50%;
   background: var(--color-base-100);
 }
+
+/* A striped table's stripe and the row under the pointer, as a shade of the
+   text over the page rather than daisyUI's base-200: in the light theme that is
+   2% off white and the stripes all but vanish. A share of the text's colour
+   reads alike in both themes, and the row under the pointer is a step darker
+   than a stripe, so it stands out on either. */
+.table-zebra tbody tr:nth-child(2n) {
+  background-color: color-mix(in oklab, var(--color-base-content) 4%, var(--color-base-100));
+}
+
+@media (hover: hover) {
+  .table-zebra tbody tr.row-hover:hover {
+    background-color: color-mix(in oklab, var(--color-base-content) 8%, var(--color-base-100));
+  }
+}

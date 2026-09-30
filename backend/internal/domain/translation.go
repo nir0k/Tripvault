@@ -36,7 +36,7 @@ const (
 var translatableFields = map[TranslationTarget]map[string]int{
 	TranslateTrip:     {"title": maxTripTitleLength, "summary": maxTripSummaryLength},
 	TranslateDocument: {"intro_md": maxMarkdownLength, "summary_md": maxMarkdownLength},
-	TranslateDay:      {"title": maxNameLength, "notes_md": maxMarkdownLength},
+	TranslateDay:      {"title": maxNameLength, "notes_md": maxMarkdownLength, "highlight": MaxDayHighlight},
 	TranslateStay:     {"name": maxNameLength, "notes_md": maxMarkdownLength},
 	// A transfer's name is a carrier or a number, the same in every language.
 	TranslateTransfer: {"from_name": maxNameLength, "to_name": maxNameLength, "notes_md": maxMarkdownLength},
@@ -208,6 +208,7 @@ func (c DocumentContent) Translated(language string) DocumentContent {
 		day := &c.Days[index]
 		apply(day.ID, "title", &day.Title)
 		apply(day.ID, "notes_md", &day.NotesMD)
+		apply(day.ID, "highlight", &day.Highlight)
 	}
 	c.Stays = slices.Clone(c.Stays)
 	for index := range c.Stays {

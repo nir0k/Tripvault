@@ -14,11 +14,13 @@ Only the standard library is used, so the image needs nothing but Python.
 """
 
 import json
+import mimetypes
 import os
 import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 
 API = os.environ.get("TRIPVAULT_API_URL", "http://tripvault-backend:8080").rstrip("/") + "/api/v1"
 ADMIN_EMAIL = os.environ.get("TRIPVAULT_ADMIN_EMAIL", "admin@example.com")
@@ -28,6 +30,11 @@ FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
 # The fields of a stay, a transfer, a place and an expense that only a report
 # takes; a plan refuses them, so they are held back until the report exists.
 REPORT_ONLY = {"actual_cost_amount", "actual_amount", "report"}
+
+# What a fixture's place, day or trip names beside its own fields: the files
+# the seed uploads for it after it exists. The API takes none of them in the
+# body that creates the element.
+EXTRAS = {"photos", "favorite_photos", "cover_photo", "track", "attachments"}
 
 
 class Failure(Exception):
@@ -73,6 +80,44 @@ def request(method, path, token=None, body=None):
     except urllib.error.HTTPError as error:
         raise Failure(f"{method} {path} answered {error.code}: {error.read().decode('utf-8', 'replace')}") from None
     return json.loads(raw) if raw else None
+
+
+def upload(path, token, name, data, fields=()):
+    """Send one file as a multipart upload, the way the browser does.
+
+    Arguments:
+        path: the path under /api/v1.
+        token: the access token of the person uploading.
+        name: the file's name, which says what kind of file it is.
+        data: its bytes.
+        fields: (name, value) pairs sent as form fields before the file.
+
+    Raises:
+        Failure: when the API refuses the file.
+    """
+    boundary = "tripvault-seed-" + uuid.uuid4().hex
+    body = b""
+    for field, value in fields:
+        body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"\r\n\r\n{value}\r\n").encode("utf-8")
+    kind = mimetypes.guess_type(name)[0] or "application/octet-stream"
+    body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\n"
+             f"Content-Type: {kind}\r\n\r\n").encode("utf-8") + data + f"\r\n--{boundary}--\r\n".encode("utf-8")
+    req = urllib.request.Request(API + path, data=body, method="POST")
+    req.add_header("Accept", "application/json")
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=120) as response:
+            raw = response.read()
+    except urllib.error.HTTPError as error:
+        raise Failure(f"POST {path} with {name} answered {error.code}: {error.read().decode('utf-8', 'replace')}") from None
+    return json.loads(raw) if raw else None
+
+
+def fixture_file(folder, name):
+    """Read one of the files beside the fixtures: a photograph, a track or an attachment."""
+    with open(os.path.join(FIXTURES, folder, name), "rb") as handle:
+        return handle.read()
 
 
 def wait_for_backend():
@@ -122,7 +167,7 @@ def without(fields, *names):
 
 def place_body(place, people):
     """Turn a fixture's place into the body the API takes, naming who pays and shares."""
-    body = without(place, "report", "split", "day")
+    body = without(place, "report", "split", "day", *EXTRAS)
     split = place.get("split")
     if split:
         body["paid_by"] = people[split["paid_by"]]
@@ -171,13 +216,97 @@ def write_legs(admin, document_id, legs):
         request("PATCH", f"/legs/{leg['id']}", admin, without(wanted, "day", "from"))
 
 
+def item_of(document, day_number, name):
+    """Find a place or an activity of a document by its day and name."""
+    for item in document["days"][day_number - 1]["items"]:
+        if item["kind"] != "stay_anchor" and item["name"] == name:
+            return item
+    raise Failure(f"day {day_number} has no place named {name!r}")
+
+
+class Gallery:
+    """The photographs of one trip, uploaded once each and found by file name."""
+
+    def __init__(self, admin, trip_id, private=()):
+        self.admin, self.trip_id, self.private, self.ids = admin, trip_id, set(private), {}
+
+    def id(self, name):
+        """Upload a photograph the first time it is named, and return its identifier."""
+        if name not in self.ids:
+            fields = [("private", "true")] if name in self.private else []
+            stored = upload(f"/trips/{self.trip_id}/media", self.admin, name, fixture_file("photos", name), fields)
+            self.ids[name] = stored["items"][0]["id"]
+        return self.ids[name]
+
+    def link(self, target, target_id, names, favorites=None):
+        """Hang photographs on a day or a place, marking a report's favourites among them."""
+        body = {"target_type": target, "target_id": target_id, "media_ids": [self.id(name) for name in names]}
+        if favorites is not None:
+            body["favorite_media_ids"] = [self.id(name) for name in favorites]
+        request("PUT", "/media-links", self.admin, body)
+
+    def cover(self, cover):
+        """Frame the trip's cover out of one of its photographs."""
+        if cover:
+            request("PATCH", f"/trips/{self.trip_id}", self.admin,
+                    {"cover_media_id": self.id(cover["photo"]), "cover_crop": cover.get("crop")})
+
+
+def dress_place(admin, gallery, item, extras, report=False):
+    """Give a stored place what a fixture adds after it exists: its photographs,
+    favourites and cover, its route or recording, and its attachments."""
+    if extras.get("photos"):
+        gallery.link("item", item["id"], extras["photos"], extras.get("favorite_photos") if report else None)
+    if extras.get("cover_photo"):
+        request("PATCH", f"/items/{item['id']}", admin, {"cover_media_id": gallery.id(extras["cover_photo"])})
+    track = extras.get("track")
+    if track:
+        track = track if isinstance(track, dict) else {"file": track}
+        upload(f"/items/{item['id']}/track", admin, track["file"], fixture_file("tracks", track["file"]))
+        if track.get("speed_kmh"):
+            request("PATCH", f"/items/{item['id']}/track", admin, {"speed_kmh": track["speed_kmh"]})
+    for attachment in extras.get("attachments", []):
+        # An attachment is its file's name, or the name with the line describing it.
+        attachment = attachment if isinstance(attachment, dict) else {"file": attachment}
+        fields = [("description", attachment["description"])] if attachment.get("description") else []
+        upload(f"/items/{item['id']}/attachments", admin, attachment["file"],
+               fixture_file("attachments", attachment["file"]), fields)
+
+
+def dress_plan(admin, trip_id, plan_id, trip):
+    """Add the plan's files: photographs on its days and places, the cover, the
+    routes of its activities and the bookings attached to its places."""
+    gallery = Gallery(admin, trip_id)
+    document = request("GET", f"/documents/{plan_id}", admin)
+    for number, day in enumerate(trip["days"], 1):
+        if day.get("photos"):
+            gallery.link("day", document["days"][number - 1]["id"], day["photos"])
+        for place in day["places"]:
+            dress_place(admin, gallery, item_of(document, number, place["name"]), place)
+    gallery.cover(trip.get("cover"))
+
+
+def tag_trip(admin, tags, trip_id, wanted):
+    """Put the administrator's tags on a trip, making each tag the first time it is named."""
+    if wanted:
+        request("PUT", f"/trips/{trip_id}/tags", admin, {"tag_ids": [tag_id(admin, tags, name, color)
+                                                                     for name, color in wanted.items()]})
+
+
+def tag_id(admin, tags, name, color):
+    """Return the identifier of one of the administrator's tags, making it when it is new."""
+    if name not in tags:
+        tags[name] = request("POST", "/tags", admin, {"name": name, "color": color})["id"]
+    return tags[name]
+
+
 def write_plan(admin, plan_id, trip, people):
     """Fill a plan: the days' words, the stays, the transfers, the places, the
     unassigned ideas, the separate expenses and the legs."""
     document = request("GET", f"/documents/{plan_id}", admin)
     days = document["days"]
     for index, day in enumerate(trip["days"]):
-        request("PATCH", f"/days/{days[index]['id']}", admin, without(day, "places"))
+        request("PATCH", f"/days/{days[index]['id']}", admin, without(day, "places", "photos", "cover"))
     # The stays come first, so their marks stand in the days before the legs are
     # looked up between the elements of each day.
     for stay in trip.get("stays", []):
@@ -234,12 +363,16 @@ def write_report(admin, plan_trip_id, trip, people):
     days = document["days"]
     for number, notes in report.get("day_notes", {}).items():
         request("PATCH", f"/days/{days[int(number) - 1]['id']}", admin, {"notes_md": notes})
+    for number, highlight in report.get("day_highlights", {}).items():
+        request("PATCH", f"/days/{days[int(number) - 1]['id']}", admin, {"highlight": highlight})
 
-    outcomes = {place["name"]: place["report"] for day in trip["days"] for place in day["places"] if "report" in place}
-    for day in days:
-        for item in day["items"]:
-            if item["kind"] != "stay_anchor" and item["name"] in outcomes:
-                request("PATCH", f"/items/{item['id']}", admin, outcomes[item["name"]])
+    # A place is found by its day and name: the same airport starts and ends
+    # the trip, and each visit went its own way.
+    for number, day in enumerate(trip["days"], 1):
+        for place in day["places"]:
+            if "report" in place:
+                item = item_of(document, number, place["name"])
+                request("PATCH", f"/items/{item['id']}", admin, without(place["report"], *EXTRAS))
 
     spent = {"stays": {}, "transfers": {}, "expenses": {}}
     for kind, key, field in (("stays", "name", "actual_cost_amount"), ("transfers", "name", "actual_cost_amount"),
@@ -259,9 +392,30 @@ def write_report(admin, plan_trip_id, trip, people):
         body["status"] = "unplanned"
         request("POST", f"/days/{days[extra['day'] - 1]['id']}/items", admin, body)
 
+    dress_report(admin, written["id"], report_id, trip)
     if report.get("translation"):
         translate(admin, written["id"], report_id, report["translation"])
     return written
+
+
+def dress_report(admin, report_trip_id, report_id, trip):
+    """Add the report's own files: the photographs of its days and places with
+    their favourites, covers and the private one, the recordings that replace
+    the plan's routes and the receipts attached to its places. None of the
+    plan's pictures or attachments came along with the copy."""
+    report = trip["report"]
+    gallery = Gallery(admin, report_trip_id, report.get("private_photos", []))
+    document = request("GET", f"/documents/{report_id}", admin)
+    for number, day in enumerate(trip["days"], 1):
+        for place in day["places"]:
+            if "report" in place:
+                dress_place(admin, gallery, item_of(document, number, place["name"]), place["report"], report=True)
+    for number, names in report.get("day_photos", {}).items():
+        gallery.link("day", document["days"][int(number) - 1]["id"], names)
+    for number, name in report.get("day_covers", {}).items():
+        request("PATCH", f"/days/{document['days'][int(number) - 1]['id']}", admin,
+                {"cover_media_id": gallery.id(name)})
+    gallery.cover(report.get("cover"))
 
 
 def translate(admin, report_trip_id, report_id, translation):
@@ -282,6 +436,7 @@ def translate(admin, report_trip_id, report_id, translation):
         number = str(index + 1)
         add("day", day["id"], "title", translation.get("day_titles", {}).get(number))
         add("day", day["id"], "notes_md", translation.get("day_notes", {}).get(number))
+        add("day", day["id"], "highlight", translation.get("day_highlights", {}).get(number))
         for item in day["items"]:
             words = translation.get("places", {}).get(item["name"])
             if item["kind"] != "stay_anchor" and words:
@@ -290,20 +445,23 @@ def translate(admin, report_trip_id, report_id, translation):
     request("PUT", f"/documents/{report_id}/translations/{translation['lang']}", admin, {"translations": entries})
 
 
-def write_trip(admin, name, people):
-    """Create one example trip from its fixture: the plan, its people, link and
-    packing list, and the report when the fixture has one."""
+def write_trip(admin, name, people, tags):
+    """Create one example trip from its fixture: the plan with its files, its
+    people, link, tags and packing list, and the report when the fixture has one."""
     trip = load(name)
     fields = without(trip, "stays", "transfers", "days", "unassigned", "expenses", "legs", "packing", "report",
-                     "completed")
+                     "completed", "tags", "cover")
     created = request("POST", "/trips", admin, {**fields, "kind": "plan"})
     share(admin, created["id"], trip["title"], people)
     write_plan(admin, created["plan_id"], trip, people)
+    dress_plan(admin, created["id"], created["plan_id"], trip)
+    tag_trip(admin, tags, created["id"], trip.get("tags"))
     if trip.get("packing"):
         write_packing(admin, created["id"], trip["packing"], people)
     if trip.get("report"):
         report = write_report(admin, created["id"], trip, people)
         share(admin, report["id"], trip["title"] + " (report)", people)
+        tag_trip(admin, tags, report["id"], trip["report"].get("tags"))
     # A travelled trip's plan is closed the way its travellers would close it on
     # coming home; its report, a trip of its own, has no state to close.
     if trip.get("completed"):
@@ -311,16 +469,16 @@ def write_trip(admin, name, people):
     log(f"created {trip['title']!r}")
 
 
-def write_ideas(admin):
-    """Create the administrator's ideas with the tags they wear, each tag once."""
+def write_ideas(admin, tags):
+    """Create the administrator's ideas with their photographs and the tags they
+    wear, each tag once across the ideas and the trips."""
     fixture = load("ideas.json")
-    tags = {}
     for idea in fixture["ideas"]:
-        created = request("POST", "/ideas", admin, without(idea, "tags"))
-        for name in idea.get("tags", []):
-            if name not in tags:
-                tags[name] = request("POST", "/tags", admin, {"name": name, "color": fixture["tags"].get(name)})["id"]
-        request("PUT", f"/ideas/{created['id']}/tags", admin, {"tag_ids": [tags[name] for name in idea.get("tags", [])]})
+        created = request("POST", "/ideas", admin, without(idea, "tags", "photos"))
+        for photo in idea.get("photos", []):
+            upload(f"/ideas/{created['id']}/photos", admin, photo, fixture_file("photos", photo))
+        ids = [tag_id(admin, tags, name, fixture["tags"].get(name)) for name in idea.get("tags", [])]
+        request("PUT", f"/ideas/{created['id']}/tags", admin, {"tag_ids": ids})
     log(f"created {len(fixture['ideas'])} ideas")
 
 
@@ -336,9 +494,10 @@ def main():
         log("the examples are there already")
         return
     people, password = make_accounts(admin)
+    tags = {}
     for name in ("iceland.json", "lisbon.json"):
-        write_trip(admin, name, people)
-    write_ideas(admin)
+        write_trip(admin, name, people, tags)
+    write_ideas(admin, tags)
     log(f"done: sign in as editor@example.com or viewer@example.com with the password {password!r}")
 
 

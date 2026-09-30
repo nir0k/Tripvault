@@ -71,12 +71,13 @@ type Document struct {
 
 // Day is one day of the report with its places and journeys.
 type Day struct {
-	Day      int       `yaml:"day"`
-	ID       string    `yaml:"id"`
-	Title    *Text     `yaml:"title,omitempty"`
-	Notes    *Text     `yaml:"notes,omitempty"`
-	Places   []Place   `yaml:"places,omitempty"`
-	Journeys []Journey `yaml:"journeys,omitempty"`
+	Day       int       `yaml:"day"`
+	ID        string    `yaml:"id"`
+	Title     *Text     `yaml:"title,omitempty"`
+	Notes     *Text     `yaml:"notes,omitempty"`
+	Highlight *Text     `yaml:"highlight,omitempty"`
+	Places    []Place   `yaml:"places,omitempty"`
+	Journeys  []Journey `yaml:"journeys,omitempty"`
 }
 
 // Place is a place or an activity of a day.
@@ -183,8 +184,9 @@ func Build(trip domain.TripSummary, content domain.DocumentContent, language str
 	for index, day := range content.Days {
 		entry := Day{
 			Day: index + 1, ID: day.ID.String(),
-			Title: text(domain.TranslateDay, day.ID, "title", day.Title),
-			Notes: text(domain.TranslateDay, day.ID, "notes_md", day.NotesMD),
+			Title:     text(domain.TranslateDay, day.ID, "title", day.Title),
+			Notes:     text(domain.TranslateDay, day.ID, "notes_md", day.NotesMD),
+			Highlight: text(domain.TranslateDay, day.ID, "highlight", day.Highlight),
 		}
 		items := domain.DayItems(content.Items, &day.ID)
 		for _, item := range items {
@@ -324,6 +326,7 @@ func Read(data []byte, trip domain.TripSummary, content domain.DocumentContent, 
 		if id, ok := element(day.ID, domain.TranslateDay); ok {
 			add(domain.TranslateDay, id, "title", day.Title)
 			add(domain.TranslateDay, id, "notes_md", day.Notes)
+			add(domain.TranslateDay, id, "highlight", day.Highlight)
 		}
 		for _, place := range day.Places {
 			if id, ok := element(place.ID, domain.TranslateItem); ok {

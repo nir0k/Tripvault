@@ -26,6 +26,7 @@ import PlanTransferDialog from '@/components/plan/PlanTransferDialog.vue'
 import PlanTransfers from '@/components/plan/PlanTransfers.vue'
 import PlanTargetDialog from '@/components/plan/PlanTargetDialog.vue'
 import EditableMarkdown from '@/components/report/EditableMarkdown.vue'
+import { provideDocumentChange } from '@/composables/useDocumentChange'
 import { useLegCalculation } from '@/composables/useLegCalculation'
 import { useMediaQuery } from '@/composables/useMediaQuery'
 import { useTripStore } from '@/stores/trip'
@@ -39,6 +40,10 @@ const router = useRouter()
 const store = useTripStore()
 
 const plan = ref<TripDocument | null>(null)
+// A card that attaches a file to a place hands back the plan it answered with.
+provideDocumentChange((document) => {
+  plan.value = document
+})
 const loading = ref(false)
 const busy = ref(false)
 const error = ref('')

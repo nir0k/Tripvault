@@ -1,5 +1,5 @@
 {
-  "_about": "The trip that has been travelled: a plan, closed as completed, and a report copied from it with how every place turned out, what was really spent and a Russian translation that leaves some days and places untranslated.",
+  "_about": "The trip that has been travelled: a plan, closed as completed, with its packing list ticked off, routes for its walks and the bookings attached to its places; and a report copied from it with how every place turned out, what was really spent, the recordings of the walks, photographs on the days and places - favourites among many at one beach, one private, one without a time - covers, and a Russian translation that leaves some days and places untranslated.",
   "title": "Iceland: the south coast",
   "summary": "Four days along route 1, from Reykjavík to Vík and back. Waterfalls, black sand and one very windy afternoon.",
   "start_date": "2026-06-20",
@@ -84,7 +84,7 @@
   "days": [
     {
       "title": "Reykjavík to Hvolsvöllur",
-      "notes_md": "Pick the car up at the airport and take route 1 east. Nothing ambitious: the point is to be at the guesthouse before the shop closes.",
+      "notes_md": "Pick the car up at the airport and take route 1 east, with one walk on the way: the warm river above Hveragerði. The point is still to be at the guesthouse before the shop closes.",
       "places": [
         {
           "name": "Keflavík airport",
@@ -102,6 +102,41 @@
             "status": "visited",
             "story_md": "The queue took half an hour; the car had a scratch we photographed.",
             "actual_time": "10:55"
+          },
+          "attachments": [
+            {
+              "file": "car-hire-voucher.pdf",
+              "description": "Print it: the desk wants paper, not a phone"
+            }
+          ]
+        },
+        {
+          "kind": "activity",
+          "activity_type": "hike",
+          "name": "Reykjadalur hot river",
+          "category": "activity",
+          "lat": 64.0226,
+          "lng": -21.21085,
+          "address": "Rjúpnabrekkur, Hveragerði",
+          "description_md": "Up the valley to the warm stream and bathe where the boardwalk is. **Swimsuit and a towel.**",
+          "visit_minutes": 150,
+          "difficulty": 3,
+          "cost_category": "activities",
+          "track": {
+            "file": "reykjadalur-route.gpx",
+            "speed_kmh": 4
+          },
+          "report": {
+            "status": "visited",
+            "story_md": "Steam everywhere, sheep on the path and a river exactly the temperature of a bath.",
+            "rating": 5,
+            "actual_time": "12:20",
+            "actual_end_time": "14:47",
+            "track": "reykjadalur-recorded.gpx",
+            "photos": [
+              "reykjadalur-1.jpg",
+              "reykjadalur-2.jpg"
+            ]
           }
         },
         {
@@ -112,7 +147,7 @@
           "address": "Route 249, Hvolsvöllur",
           "url": "https://example.com/seljalandsfoss",
           "description_md": "The path goes *behind* the waterfall. Waterproofs, not umbrellas.",
-          "desired_time": "15:00",
+          "desired_time": "16:00",
           "visit_minutes": 60,
           "planned_cost_amount": "8",
           "cost_per_person": true,
@@ -121,9 +156,16 @@
             "status": "visited",
             "story_md": "Soaked through in two minutes and worth every bit of it. Go early or late; at three it was full.",
             "rating": 5,
-            "actual_time": "15:20",
-            "actual_cost_amount": "8"
-          }
+            "actual_time": "16:10",
+            "actual_cost_amount": "8",
+            "photos": [
+              "seljalandsfoss-1.jpg",
+              "seljalandsfoss-2.jpg"
+            ]
+          },
+          "photos": [
+            "seljalandsfoss-1.jpg"
+          ]
         },
         {
           "name": "Gljúfrabúi",
@@ -138,7 +180,10 @@
           "report": {
             "status": "skipped",
             "story_md": "Ran out of daylight and patience for wet socks."
-          }
+          },
+          "photos": [
+            "gljufrabui-1.jpg"
+          ]
         }
       ]
     },
@@ -161,8 +206,15 @@
             "status": "visited",
             "story_md": "Climbed the steps before the buses arrived. Wind at the top took the hat.",
             "rating": 4,
-            "actual_time": "09:15"
-          }
+            "actual_time": "09:15",
+            "photos": [
+              "skogafoss-1.jpg",
+              "skogafoss-2.jpg"
+            ]
+          },
+          "photos": [
+            "skogafoss-1.jpg"
+          ]
         },
         {
           "kind": "activity",
@@ -184,8 +236,19 @@
             "rating": 3,
             "actual_time": "11:40",
             "actual_end_time": "14:05",
-            "actual_cost_amount": "12"
-          }
+            "actual_cost_amount": "12",
+            "track": "plane-wreck-recorded.gpx",
+            "photos": [
+              "planewreck-1.jpg",
+              "planewreck-2.jpg"
+            ]
+          },
+          "track": {
+            "file": "plane-wreck-route.kml"
+          },
+          "attachments": [
+            "shuttle-timetable.csv"
+          ]
         },
         {
           "name": "Dyrhólaey",
@@ -198,7 +261,10 @@
           "cost_category": "activities",
           "report": {
             "status": "skipped",
-            "story_md": "Closed for the evening because of the wind."
+            "story_md": "Closed for the evening because of the wind.",
+            "photos": [
+              "dyrholaey-1.jpg"
+            ]
           }
         }
       ]
@@ -222,7 +288,24 @@
             "status": "visited",
             "story_md": "Stood well back and watched the water for an hour. The basalt columns do not photograph.",
             "rating": 5,
-            "actual_time": "11:10"
+            "actual_time": "11:10",
+            "photos": [
+              "reynisfjara-1.jpg",
+              "reynisfjara-2.jpg",
+              "reynisfjara-3.jpg",
+              "reynisfjara-4.jpg",
+              "reynisfjara-5.jpg",
+              "reynisfjara-6.jpg",
+              "reynisfjara-7.jpg",
+              "reynisfjara-8.jpg",
+              "reynisfjara-9.jpg"
+            ],
+            "favorite_photos": [
+              "reynisfjara-2.jpg",
+              "reynisfjara-4.jpg",
+              "reynisfjara-7.jpg"
+            ],
+            "cover_photo": "reynisfjara-7.jpg"
           }
         },
         {
@@ -267,7 +350,10 @@
             "status": "visited",
             "story_md": "Nobody there. The best half hour of the trip, and it was the afterthought.",
             "rating": 5,
-            "actual_time": "10:05"
+            "actual_time": "10:05",
+            "photos": [
+              "kvernufoss-1.jpg"
+            ]
           }
         },
         {
@@ -283,8 +369,17 @@
           "report": {
             "status": "visited",
             "story_md": "Scratch was already on the form. No argument.",
-            "actual_time": "15:15"
-          }
+            "actual_time": "15:15",
+            "attachments": [
+              {
+                "file": "car-return-receipt.pdf",
+                "description": "Signed at the desk, no extra charges"
+              }
+            ]
+          },
+          "attachments": [
+            "flight-home.ics"
+          ]
         }
       ]
     }
@@ -345,8 +440,8 @@
       "day": 1,
       "from": "Keflavík airport",
       "mode": "car",
-      "distance_m": 128000,
-      "duration_s": 6300,
+      "distance_m": 75000,
+      "duration_s": 3300,
       "planned_cost_amount": "14",
       "note": "Tunnel toll on the way out of the peninsula."
     },
@@ -433,9 +528,124 @@
         "Skógafoss": {
           "name": "Скоугафосс",
           "story_md": "Поднялись по ступеням до автобусов. Наверху ветер унёс шапку."
+        },
+        "Reykjadalur hot river": {
+          "name": "Горячая река Рейкьядалюр",
+          "story_md": "Пар повсюду, овцы на тропе и река ровно той температуры, что ванна."
         }
+      },
+      "day_highlights": {
+        "1": "Купание в тёплой реке, пока пар стекал по долине."
       }
+    },
+    "tags": {
+      "Iceland": "sky"
+    },
+    "cover": {
+      "photo": "reynisfjara-2.jpg",
+      "crop": {
+        "x": 0.1,
+        "y": 0.2,
+        "w": 0.8,
+        "h": 0.6687
+      }
+    },
+    "day_photos": {
+      "3": [
+        "vik-1.jpg"
+      ]
+    },
+    "day_covers": {
+      "1": "seljalandsfoss-2.jpg",
+      "3": "reynisfjara-2.jpg"
+    },
+    "private_photos": [
+      "planewreck-2.jpg"
+    ],
+    "day_highlights": {
+      "1": "Bathing in a warm river while the steam rolled down the valley.",
+      "3": "Waves racing up the black sand faster than anyone could run."
     }
   },
-  "completed": true
+  "completed": true,
+  "tags": {
+    "Iceland": "sky",
+    "Road trip": "orange"
+  },
+  "cover": {
+    "photo": "skogafoss-1.jpg",
+    "crop": {
+      "x": 0,
+      "y": 0.12,
+      "w": 1,
+      "h": 0.7488
+    }
+  },
+  "packing": [
+    {
+      "name": "Documents",
+      "icon": "documents",
+      "items": [
+        {
+          "name": "Passports",
+          "quantity": 2,
+          "packed": true
+        },
+        {
+          "name": "Driving licence",
+          "bringer": "owner",
+          "packed": true
+        },
+        {
+          "name": "Car hire voucher",
+          "note": "CAR-4471, printed",
+          "packed": true
+        }
+      ]
+    },
+    {
+      "name": "Clothes",
+      "icon": "clothes",
+      "items": [
+        {
+          "name": "Waterproof jacket",
+          "quantity": 2,
+          "packed": true
+        },
+        {
+          "name": "Waterproof trousers",
+          "quantity": 2,
+          "packed": true
+        },
+        {
+          "name": "Swimsuit",
+          "bringer": "editor",
+          "packed": true
+        }
+      ]
+    },
+    {
+      "name": "On the road",
+      "icon": "car",
+      "items": [
+        {
+          "name": "Sleep mask",
+          "note": "It does not get dark in June",
+          "packed": true
+        },
+        {
+          "name": "Car phone holder",
+          "bringer": "viewer"
+        }
+      ]
+    },
+    {
+      "items": [
+        {
+          "name": "Snacks for the drive",
+          "packed": true
+        }
+      ]
+    }
+  ]
 }

@@ -40,6 +40,91 @@ type fakeDocuments struct {
 	trips *fakeTrips
 	// translations are what SaveTranslations was given.
 	translations []domain.Translation
+	// attachments are the files attached to the place, and attachmentFiles
+	// their bytes by attachment.
+	attachments     []domain.Attachment
+	attachmentFiles map[uuid.UUID][]byte
+	// attachmentQuota is the allowance the last CreateAttachment was given.
+	attachmentQuota int64
+}
+
+// CreateAttachment stores a file of the place, refusing a second copy of one
+// and more than a place may carry, as the database does.
+func (f *fakeDocuments) CreateAttachment(_ context.Context, attachment domain.Attachment, file []byte,
+	quota int64) error {
+	f.attachmentQuota = quota
+	count := 0
+	for _, stored := range f.attachments {
+		if stored.ItemID != attachment.ItemID {
+			continue
+		}
+		count++
+		if string(stored.Checksum) == string(attachment.Checksum) {
+			return domain.ErrAttachmentDuplicate
+		}
+	}
+	if count >= domain.MaxItemAttachments {
+		return domain.ErrAttachmentLimit
+	}
+	if quota > 0 && attachment.Size > quota {
+		return domain.ErrMediaQuota
+	}
+	if f.attachmentFiles == nil {
+		f.attachmentFiles = map[uuid.UUID][]byte{}
+	}
+	f.attachments = append(f.attachments, attachment)
+	f.attachmentFiles[attachment.ID] = file
+	f.changed++
+	return nil
+}
+
+// Attachments lists every stored attachment.
+func (f *fakeDocuments) Attachments(context.Context, uuid.UUID) ([]domain.Attachment, error) {
+	return f.attachments, nil
+}
+
+// Attachment finds one stored attachment.
+func (f *fakeDocuments) Attachment(_ context.Context, id uuid.UUID) (domain.Attachment, error) {
+	for _, attachment := range f.attachments {
+		if attachment.ID == id {
+			return attachment, nil
+		}
+	}
+	return domain.Attachment{}, domain.ErrNotFound
+}
+
+// AttachmentFile returns the bytes of a stored attachment.
+func (f *fakeDocuments) AttachmentFile(ctx context.Context, id uuid.UUID) (domain.AttachmentFile, error) {
+	attachment, err := f.Attachment(ctx, id)
+	if err != nil {
+		return domain.AttachmentFile{}, err
+	}
+	return domain.AttachmentFile{Name: attachment.OriginalName, MIME: attachment.MIME,
+		Data: f.attachmentFiles[id]}, nil
+}
+
+// SetAttachmentDescription changes a stored attachment's description.
+func (f *fakeDocuments) SetAttachmentDescription(_ context.Context, id uuid.UUID, description string) error {
+	for index := range f.attachments {
+		if f.attachments[index].ID == id {
+			f.attachments[index].Description = description
+			f.changed++
+			return nil
+		}
+	}
+	return domain.ErrNotFound
+}
+
+// DeleteAttachment removes a stored attachment.
+func (f *fakeDocuments) DeleteAttachment(_ context.Context, id uuid.UUID) error {
+	for index, attachment := range f.attachments {
+		if attachment.ID == id {
+			f.attachments = append(f.attachments[:index], f.attachments[index+1:]...)
+			f.changed++
+			return nil
+		}
+	}
+	return domain.ErrNotFound
 }
 
 // Document returns the one document, or not found.

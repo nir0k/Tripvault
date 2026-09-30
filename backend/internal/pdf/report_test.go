@@ -42,7 +42,8 @@ func sampleReport(t *testing.T) Report {
 
 	documentID := uuid.New()
 	firstDay := domain.Day{ID: uuid.New(), DocumentID: documentID, Position: 0, Date: &start,
-		Title: "Reykjavík", NotesMD: "We landed at dawn.\n\n- coffee\n- a walk"}
+		Title: "Reykjavík", NotesMD: "We landed at dawn.\n\n- coffee\n- a walk",
+		Highlight: "Whales breaching twice in the bay."}
 	secondDay := domain.Day{ID: uuid.New(), DocumentID: documentID, Position: 1, Date: &second,
 		Title: "The south coast"}
 
@@ -126,9 +127,10 @@ func sampleReport(t *testing.T) Report {
 		Totals:  domain.BuildReportTotals(trip, content),
 		Cover:   photo,
 		Photos: map[uuid.UUID][]Photo{
-			firstDay.ID: {{JPEG: photo, TakenAt: &start}},
-			harbour.ID:  {{JPEG: photo}},
+			firstDay.ID: {{ID: uuid.New(), JPEG: photo}},
+			harbour.ID:  {{ID: uuid.New(), JPEG: photo}},
 		},
+		DayHeroes: map[uuid.UUID]Photo{firstDay.ID: {ID: uuid.New(), JPEG: photo}},
 	}
 }
 
@@ -183,10 +185,9 @@ func TestPhotosShareRows(t *testing.T) {
 			place = id
 		}
 	}
-	taken := time.Date(2026, 6, 20, 14, 30, 0, 0, time.UTC)
 	seven := make([]Photo, 7)
 	for i := range seven {
-		seven[i] = Photo{JPEG: samplePhoto(t), TakenAt: &taken}
+		seven[i] = Photo{ID: uuid.New(), JPEG: samplePhoto(t)}
 	}
 	report.Photos = map[uuid.UUID][]Photo{place: seven}
 	if with := pages(report); with > without+1 {
@@ -217,6 +218,7 @@ func TestRenderWithoutPhotographs(t *testing.T) {
 	report := sampleReport(t)
 	report.Cover = nil
 	report.Photos = nil
+	report.DayHeroes = nil
 	report.Trip.StartDate, report.Trip.EndDate = nil, nil
 	for i := range report.Content.Days {
 		report.Content.Days[i].Date = nil
@@ -279,31 +281,6 @@ func TestStaysOfADay(t *testing.T) {
 	// A trip without dates has no day a stay could cover.
 	if stays := staysOf(report, domain.Day{ID: uuid.New()}); len(stays) != 0 {
 		t.Errorf("a day with no date lists %d stays", len(stays))
-	}
-}
-
-// TestPhotoCaptionIsTheTimeItWasTaken checks a picture is captioned with when it
-// was taken, in the trip's own time zone, and with nothing when the file carried
-// no such metadata.
-func TestPhotoCaptionIsTheTimeItWasTaken(t *testing.T) {
-	text := wording("en", domain.UnitsKilometres)
-	trip := domain.Trip{Timezone: "Atlantic/Reykjavik"}
-	// 21:30 UTC is 21:30 in Reykjavík and 23:30 in Lisbon in June, which is the
-	// difference a caption must get right.
-	at := time.Date(2026, 6, 20, 21, 30, 0, 0, time.UTC)
-
-	if got := caption(text, trip, Photo{TakenAt: &at}); got != "20 June 2026, 21:30" {
-		t.Errorf("caption = %q", got)
-	}
-	if got := caption(text, domain.Trip{Timezone: "Europe/Lisbon"}, Photo{TakenAt: &at}); got != "20 June 2026, 22:30" {
-		t.Errorf("a caption in another zone = %q", got)
-	}
-	// A zone the server does not know must not lose the caption altogether.
-	if got := caption(text, domain.Trip{Timezone: "Mars/Olympus"}, Photo{TakenAt: &at}); got == "" {
-		t.Error("an unknown time zone left the picture with no caption")
-	}
-	if got := caption(text, trip, Photo{}); got != "" {
-		t.Errorf("a picture with no metadata was captioned %q", got)
 	}
 }
 
@@ -474,5 +451,91 @@ func TestTrackNote(t *testing.T) {
 	track.StartedAt = nil
 	if got := trackNote(english, track); strings.Contains(got, "time") {
 		t.Errorf("a track without time has one: %q", got)
+	}
+}
+
+// TestEveryDayOpensAPage checks the journal gives each day a chapter of its
+// own: the cover, the overview and at least a page a day.
+func TestEveryDayOpensAPage(t *testing.T) {
+	report := sampleReport(t)
+	var out bytes.Buffer
+	if err := Render(&out, report); err != nil {
+		t.Fatalf("Render() returned an unexpected error: %v", err)
+	}
+	want := 2 + len(report.Content.Days)
+	if pages := bytes.Count(out.Bytes(), []byte("/Type /Page\n")); pages < want {
+		t.Errorf("the document has %d pages, want at least %d", pages, want)
+	}
+}
+
+// TestOverviewLeavesOutEmptyFigures checks the overview writes only the
+// figures that have something to say: no rating card when nothing was rated,
+// no amount when nothing was spent, no distance when nothing was travelled.
+func TestOverviewLeavesOutEmptyFigures(t *testing.T) {
+	text := wording("en", domain.UnitsKilometres)
+	report := sampleReport(t)
+	labelsOf := func(stats []stat) string {
+		var names []string
+		for _, figure := range stats {
+			names = append(names, figure.label)
+		}
+		return strings.Join(names, ",")
+	}
+	if got := labelsOf(overviewStats(text, report)); got != "Days,Visited,Distance,Avg rating,Spent" {
+		t.Errorf("a full report has the figures %s", got)
+	}
+	report.Totals.AverageRating = nil
+	report.Totals.ActualCost = 0
+	report.Totals.DistanceM = 0
+	if got := labelsOf(overviewStats(text, report)); got != "Days,Visited" {
+		t.Errorf("a report with nothing rated, spent or travelled has the figures %s", got)
+	}
+}
+
+// TestCountReadsInEitherLanguage checks a number is followed by its noun in the
+// form the number asks for.
+func TestCountReadsInEitherLanguage(t *testing.T) {
+	english, russian := wording("en", ""), wording("ru", "")
+	cases := []struct {
+		text labels
+		n    int
+		want string
+	}{
+		{english, 1, "1 day"}, {english, 4, "4 days"},
+		{russian, 1, "1 день"}, {russian, 3, "3 дня"}, {russian, 5, "5 дней"},
+		{russian, 11, "11 дней"}, {russian, 21, "21 день"}, {russian, 22, "22 дня"}, {russian, 112, "112 дней"},
+	}
+	for _, tc := range cases {
+		if got := tc.text.count(tc.n, tc.text.dayWord); got != tc.want {
+			t.Errorf("count(%d) in %s = %q, want %q", tc.n, tc.text.code, got, tc.want)
+		}
+	}
+}
+
+// TestModeLabelsFitTheirCards checks the name of every means of travel fits the
+// card it is written on: in English on one line, in Russian - where "by public
+// transport" is two long words - on at most two, every line within the room.
+func TestModeLabelsFitTheirCards(t *testing.T) {
+	doc := newDocument("modes", "modes")
+	doc.useDisplay()
+	doc.page()
+	// The room beside a card's icon, as writeModes lays a row of three.
+	room := (contentWidth-journalGap*2)/3 - 18 - 3
+	for _, language := range []string{"en", "ru"} {
+		text := wording(language, domain.UnitsKilometres)
+		for mode, name := range text.modes {
+			size, lines := doc.fitLabel(name, room, 6.5)
+			if language == "en" && len(lines) != 1 {
+				t.Errorf("%s: %q took %d lines", language, name, len(lines))
+			}
+			if len(lines) > 2 {
+				t.Errorf("%s: %q took %d lines", language, name, len(lines))
+			}
+			for _, line := range lines {
+				if width := doc.labelWidth(line, size); width > room {
+					t.Errorf("%s %s: %q is %.1f mm, the card has %.1f", language, mode, line, width, room)
+				}
+			}
+		}
 	}
 }

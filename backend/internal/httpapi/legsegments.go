@@ -307,7 +307,7 @@ func (s *Server) calculateSegments(ctx context.Context, leg domain.Leg, start, e
 	for index, segment := range leg.Segments {
 		retry := retryEstimates && segment.Source == domain.LegEstimate &&
 			domain.Leg{Source: segment.Source, Error: segment.Error}.RetryableEstimate()
-		if !(segment.Source == domain.LegPending || forced || retry) || done >= budget {
+		if segment.Source != domain.LegPending && !forced && !retry || done >= budget {
 			continue
 		}
 		done++

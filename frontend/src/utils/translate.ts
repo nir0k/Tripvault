@@ -73,6 +73,7 @@ export function translateDocument(document: TripDocument, lang: string): TripDoc
       ...day,
       title: pick(day.id, 'title', day.title),
       notes_md: pick(day.id, 'notes_md', day.notes_md),
+      highlight: pick(day.id, 'highlight', day.highlight),
       items: day.items.map(item),
       legs: day.legs.map((leg) => ({ ...leg, note: pick(leg.id, 'note', leg.note) })),
     })),
@@ -117,6 +118,7 @@ export function translatableTexts(document: TripDocument): TranslatableText[] {
   for (const day of document.days) {
     add('day', day.id, 'title', day.title)
     add('day', day.id, 'notes_md', day.notes_md)
+    add('day', day.id, 'highlight', day.highlight)
     for (const each of day.items) {
       if (each.kind === 'stay_anchor') {
         continue

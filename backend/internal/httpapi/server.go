@@ -119,6 +119,12 @@ type DocumentStore interface {
 	UpdateTrackClimb(ctx context.Context, id uuid.UUID, ascent, descent *int, grades []int, version int) error
 	SetTrackSpeed(ctx context.Context, itemID uuid.UUID, speed *float64) error
 	DeleteTrack(ctx context.Context, itemID uuid.UUID) error
+	CreateAttachment(ctx context.Context, attachment domain.Attachment, file []byte, quota int64) error
+	Attachments(ctx context.Context, documentID uuid.UUID) ([]domain.Attachment, error)
+	Attachment(ctx context.Context, id uuid.UUID) (domain.Attachment, error)
+	AttachmentFile(ctx context.Context, id uuid.UUID) (domain.AttachmentFile, error)
+	SetAttachmentDescription(ctx context.Context, id uuid.UUID, description string) error
+	DeleteAttachment(ctx context.Context, id uuid.UUID) error
 	Leg(ctx context.Context, id uuid.UUID) (domain.Leg, error)
 	UpdateLeg(ctx context.Context, leg domain.Leg) error
 	SaveLegParts(ctx context.Context, leg domain.Leg) error
@@ -198,11 +204,13 @@ type Dependencies struct {
 	MediaTripQuota int64
 	// TrackMaxBytes bounds an imported GPX or KML file.
 	TrackMaxBytes int64
-	Routing       Router
-	RoutingStats  RoutingStats
-	Geocoder      Geocoder
-	GeocodeStats  RoutingStats
-	Expander      LinkExpander
+	// AttachmentMaxBytes bounds one file attached to a place.
+	AttachmentMaxBytes int64
+	Routing            Router
+	RoutingStats       RoutingStats
+	Geocoder           Geocoder
+	GeocodeStats       RoutingStats
+	Expander           LinkExpander
 	// GeocodeDailyLimit is shown next to the day's geocoding usage.
 	GeocodeDailyLimit int
 	// RoutingDailyLimit is shown next to the day's usage on the status screen.
@@ -258,6 +266,8 @@ type Server struct {
 	mediaMaxBytes  int64
 	mediaTripQuota int64
 	trackMaxBytes  int64
+	// attachmentMaxBytes bounds one file attached to a place.
+	attachmentMaxBytes int64
 	// thumbnails bounds how many previews are rendered at once, because each
 	// one holds a decoded picture in memory.
 	thumbnails chan struct{}
@@ -327,31 +337,32 @@ func NewServer(opts Options, logger *slog.Logger, deps Dependencies) *Server {
 	}
 	previewWorkers, renderings := renderWorkers(runtime.GOMAXPROCS(0))
 	s := &Server{
-		opts:           opts,
-		logger:         logger,
-		auth:           deps.Auth,
-		users:          deps.Users,
-		sessions:       deps.Sessions,
-		trips:          deps.Trips,
-		documents:      deps.Documents,
-		tags:           deps.Tags,
-		packing:        deps.Packing,
-		ideas:          deps.Ideas,
-		media:          deps.Media,
-		mediaFiles:     deps.MediaFiles,
-		mediaMaxBytes:  deps.MediaMaxBytes,
-		mediaTripQuota: deps.MediaTripQuota,
-		trackMaxBytes:  deps.TrackMaxBytes,
-		previewWorkers: previewWorkers,
-		thumbnails:     make(chan struct{}, renderings),
-		uploads:        newUploadQueue(),
-		renders:        make(map[string]*previewRender),
-		routing:        deps.Routing,
-		routingStats:   deps.RoutingStats,
-		routingDaily:   deps.RoutingDailyLimit,
-		geocoder:       deps.Geocoder,
-		geocodeStats:   deps.GeocodeStats,
-		geocodeDaily:   deps.GeocodeDailyLimit,
+		opts:               opts,
+		logger:             logger,
+		auth:               deps.Auth,
+		users:              deps.Users,
+		sessions:           deps.Sessions,
+		trips:              deps.Trips,
+		documents:          deps.Documents,
+		tags:               deps.Tags,
+		packing:            deps.Packing,
+		ideas:              deps.Ideas,
+		media:              deps.Media,
+		mediaFiles:         deps.MediaFiles,
+		mediaMaxBytes:      deps.MediaMaxBytes,
+		mediaTripQuota:     deps.MediaTripQuota,
+		trackMaxBytes:      deps.TrackMaxBytes,
+		attachmentMaxBytes: deps.AttachmentMaxBytes,
+		previewWorkers:     previewWorkers,
+		thumbnails:         make(chan struct{}, renderings),
+		uploads:            newUploadQueue(),
+		renders:            make(map[string]*previewRender),
+		routing:            deps.Routing,
+		routingStats:       deps.RoutingStats,
+		routingDaily:       deps.RoutingDailyLimit,
+		geocoder:           deps.Geocoder,
+		geocodeStats:       deps.GeocodeStats,
+		geocodeDaily:       deps.GeocodeDailyLimit,
 
 		routingProvider:   deps.RoutingProvider,
 		geocodingProvider: deps.GeocodingProvider,
@@ -544,6 +555,10 @@ func (s *Server) routes() http.Handler {
 				member.Patch("/items/{itemID}/track", s.handleUpdateItemTrack)
 				member.Delete("/items/{itemID}/track", s.handleDeleteItemTrack)
 				member.Get("/tracks/{trackID}/file", s.handleGetTrackFile)
+				member.Post("/items/{itemID}/attachments", s.handleCreateAttachment)
+				member.Patch("/attachments/{attachmentID}", s.handleUpdateAttachment)
+				member.Delete("/attachments/{attachmentID}", s.handleDeleteAttachment)
+				member.Get("/attachments/{attachmentID}/file", s.handleGetAttachmentFile)
 				member.Post("/days/{dayID}/items", s.handleCreateDayPlace)
 				member.Patch("/items/{itemID}", s.handleUpdatePlace)
 				member.Delete("/items/{itemID}", s.handleDeletePlace)

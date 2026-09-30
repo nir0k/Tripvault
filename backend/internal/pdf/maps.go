@@ -105,6 +105,31 @@ func (l mapLayer) points() []domain.Point {
 	return points
 }
 
+// The size of the background of a day's map in the report's journal, which
+// sits in half the page beside the day's story.
+const (
+	journalDayWidthPx  = 480
+	journalDayHeightPx = 400
+)
+
+// ReportMapRequests - lists the maps a report's journal is drawn with: the
+// whole trip across the page, and each day in half of it, beside its story.
+//
+// Arguments:
+//   - content: the report.
+//
+// Returns:
+//   - the maps, keyed as MapRequests keys them.
+func ReportMapRequests(content domain.DocumentContent) []MapRequest {
+	requests := MapRequests(content)
+	for index := range requests {
+		if requests[index].Key != uuid.Nil {
+			requests[index].Width, requests[index].Height = journalDayWidthPx, journalDayHeightPx
+		}
+	}
+	return requests
+}
+
 // MapRequests - lists the maps a report is drawn with.
 //
 // Arguments:
@@ -245,15 +270,42 @@ func mapHeight(m Map) float64 {
 // Returns:
 //   - an error when the background cannot be read.
 func (d *document) drawMap(layer mapLayer, m Map, attribution string) error {
-	height := mapHeight(m)
-	scale := contentWidth / float64(m.Frame.Width)
-	d.keepTogether(height + lineHeight)
-	left, top := marginLeft, d.pdf.GetY()
+	d.keepTogether(mapHeight(m) + lineHeight)
+	bottom, err := d.drawMapIn(layer, m, attribution, marginLeft, d.pdf.GetY(), contentWidth, 0)
+	d.pdf.SetXY(marginLeft, bottom)
+	return err
+}
 
+// drawMapIn draws one map into a box of the page: across width from left and
+// down from top, as tall as its frame makes it at that width, with its corners
+// rounded by radius when it is not zero. It leaves the cursor alone.
+//
+// Arguments:
+//   - layer: what is drawn over the background.
+//   - m: the frame and the background.
+//   - attribution: the credit line, written under the map.
+//   - left, top, width: the box, in millimetres.
+//   - radius: the rounding of its corners; zero draws the square frame
+//     with a hairline border, as the plan's document does.
+//
+// Returns:
+//   - where the map and its credit end on the page.
+//   - an error when the background cannot be read.
+func (d *document) drawMapIn(layer mapLayer, m Map, attribution string, left, top, width, radius float64) (float64, error) {
+	height := float64(m.Frame.Height) * width / float64(m.Frame.Width)
+	scale := width / float64(m.Frame.Width)
+	contentWidth := width
+
+	if radius > 0 {
+		d.pdf.ClipRoundedRect(left, top, contentWidth, height, radius, false)
+	}
 	if len(m.Background) > 0 {
 		name, _, err := d.register(m.Background)
 		if err != nil {
-			return err
+			if radius > 0 {
+				d.pdf.ClipEnd()
+			}
+			return top, err
 		}
 		d.pdf.ImageOptions(name, left, top, contentWidth, height, false, fpdf.ImageOptions{ImageType: "JPG"}, 0, "")
 	} else {
@@ -342,10 +394,13 @@ func (d *document) drawMap(layer mapLayer, m Map, attribution string) error {
 		}
 	}
 	d.pdf.ClipEnd()
-
-	d.pdf.SetLineWidth(0.2)
-	d.pdf.SetDrawColor(grey[0], grey[1], grey[2])
-	d.pdf.Rect(left, top, contentWidth, height, "D")
+	if radius > 0 {
+		d.pdf.ClipEnd()
+	} else {
+		d.pdf.SetLineWidth(0.2)
+		d.pdf.SetDrawColor(grey[0], grey[1], grey[2])
+		d.pdf.Rect(left, top, contentWidth, height, "D")
+	}
 	d.pdf.SetTextColor(grey[0], grey[1], grey[2])
 	d.pdf.SetFont(fontFamily, "", sizeCaption)
 	d.pdf.SetXY(left, top+height+0.5)
@@ -353,8 +408,12 @@ func (d *document) drawMap(layer mapLayer, m Map, attribution string) error {
 		d.pdf.CellFormat(contentWidth, sizeCaption*0.5, attribution, "", 0, "R", false, 0, "")
 	}
 	d.pdf.SetTextColor(0, 0, 0)
-	d.pdf.SetXY(left, top+height+sizeCaption*0.5+2)
-	return nil
+	return top + height + sizeCaption*0.5 + 2, nil
+}
+
+// mapHeightAt is how tall a map is drawn across width, in millimetres.
+func mapHeightAt(m Map, width float64) float64 {
+	return float64(m.Frame.Height) * width / float64(m.Frame.Width)
 }
 
 // trackCasing is the dark edge a recorded track is drawn over, the colour the

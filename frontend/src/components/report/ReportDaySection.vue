@@ -50,6 +50,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   title: [title: string]
   notes: [notes: string]
+  /** The moment the day is remembered by, in a line. */
+  highlight: [highlight: string]
   status: [item: PlanItem, status: ItemStatus]
   rate: [item: PlanItem, rating: number | null]
   story: [item: PlanItem, story: string]
@@ -149,6 +151,20 @@ const dayTransfers = computed(() => (props.transfers ?? []).filter((transfer) =>
   && (transfer.departure_date === props.day.date || (transfer.arrival_date ?? transfer.departure_date) === props.day.date)))
 
 const date = computed(() => formatDayDate(props.day.date, locale.value, true))
+
+/** MAX_HIGHLIGHT is how many characters the server keeps of a day's highlight. */
+const MAX_HIGHLIGHT = 200
+
+// highlight is the line being written, reset whenever the day or the language
+// being written changes under it.
+const highlight = ref('')
+watch(
+  () => text.value.source(props.day.id, 'highlight', props.day.highlight),
+  (value) => {
+    highlight.value = value
+  },
+  { immediate: true },
+)
 const spent = computed(() => formatMoney(props.day.summary.actual_cost, props.currency, locale.value))
 </script>
 
@@ -194,6 +210,30 @@ const spent = computed(() => formatMoney(props.day.summary.actual_cost, props.cu
       :rows="6"
       @save="(notes) => emit('notes', notes)"
     />
+
+    <!-- The moment the day is remembered by: one line, set apart in the
+         report's PDF. It is written here, and read as a quote. -->
+    <label v-if="editing" class="flex flex-col gap-1">
+      <span class="text-xs font-semibold tracking-wide text-primary uppercase">{{ t('report.highlight') }}</span>
+      <input
+        v-model="highlight"
+        type="text"
+        :maxlength="MAX_HIGHLIGHT"
+        class="input w-full"
+        :placeholder="text.original(day.id, 'highlight') || t('report.highlightPlaceholder')"
+        @change="emit('highlight', highlight.trim())"
+      />
+      <span class="self-end text-xs text-base-content/60 tabular-nums" aria-live="polite">
+        {{ t('attachment.counter', { count: [...highlight].length, max: MAX_HIGHLIGHT }) }}
+      </span>
+    </label>
+    <blockquote
+      v-else-if="day.highlight"
+      class="rounded-box border-s-4 border-primary bg-base-200 px-4 py-3"
+    >
+      <p class="text-xs font-semibold tracking-wide text-primary uppercase">{{ t('report.highlight') }}</p>
+      <p class="font-semibold break-words">{{ text.source(day.id, 'highlight', day.highlight) }}</p>
+    </blockquote>
 
     <ul v-if="dayTransfers.length > 0" class="space-y-2" :aria-label="t('transfer.title')">
       <li

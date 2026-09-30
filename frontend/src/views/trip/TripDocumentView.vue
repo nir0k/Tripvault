@@ -25,6 +25,7 @@ import ReportFloatingActions from '@/components/report/ReportFloatingActions.vue
 import ReportTotalsBar from '@/components/report/ReportTotalsBar.vue'
 import ReportTranslateDialog, { type TranslateField } from '@/components/report/ReportTranslateDialog.vue'
 import { reportTextKey, useContentLanguage, type ReportTextEditing } from '@/composables/useContentLanguage'
+import { provideDocumentChange } from '@/composables/useDocumentChange'
 import { useLegCalculation } from '@/composables/useLegCalculation'
 import { useMediaQuery } from '@/composables/useMediaQuery'
 import { useTripStore } from '@/stores/trip'
@@ -59,6 +60,10 @@ const router = useRouter()
 const store = useTripStore()
 
 const document = ref<TripDocument | null>(null)
+// A card that attaches a file to a place hands back the report it answered with.
+provideDocumentChange((changed) => {
+  document.value = changed
+})
 const clientConfig = ref<ClientConfig | null>(null)
 const loading = ref(false)
 const busy = ref(false)
@@ -229,8 +234,8 @@ function saveDocumentText(field: 'intro_md' | 'summary_md', value: string): void
   }
 }
 
-// saveDayText stores a day's title or notes.
-function saveDayText(day: PlanDay, field: 'title' | 'notes_md', value: string): void {
+// saveDayText stores a day's title, notes or highlight.
+function saveDayText(day: PlanDay, field: 'title' | 'notes_md' | 'highlight', value: string): void {
   saveText('day', day.id, field, value, () => documentsApi.updateDay(day.id, { [field]: value }))
 }
 
@@ -769,6 +774,7 @@ function setStatus(item: PlanItem, status: ItemStatus): void {
           :draggable="wide"
           @title="(title) => saveDayText(day, 'title', title)"
           @notes="(notes) => saveDayText(day, 'notes_md', notes)"
+          @highlight="(highlight) => saveDayText(day, 'highlight', highlight)"
           @status="setStatus"
           @rate="(item, rating) => apply(() => documentsApi.updatePlace(item.id, { rating }))"
           @story="saveStory"

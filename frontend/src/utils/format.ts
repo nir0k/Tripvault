@@ -242,6 +242,19 @@ export function formatElapsed(seconds: number): string {
 }
 
 /**
+ * formatFileSize shows the size of a file in the reader's language: bytes,
+ * kilobytes or megabytes, whichever reads shortest.
+ */
+export function formatFileSize(bytes: number, locale: string): string {
+  const [unit, value] = bytes >= 1024 * 1024
+    ? ['megabyte', bytes / (1024 * 1024)]
+    : bytes >= 1024 ? ['kilobyte', bytes / 1024] : ['byte', bytes]
+  return new Intl.NumberFormat(locale, {
+    style: 'unit', unit: unit as string, unitDisplay: 'short', maximumFractionDigits: value < 10 ? 1 : 0,
+  }).format(value as number)
+}
+
+/**
  * formatHeight shows a height gained or lost: metres, or feet for somebody who
  * counts distances in miles.
  */

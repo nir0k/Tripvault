@@ -45,7 +45,7 @@ func (s *Server) handleImportItemTrack(w http.ResponseWriter, r *http.Request) {
 			"The request must be a multipart upload with a file part")
 		return
 	}
-	data, name, ok := s.readTrackPart(w, r, reader)
+	data, name, ok := s.readFilePart(w, r, reader, s.trackMaxBytes, nil)
 	if !ok {
 		return
 	}
@@ -253,11 +253,13 @@ func (s *Server) writeTrackFile(w http.ResponseWriter, r *http.Request, recorded
 	_, _ = w.Write(file.Data)
 }
 
-// readTrackPart reads the file of a multipart upload, bounded by the configured
-// size: a recording is a few megabytes of text, and anything far larger is not
-// a track this service reads.
-func (s *Server) readTrackPart(w http.ResponseWriter, r *http.Request,
-	reader *multipart.Reader) ([]byte, string, bool) {
+// readFilePart reads the file of a multipart upload, bounded by limit: a
+// recording is a few megabytes of text, and a ticket or a booking hardly more,
+// so anything far larger is not a file the endpoint reads. The form fields sent
+// before the file are put into fields, a kilobyte of each at most, when fields
+// is not nil; otherwise they are skipped.
+func (s *Server) readFilePart(w http.ResponseWriter, r *http.Request,
+	reader *multipart.Reader, limit int64, fields map[string]string) ([]byte, string, bool) {
 	for {
 		part, err := reader.NextPart()
 		if errors.Is(err, io.EOF) {
@@ -268,17 +270,21 @@ func (s *Server) readTrackPart(w http.ResponseWriter, r *http.Request,
 			return nil, "", false
 		}
 		if part.FormName() != "file" {
+			if fields != nil {
+				value, _ := io.ReadAll(io.LimitReader(part, 1024))
+				fields[part.FormName()] = string(value)
+			}
 			_ = part.Close()
 			continue
 		}
-		data, err := io.ReadAll(io.LimitReader(part, s.trackMaxBytes+1))
+		data, err := io.ReadAll(io.LimitReader(part, limit+1))
 		name := part.FileName()
 		_ = part.Close()
 		if err != nil {
-			s.internalError(w, r, "read track upload", err)
+			s.internalError(w, r, "read upload", err)
 			return nil, "", false
 		}
-		if int64(len(data)) > s.trackMaxBytes {
+		if int64(len(data)) > limit {
 			s.writeError(w, r, http.StatusRequestEntityTooLarge, "file_too_large",
 				"The file is larger than this service accepts")
 			return nil, "", false

@@ -485,6 +485,21 @@ export interface Track {
   ended_at: string | null
 }
 
+/**
+ * Attachment is a file a place or an activity carries besides its pictures, such
+ * as a ticket or a booking. A read-only link never sees one.
+ */
+export interface Attachment {
+  id: string
+  original_name: string
+  /** A line on what the file is; empty when nobody wrote one. */
+  description: string
+  /** What the server recognised the file as. */
+  mime: string
+  size: number
+  created_at: string
+}
+
 /** MediaTarget is what a file is shown under. */
 export type MediaTarget = 'trip' | 'day' | 'item'
 
@@ -538,6 +553,8 @@ export interface PlanItem {
   cover_media_id: string | null
   /** The line the place or activity was recorded along. Report only. */
   track: Track | null
+  /** The files the place carries, oldest first; always empty through a read-only link. */
+  attachments: Attachment[]
 }
 
 export type LegSource = 'pending' | 'provider' | 'straight_line' | 'estimate' | 'missing_coordinates'
@@ -658,6 +675,8 @@ export interface PlanDay {
   date: string | null
   title: string
   notes_md: string
+  /** The moment a report's day is remembered by, in a line; empty in a plan. */
+  highlight: string
   start_time: string
   default_mode: TravelMode | null
   timezone: string | null

@@ -5,6 +5,7 @@ import type { PlaceFields } from '@/api/documents'
 import type { ActivityType, PlaceCategory, PlanItem } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import IconSelect from '@/components/IconSelect.vue'
+import ItemAttachments from '@/components/plan/ItemAttachments.vue'
 import MarkdownText from '@/components/MarkdownText.vue'
 import ReportTrackLine from '@/components/report/ReportTrackLine.vue'
 import { useTripStore } from '@/stores/trip'
@@ -18,8 +19,8 @@ import {
 //
 // For somebody who may change the plan the card is also where a place is
 // written: its type, its notes in place, and a line of what can be added to it -
-// the time, the cost and, for an activity, the route. The full form, behind the
-// menu, keeps the rest.
+// the time, the cost, files such as tickets and, for an activity, the route. The
+// full form, behind the menu, keeps the rest.
 const props = defineProps<{
   item: PlanItem
   currency: string
@@ -79,6 +80,7 @@ function setType(value: string): void {
 const timeLabel = computed(() => planTimeLabel(props.item.desired_time, props.item.visit_minutes, t))
 
 const trackField = useTemplateRef<HTMLInputElement>('trackField')
+const attachments = useTemplateRef<InstanceType<typeof ItemAttachments>>('attachments')
 
 // onTrackPicked hands the chosen route over and empties the field, so the same
 // file can be chosen again after it was removed.
@@ -290,6 +292,10 @@ const host = computed(() => {
             <AppIcon name="dollar" class="size-4!" />
             {{ cost || t('place.addCost') }}
           </button>
+          <button type="button" class="btn btn-ghost btn-xs" @click="attachments?.pick()">
+            <AppIcon name="paperclip" class="size-4!" />
+            {{ t('attachment.add') }}
+          </button>
           <button v-if="isActivity && !item.track" type="button" class="btn btn-ghost btn-xs" @click="trackField?.click()">
             <AppIcon name="upload" class="size-4!" />
             {{ t('track.add') }}
@@ -308,6 +314,14 @@ const host = computed(() => {
         @import="(file) => emit('importTrack', file)"
         @remove="emit('removeTrack')"
         @speed="(speed) => emit('trackSpeed', speed)"
+      />
+      <ItemAttachments
+        v-if="!isAnchor"
+        ref="attachments"
+        :item-id="item.id"
+        :attachments="item.attachments"
+        :editing="editable"
+        class="mt-2"
       />
     </div>
 

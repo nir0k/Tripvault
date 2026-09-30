@@ -83,10 +83,9 @@ func (r *MediaRepository) Create(ctx context.Context, media domain.Media, quota 
 			return domain.ErrMediaDuplicate
 		}
 		if quota > 0 {
-			var used int64
-			if err := tx.QueryRow(ctx,
-				`SELECT coalesce(sum(size), 0) FROM media WHERE trip_id = $1`, media.TripID).Scan(&used); err != nil {
-				return fmt.Errorf("sum media size: %w", err)
+			used, err := tripUsedBytes(ctx, tx, media.TripID)
+			if err != nil {
+				return err
 			}
 			if used+media.Size > quota {
 				return domain.ErrMediaQuota
@@ -238,12 +237,20 @@ func (r *MediaRepository) Delete(ctx context.Context, id uuid.UUID) (string, err
 //   - tripID: the trip.
 //
 // Returns:
-//   - the total size of its files in bytes.
+//   - the total size of its pictures and attachments in bytes.
 func (r *MediaRepository) UsedBytes(ctx context.Context, tripID uuid.UUID) (int64, error) {
+	return tripUsedBytes(ctx, r.pool, tripID)
+}
+
+// tripUsedBytes sums what counts against a trip's allowance: its pictures and
+// the files attached to the places of its documents.
+func tripUsedBytes(ctx context.Context, q querier, tripID uuid.UUID) (int64, error) {
 	var used int64
-	if err := r.pool.QueryRow(ctx,
-		`SELECT coalesce(sum(size), 0) FROM media WHERE trip_id = $1`, tripID).Scan(&used); err != nil {
-		return 0, fmt.Errorf("sum media size: %w", err)
+	if err := q.QueryRow(ctx,
+		`SELECT (SELECT coalesce(sum(size), 0) FROM media WHERE trip_id = $1)
+		      + (SELECT coalesce(sum(a.size), 0) FROM item_attachments a
+		         JOIN documents d ON d.id = a.document_id WHERE d.trip_id = $1)`, tripID).Scan(&used); err != nil {
+		return 0, fmt.Errorf("sum the files of a trip: %w", err)
 	}
 	return used, nil
 }

@@ -2581,8 +2581,8 @@ paths:
                         description: The element translated; the trip's own identifier for `trip`.
                       field:
                         type: string
-                        enum: [title, summary, intro_md, summary_md, notes_md, name, description_md, story_md, note,
-                               from_name, to_name]
+                        enum: [title, summary, intro_md, summary_md, notes_md, highlight, name, description_md,
+                               story_md, note, from_name, to_name]
                         description: One of the fields the target translates.
                       value:
                         type: string
@@ -3071,6 +3071,152 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/TrackFile"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/items/{itemID}/attachments:
+    post:
+      tags: [Documents]
+      summary: Attach a file to a place or an activity
+      description: |
+        A multipart upload with one `file` part: a ticket, a booking, a
+        timetable. Only documents and pictures are accepted, decided from the
+        bytes rather than the declared type, and the file's name has to end the
+        way its kind is named: PDF (`.pdf`); plain text (`.txt`, `.md`,
+        `.markdown`, `.csv`, a calendar `.ics`, a saved message `.eml`); a saved
+        web page (`.html`, `.htm`); RTF; Word, Excel and PowerPoint documents
+        (`.docx`, `.xlsx`, `.pptx` and the older `.doc`, `.xls`, `.ppt`);
+        OpenDocument (`.odt`, `.ods`, `.odp`); and JPEG, PNG, WebP, AVIF and BMP
+        pictures. Anything else - archives, programs, scripts, video, sound,
+        GIF, HEIC, TIFF, RAW, SVG - answers `415` with `unsupported_attachment`,
+        and so does a document that carries macros or a file packed inside it.
+        A place carries at most ten files (`422`, reason `attachment_limit`) and
+        the same file once (`409`, `duplicate_attachment`); a file counts
+        against the trip's allowance (`409`, `media_quota`) and is bounded by
+        `TRIPVAULT_MEDIA_ATTACHMENT_MAX_SIZE_MB` (`413`). A stay mark takes
+        none. Attachments are listed on the place in the document, never
+        through a read-only link, and are not copied when the place, its day or
+        its plan is copied. A `description` field sent before the file is the
+        line describing it, at most 150 characters once breaks and runs of
+        spaces are folded into single spaces (`422`, reason `too_long`).
+        Owners and editors may.
+      operationId: createItemAttachment
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                description:
+                  type: string
+                  maxLength: 150
+                  description: What the file is; sent before the file.
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          $ref: "#/components/responses/Document"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Error"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/attachments/{attachmentID}:
+    patch:
+      tags: [Documents]
+      summary: Change the line describing an attached file
+      description: |
+        At most 150 characters, folded into one line; an empty description
+        takes the line away. The file itself is replaced by attaching another.
+        Owners and editors may.
+      operationId: updateAttachment
+      parameters:
+        - $ref: "#/components/parameters/AttachmentID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [description]
+              properties:
+                description:
+                  type: string
+                  maxLength: 150
+      responses:
+        "200":
+          $ref: "#/components/responses/Document"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      tags: [Documents]
+      summary: Remove a file from its place
+      description: Owners and editors may.
+      operationId: deleteAttachment
+      parameters:
+        - $ref: "#/components/parameters/AttachmentID"
+      responses:
+        "200":
+          $ref: "#/components/responses/Document"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/attachments/{attachmentID}/file:
+    get:
+      tags: [Documents]
+      summary: Download a file attached to a place
+      description: |
+        The file exactly as it was uploaded, for any member of the trip. It is
+        always sent as an attachment under its name, with `nosniff` and a
+        sandbox policy, so it is never rendered under the application's origin.
+      operationId: getAttachmentFile
+      parameters:
+        - $ref: "#/components/parameters/AttachmentID"
+      responses:
+        "200":
+          description: The file as it was uploaded, with the type its bytes were recognised as.
+          headers:
+            Content-Disposition:
+              description: "`attachment` with the file's name."
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -4290,6 +4436,13 @@ components:
         format: uuid
     TrackID:
       name: trackID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AttachmentID:
+      name: attachmentID
       in: path
       required: true
       schema:
@@ -5865,7 +6018,7 @@ components:
                  planned_cost_amount, cost_per_person, cost_category, cost_note, paid_by, cost_split,
                  cost_shares, schedule,
                  status, story_md, actual_time, actual_end_time, rating, actual_cost_amount, difficulty,
-                 source_item_id, track]
+                 source_item_id, track, attachments]
       properties:
         id:
           type: string
@@ -5990,6 +6143,38 @@ components:
           oneOf:
             - $ref: "#/components/schemas/Track"
             - type: "null"
+        attachments:
+          type: array
+          description: |
+            The files the place carries, oldest first. Always empty through a
+            read-only link, which never sees them.
+          items:
+            $ref: "#/components/schemas/Attachment"
+    Attachment:
+      type: object
+      description: |
+        A file attached to a place, such as a ticket or a booking. It is
+        downloaded from `/attachments/{id}/file`.
+      required: [id, original_name, description, mime, size, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        original_name:
+          type: string
+        description:
+          type: string
+          maxLength: 150
+          description: What the file is; empty when nobody wrote it.
+        mime:
+          type: string
+          description: What the bytes were recognised as.
+        size:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
     Track:
       type: object
       description: |
@@ -6144,7 +6329,7 @@ components:
           description: True to show them in the report, false to stop showing them.
     Day:
       type: object
-      required: [id, position, date, title, notes_md, start_time, default_mode, timezone, morning_anchor,
+      required: [id, position, date, title, notes_md, highlight, start_time, default_mode, timezone, morning_anchor,
                  evening_anchor, no_overnight, items, summary]
       properties:
         id:
@@ -6159,6 +6344,9 @@ components:
           type: string
         notes_md:
           type: string
+        highlight:
+          type: string
+          description: The moment a report's day is remembered by; empty for none and always in a plan.
         start_time:
           $ref: "#/components/schemas/ClockTime"
         default_mode:
@@ -6543,6 +6731,13 @@ components:
         notes_md:
           type: string
           maxLength: 20000
+        highlight:
+          type: string
+          maxLength: 200
+          description: |
+            The moment a report's day is remembered by, in a line; breaks and
+            runs of spaces fold into one space. A plan's day refuses anything
+            but empty (`422`, reason `report_only`).
         start_time:
           $ref: "#/components/schemas/ClockTime"
         default_mode:

@@ -89,14 +89,14 @@ func scanDocument(row pgx.Row) (domain.Document, error) {
 	return d, err
 }
 
-var dayColumns = `d.id, d.document_id, d.position, d.date, d.title, d.notes_md, ` + clockColumn("d.start_time") + `,
+var dayColumns = `d.id, d.document_id, d.position, d.date, d.title, d.notes_md, d.highlight, ` + clockColumn("d.start_time") + `,
 	d.default_mode, d.timezone, d.morning_anchor, d.evening_anchor, d.no_overnight, d.cover_media_id,
 	d.created_at, d.updated_at`
 
 // scanDay reads one row in the order of dayColumns.
 func scanDay(row pgx.Row) (domain.Day, error) {
 	var d domain.Day
-	err := row.Scan(&d.ID, &d.DocumentID, &d.Position, &d.Date, &d.Title, &d.NotesMD, &d.StartTime,
+	err := row.Scan(&d.ID, &d.DocumentID, &d.Position, &d.Date, &d.Title, &d.NotesMD, &d.Highlight, &d.StartTime,
 		&d.DefaultMode, &d.Timezone, &d.MorningAnchor, &d.EveningAnchor, &d.NoOvernight, &d.CoverMediaID,
 		&d.CreatedAt, &d.UpdatedAt)
 	return d, err
@@ -757,10 +757,10 @@ func insertDayAt(ctx context.Context, tx pgx.Tx, day domain.Day, count int, posi
 	}
 	_, err := tx.Exec(ctx,
 		`INSERT INTO days (id, document_id, position, title, notes_md, start_time, default_mode, timezone,
-		                   morning_anchor, evening_anchor, no_overnight)
-		 VALUES ($1, $2, $3, $4, $5, $6::time, $7, $8, $9, $10, $11)`,
+		                   morning_anchor, evening_anchor, no_overnight, highlight)
+		 VALUES ($1, $2, $3, $4, $5, $6::time, $7, $8, $9, $10, $11, $12)`,
 		day.ID, day.DocumentID, slot, day.Title, day.NotesMD, day.StartTime.String(), day.DefaultMode, day.Timezone,
-		day.MorningAnchor, day.EveningAnchor, day.NoOvernight)
+		day.MorningAnchor, day.EveningAnchor, day.NoOvernight, day.Highlight)
 	if err != nil {
 		return fmt.Errorf("add day: %w", err)
 	}
@@ -897,10 +897,10 @@ func (r *DocumentRepository) UpdateDay(ctx context.Context, day domain.Day) erro
 		tag, err := tx.Exec(ctx,
 			`UPDATE days SET title = $2, notes_md = $3, start_time = $4::time, default_mode = $5, timezone = $6,
 			                 morning_anchor = $7, evening_anchor = $8, no_overnight = $9, cover_media_id = $10,
-			                 updated_at = now()
+			                 highlight = $11, updated_at = now()
 			 WHERE id = $1`,
 			day.ID, day.Title, day.NotesMD, day.StartTime.String(), day.DefaultMode, day.Timezone,
-			day.MorningAnchor, day.EveningAnchor, day.NoOvernight, day.CoverMediaID)
+			day.MorningAnchor, day.EveningAnchor, day.NoOvernight, day.CoverMediaID, day.Highlight)
 		if err != nil {
 			return fmt.Errorf("update day: %w", err)
 		}

@@ -14,9 +14,10 @@ import (
 // the alternative, a key that is silently absent, would show up as a blank label
 // in somebody's printed report.
 //
-// Nothing here needs a plural form: every count is written as a label beside its
-// number ("Days: 5"), which reads the same in both languages and spares the
-// document a grammar it would otherwise have to know.
+// Most counts are written as a label beside their number ("Days: 5"), which
+// reads the same in both languages. The few the report's journal pages write
+// as words - "4 days", "6 places" - go through count, which knows the three
+// forms a Russian noun takes after a number.
 
 // labels is the wording of one language, and the units it writes distances in.
 //
@@ -88,21 +89,42 @@ type labels struct {
 
 	// The words of a plan's document, which is read on the way rather than
 	// afterwards: where to sleep, how to get there, what comes next.
-	contents        string
-	overview        string
-	stays           string
-	transfers       string
-	ideas           string
-	optional        string
-	onSite          string
-	wantedAt        string
-	late            string
-	booking         string
-	dayStarts       string
-	dayEnds         string
-	onTheRoad       string
-	night           string
-	qrHint          string
+	contents  string
+	overview  string
+	stays     string
+	transfers string
+	ideas     string
+	optional  string
+	onSite    string
+	wantedAt  string
+	late      string
+	booking   string
+	dayStarts string
+	dayEnds   string
+	onTheRoad string
+	night     string
+	qrHint    string
+	qrPlace   string
+	qrSite    string
+
+	// The words of the report's journal pages: the cover's label, the page
+	// that sums the trip up, a day's chapter and the end of it.
+	journal      string
+	glance       string
+	journey      string
+	route        string
+	dayNumber    string
+	dayStory     string
+	highlight    string
+	endOfDay     string
+	moreFromDay  string
+	overviewPage string
+	closingPage  string
+	averageShort string
+	// dayWord and placeWord are the three forms of a noun
+	// counted by count: one, a few, many. English uses the first two.
+	dayWord         [3]string
+	placeWord       [3]string
 	placeCategories map[string]string
 
 	// The words of a packing list: its title, the items without a category
@@ -192,21 +214,39 @@ var english = labels{
 	difficulty:   "Difficulty: %s",
 	difficulties: [domain.MaxDifficulty]string{"very easy", "easy", "moderate", "hard", "extreme"},
 
-	contents:     "Days",
-	overview:     "Stays and journeys",
-	stays:        "Where to sleep",
-	transfers:    "Flights and transfers",
-	ideas:        "Ideas without a day",
-	optional:     "optional",
-	onSite:       "%s on site",
-	wantedAt:     "wanted at %s",
-	late:         "later than wanted",
-	booking:      "Booking: %s",
-	dayStarts:    "starts at %s",
-	dayEnds:      "ends at %s",
-	onTheRoad:    "%s on the road",
-	night:        "Night: %s",
-	qrHint:       "The QR code beside a place opens the way there in a map on the phone; on the screen, its address does.",
+	contents:  "Days",
+	overview:  "Stays and journeys",
+	stays:     "Where to sleep",
+	transfers: "Flights and transfers",
+	ideas:     "Ideas without a day",
+	optional:  "optional",
+	onSite:    "%s on site",
+	wantedAt:  "wanted at %s",
+	late:      "later than wanted",
+	booking:   "Booking: %s",
+	dayStarts: "starts at %s",
+	dayEnds:   "ends at %s",
+	onTheRoad: "%s on the road",
+	night:     "Night: %s",
+	qrHint: "The QR code at the top right of a place shows it on a map, the one at its bottom left opens its " +
+		"website; on the screen, the codes and the address can be clicked.",
+	qrPlace: "On the map",
+	qrSite:  "Website",
+
+	journal:      "Travel journal",
+	glance:       "Trip at a glance",
+	journey:      "The journey",
+	route:        "Route",
+	dayNumber:    "Day %02d",
+	dayStory:     "Day story",
+	highlight:    "Moment of the day",
+	endOfDay:     "End of the day",
+	moreFromDay:  "More from the day",
+	overviewPage: "Overview",
+	closingPage:  "Looking back",
+	averageShort: "Avg rating",
+	dayWord:      [3]string{"day", "days", "days"},
+	placeWord:    [3]string{"place", "places", "places"},
 	packingTitle: "Packing list",
 	packingOther: "Other things",
 	packingEmpty: "Nothing is on the list yet.",
@@ -298,21 +338,39 @@ var russian = labels{
 	difficulty:   "Сложность: %s",
 	difficulties: [domain.MaxDifficulty]string{"очень легко", "легко", "средне", "сложно", "экстрим"},
 
-	contents:     "Дни",
-	overview:     "Проживание и переезды",
-	stays:        "Где ночуем",
-	transfers:    "Перелёты и трансферы",
-	ideas:        "Идеи без дня",
-	optional:     "необязательно",
-	onSite:       "на месте %s",
-	wantedAt:     "желательно к %s",
-	late:         "позже желаемого",
-	booking:      "Бронь: %s",
-	dayStarts:    "начало в %s",
-	dayEnds:      "конец в %s",
-	onTheRoad:    "в пути %s",
-	night:        "Ночёвка: %s",
-	qrHint:       "QR-код рядом с местом открывает дорогу к нему в картах на телефоне; на экране то же делает его адрес.",
+	contents:  "Дни",
+	overview:  "Проживание и переезды",
+	stays:     "Где ночуем",
+	transfers: "Перелёты и трансферы",
+	ideas:     "Идеи без дня",
+	optional:  "необязательно",
+	onSite:    "на месте %s",
+	wantedAt:  "желательно к %s",
+	late:      "позже желаемого",
+	booking:   "Бронь: %s",
+	dayStarts: "начало в %s",
+	dayEnds:   "конец в %s",
+	onTheRoad: "в пути %s",
+	night:     "Ночёвка: %s",
+	qrHint: "QR-код справа вверху у места показывает его на карте, слева внизу — открывает сайт места; " +
+		"на экране можно нажать на коды и на адрес.",
+	qrPlace: "На карте",
+	qrSite:  "Сайт места",
+
+	journal:      "Дневник путешествия",
+	glance:       "Коротко о поездке",
+	journey:      "Путешествие",
+	route:        "Маршрут",
+	dayNumber:    "День %02d",
+	dayStory:     "Рассказ дня",
+	highlight:    "Главный момент дня",
+	endOfDay:     "Конец дня",
+	moreFromDay:  "Ещё из этого дня",
+	overviewPage: "Обзор",
+	closingPage:  "Итоги",
+	averageShort: "Средняя оценка",
+	dayWord:      [3]string{"день", "дня", "дней"},
+	placeWord:    [3]string{"место", "места", "мест"},
 	packingTitle: "Что взять",
 	packingOther: "Без категории",
 	packingEmpty: "В списке пока ничего нет.",
@@ -350,17 +408,6 @@ func wording(language string, units domain.Units) labels {
 //   - the date in words, such as "12 June 2026".
 func (l labels) date(at time.Time) string {
 	return l.dateOrder(at.Day(), l.months[int(at.Month())-1], at.Year())
-}
-
-// dateTime - writes a date with the time of day, as a photograph's caption.
-//
-// Arguments:
-//   - at: the instant, already in the zone it should be read in.
-//
-// Returns:
-//   - the date and the time, such as "12 June 2026, 15:20".
-func (l labels) dateTime(at time.Time) string {
-	return fmt.Sprintf("%s, %s", l.date(at), l.clock(at.Hour()*60+at.Minute()))
 }
 
 // dateRange - writes the span a trip covers.
@@ -483,4 +530,34 @@ func (l labels) heightOf(metres int) string {
 		return fmt.Sprintf(l.feet, int(math.Round(float64(metres)/metresPerFoot)))
 	}
 	return fmt.Sprintf(l.metres, metres)
+}
+
+// count writes a number with its noun in the form the number asks for: in
+// Russian one form after 1, 21, 31..., another after 2 to 4 and their like,
+// and a third after everything else; in English one form for 1 and another
+// for every other number.
+//
+// Arguments:
+//   - n: the number.
+//   - forms: the noun's forms, as dayWord holds them.
+//
+// Returns:
+//   - the number followed by its noun.
+func (l labels) count(n int, forms [3]string) string {
+	if l.code != "ru" {
+		if n == 1 {
+			return fmt.Sprintf("%d %s", n, forms[0])
+		}
+		return fmt.Sprintf("%d %s", n, forms[1])
+	}
+	tens, units := n%100, n%10
+	switch {
+	case tens >= 11 && tens <= 14:
+		return fmt.Sprintf("%d %s", n, forms[2])
+	case units == 1:
+		return fmt.Sprintf("%d %s", n, forms[0])
+	case units >= 2 && units <= 4:
+		return fmt.Sprintf("%d %s", n, forms[1])
+	}
+	return fmt.Sprintf("%d %s", n, forms[2])
 }

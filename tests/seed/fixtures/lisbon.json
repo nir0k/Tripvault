@@ -1,5 +1,5 @@
 {
-  "_about": "The trip still being planned: no report, a few open questions in the notes, costs split among the three people, a journey with changes and a packing list half packed.",
+  "_about": "The trip still being planned: no report, a few open questions in the notes, costs split among the three people, a journey with changes, a packing list half packed, a hike with its route, bookings attached to places, pictures gathered ahead on a day and on places, and a cover framed from one of them.",
   "title": "Lisbon in spring",
   "summary": "Three days of tiles, hills and too much coffee. Nothing booked yet except the flights.",
   "start_date": "2027-04-16",
@@ -117,6 +117,9 @@
             ]
           }
         }
+      ],
+      "photos": [
+        "portasdosol-1.jpg"
       ]
     },
     {
@@ -135,7 +138,13 @@
           "visit_minutes": 90,
           "planned_cost_amount": "12",
           "cost_per_person": true,
-          "cost_category": "activities"
+          "cost_category": "activities",
+          "photos": [
+            "jeronimos-1.jpg"
+          ],
+          "attachments": [
+            "jeronimos-booking.txt"
+          ]
         },
         {
           "name": "Pastéis de Belém",
@@ -197,7 +206,38 @@
           "visit_minutes": 180,
           "planned_cost_amount": "20",
           "cost_per_person": true,
-          "cost_category": "activities"
+          "cost_category": "activities",
+          "photos": [
+            "pena-1.jpg"
+          ],
+          "attachments": [
+            {
+              "file": "pena-tickets.pdf",
+              "description": "Two adults, entry at 09:30"
+            }
+          ]
+        },
+        {
+          "kind": "activity",
+          "activity_type": "hike",
+          "name": "Pena to the Moorish Castle",
+          "category": "activity",
+          "lat": 38.7876,
+          "lng": -9.3906,
+          "address": "Parque da Pena, Sintra",
+          "description_md": "Through the park to the castle walls, then down the old path into Sintra.",
+          "visit_minutes": 120,
+          "difficulty": 3,
+          "planned_cost_amount": "12",
+          "cost_per_person": true,
+          "cost_category": "activities",
+          "track": {
+            "file": "sintra-route.gpx",
+            "speed_kmh": 3.5
+          },
+          "attachments": [
+            "sintra-trail-notes.md"
+          ]
         },
         {
           "name": "Jardim Botânico",
@@ -412,5 +452,18 @@
         }
       ]
     }
-  ]
+  ],
+  "tags": {
+    "City break": "violet",
+    "Portugal": "green"
+  },
+  "cover": {
+    "photo": "pena-1.jpg",
+    "crop": {
+      "x": 0.05,
+      "y": 0.15,
+      "w": 0.9,
+      "h": 0.5405
+    }
+  }
 }

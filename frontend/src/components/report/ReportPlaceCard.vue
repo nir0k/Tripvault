@@ -6,6 +6,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import { useDropdown } from '@/composables/useDropdown'
 import MediaGallery from '@/components/media/MediaGallery.vue'
 import MediaUploader from '@/components/media/MediaUploader.vue'
+import ItemAttachments from '@/components/plan/ItemAttachments.vue'
 import EditableMarkdown from '@/components/report/EditableMarkdown.vue'
 import ReportTrackLine from '@/components/report/ReportTrackLine.vue'
 import { useReportText } from '@/composables/useContentLanguage'
@@ -228,6 +229,8 @@ function rate(stars: number): void {
       @import="(file) => emit('importTrack', file)"
       @remove="emit('removeTrack')"
     />
+
+    <ItemAttachments :item-id="item.id" :attachments="item.attachments" :editing="structural" add-button />
 
     <MediaGallery
       v-if="item.media.length > 0"

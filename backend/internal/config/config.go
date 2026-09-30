@@ -61,6 +61,9 @@ type Media struct {
 	// TrackMaxSizeMB bounds an imported GPX or KML file, which is text and far
 	// smaller than a photograph.
 	TrackMaxSizeMB int `env:"TRACK_MAX_SIZE_MB" envDefault:"10"`
+	// AttachmentMaxSizeMB bounds one file attached to a place, such as a
+	// ticket or a booking.
+	AttachmentMaxSizeMB int `env:"ATTACHMENT_MAX_SIZE_MB" envDefault:"10"`
 }
 
 // MaxSizeBytes - returns the largest accepted upload in bytes.
@@ -85,6 +88,14 @@ func (m Media) TripQuotaBytes() int64 {
 //   - the limit of one imported GPX or KML file.
 func (m Media) TrackMaxBytes() int64 {
 	return int64(m.TrackMaxSizeMB) * 1024 * 1024
+}
+
+// AttachmentMaxBytes - returns the largest accepted attachment in bytes.
+//
+// Returns:
+//   - the limit of one file attached to a place.
+func (m Media) AttachmentMaxBytes() int64 {
+	return int64(m.AttachmentMaxSizeMB) * 1024 * 1024
 }
 
 // Backup holds where archives are written and how often the schedule is
@@ -419,6 +430,9 @@ func (c *Config) validate() error {
 	}
 	if c.Media.TrackMaxSizeMB < 1 {
 		errs = append(errs, errors.New("TRIPVAULT_MEDIA_TRACK_MAX_SIZE_MB: must be at least 1"))
+	}
+	if c.Media.AttachmentMaxSizeMB < 1 {
+		errs = append(errs, errors.New("TRIPVAULT_MEDIA_ATTACHMENT_MAX_SIZE_MB: must be at least 1"))
 	}
 	if c.Database.MinConns < 0 || c.Database.MinConns > c.Database.MaxConns {
 		errs = append(errs, errors.New("TRIPVAULT_DB_MIN_CONNS: must be between 0 and TRIPVAULT_DB_MAX_CONNS"))

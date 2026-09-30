@@ -270,9 +270,12 @@ type Day struct {
 	DocumentID uuid.UUID
 	Position   int
 	// Date is the trip start plus Position, or nil on a trip without dates.
-	Date      *time.Time
-	Title     string
-	NotesMD   string
+	Date    *time.Time
+	Title   string
+	NotesMD string
+	// Highlight is the moment a day of a report is remembered by, in a line;
+	// empty for none, and always empty in a plan.
+	Highlight string
 	StartTime ClockTime
 	// DefaultMode and Timezone are nil when the day inherits the trip's.
 	DefaultMode   *TravelMode
@@ -299,6 +302,11 @@ func (d Day) Normalize() (Day, error) {
 	if err := checkLength("notes_md", d.NotesMD, maxMarkdownLength); err != nil {
 		return d, err
 	}
+	// A highlight is a line: breaks and runs of spaces fold into one space.
+	d.Highlight = strings.Join(strings.Fields(d.Highlight), " ")
+	if err := checkLength("highlight", d.Highlight, MaxDayHighlight); err != nil {
+		return d, err
+	}
 	if d.StartTime < 0 || d.StartTime >= minutesPerDay {
 		return d, NewValidationError("start_time", "invalid_time", "must be a time in HH:MM form")
 	}
@@ -313,6 +321,25 @@ func (d Day) Normalize() (Day, error) {
 		}
 	}
 	return d, nil
+}
+
+// MaxDayHighlight is how many characters the moment a day is remembered by may
+// take: a line, not a second story.
+const MaxDayHighlight = 200
+
+// CheckKind - refuses what a day of the given kind of document cannot carry.
+//
+// Arguments:
+//   - kind: the plan or the report the day belongs to.
+//
+// Returns:
+//   - a *ValidationError when a plan's day is given a highlight, which only a
+//     report's day has.
+func (d Day) CheckKind(kind DocumentKind) error {
+	if kind != DocumentReport && d.Highlight != "" {
+		return reportOnly("highlight")
+	}
+	return nil
 }
 
 // HasContent - reports whether removing the day would lose something the

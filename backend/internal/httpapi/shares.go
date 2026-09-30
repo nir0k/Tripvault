@@ -294,5 +294,7 @@ func (s *Server) handleSharedDocument(w http.ResponseWriter, r *http.Request) {
 		s.writeDomainError(w, r, "read shared media", err)
 		return
 	}
-	writeJSON(w, s.logger, http.StatusOK, newDocumentResponse(content, access.Trip, pictures))
+	// A link never sees the files attached to places: tickets and bookings
+	// carry names and numbers meant for the travellers alone.
+	writeJSON(w, s.logger, http.StatusOK, newDocumentResponse(content, access.Trip, pictures, nil))
 }

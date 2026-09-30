@@ -161,3 +161,19 @@ func TestDocumentTextRoundTrip(t *testing.T) {
 		t.Errorf("document words: %q / %q", document.IntroMD, document.SummaryMD)
 	}
 }
+
+// TestDayHighlightBelongsToTheReport checks a report's day takes the moment it
+// is remembered by and a plan's day refuses one.
+func TestDayHighlightBelongsToTheReport(t *testing.T) {
+	s, docs := newReportServer(domain.RoleOwner)
+	path := "/api/v1/days/" + docs.day.ID.String()
+	if recorder := send(s, http.MethodPatch, path, "good", `{"highlight":"Whales breaching"}`); recorder.Code != http.StatusOK {
+		t.Errorf("a report's day: %d %s", recorder.Code, recorder.Body.String())
+	}
+	s, docs = newDocumentServer(domain.RoleOwner)
+	path = "/api/v1/days/" + docs.day.ID.String()
+	recorder := send(s, http.MethodPatch, path, "good", `{"highlight":"Whales breaching"}`)
+	if recorder.Code != http.StatusUnprocessableEntity || errorCode(t, recorder) != "validation_failed" {
+		t.Errorf("a plan's day: %d %s", recorder.Code, recorder.Body.String())
+	}
+}

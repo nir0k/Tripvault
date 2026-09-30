@@ -1,5 +1,5 @@
 {
-  "_about": "The administrator's ideas, chosen so every filter of the list has something to tell apart.",
+  "_about": "The administrator's ideas, chosen so every filter of the list has something to tell apart; two of them carry photographs.",
   "tags": {
     "city": "violet",
     "mountains": "sky",
@@ -63,6 +63,12 @@
       ],
       "tags": [
         "nature"
+      ],
+      "photos": [
+        "dynjandi-1.jpg",
+        "latrabjarg-1.jpg",
+        "isafjordur-1.jpg",
+        "raudisandur-1.jpg"
       ]
     },
     {
@@ -193,6 +199,9 @@
       "tags": [
         "mountains",
         "nature"
+      ],
+      "photos": [
+        "trecime-1.jpg"
       ]
     },
     {

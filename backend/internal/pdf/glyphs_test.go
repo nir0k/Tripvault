@@ -27,6 +27,20 @@ func TestTheFontsHaveEveryMarkTheDocumentDraws(t *testing.T) {
 		"bold":    fontBold,
 		"italic":  fontItalic,
 	}
+	// The display face writes the headings and labels of the report's journal,
+	// in capitals, in both alphabets, with the figures and marks they carry.
+	display, err := coverage(fontDisplay)
+	if err != nil {
+		t.Fatalf("display: %v", err)
+	}
+	for _, r := range "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" +
+		"АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя" +
+		"ÁÉÍÓÚÝÞÆÖÐáéíóúýþæöðãõçÂÊÔàè" + ".,:/%–·'’ \u00a0" {
+		if !display[r] {
+			t.Errorf("display has no glyph for %q (U+%04X)", r, r)
+		}
+	}
+
 	for name, font := range fonts {
 		covered, err := coverage(font)
 		if err != nil {

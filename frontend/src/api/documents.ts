@@ -3,7 +3,7 @@ import { filenameFrom, saveBlob } from '@/utils/download'
 import type {
   ActivityType, CostCategory, CostShare, CostSplit, GeoPoint, ItemStatus, LegStop, ListResponse, PlaceCategory, RouteOption,
   RoutePreference, StayKind,
-  Track, TransferKind, TranslationEntry, TravelMode, TripDocument,
+  Attachment, Track, TransferKind, TranslationEntry, TravelMode, TripDocument,
 } from './types'
 
 // Every change answers with the whole document, recomputed, so each function
@@ -12,6 +12,8 @@ import type {
 export interface DayChanges {
   title?: string
   notes_md?: string
+  /** The moment a report's day is remembered by, in a line; a plan's day takes none. */
+  highlight?: string
   start_time?: string
   default_mode?: TravelMode | null
   timezone?: string | null
@@ -439,6 +441,50 @@ export async function setItemTrackSpeed(itemId: string, speedKmh: number | null)
 /** deleteItemTrack removes the recorded line of a place or an activity. */
 export async function deleteItemTrack(itemId: string): Promise<TripDocument> {
   return (await http.delete<TripDocument>(`/api/v1/items/${encodeURIComponent(itemId)}/track`)).data
+}
+
+/**
+ * attachItemFile attaches a file, such as a ticket or a booking, to a place or
+ * an activity.
+ *
+ * Arguments:
+ *   - itemId: the place.
+ *   - file: the file, sent under its own name, which has to say what kind it is.
+ *   - description: a line on what the file is, at most 150 characters; empty for none.
+ *   - onProgress: told the share of the file sent so far, 0 to 1.
+ */
+export async function attachItemFile(itemId: string, file: File, description: string,
+  onProgress?: (share: number) => void): Promise<TripDocument> {
+  const form = new FormData()
+  // The description goes first: the server reads the fields before the file.
+  if (description) {
+    form.append('description', description)
+  }
+  form.append('file', file, file.name)
+  return (await http.post<TripDocument>(path`/items/${itemId}/attachments`, form, {
+    timeout: UPLOAD_TIMEOUT_MS,
+    onUploadProgress: (event) => onProgress?.(event.total ? event.loaded / event.total : 0),
+  })).data
+}
+
+/** describeAttachment changes the line describing an attached file; empty takes it away. */
+export async function describeAttachment(attachmentId: string, description: string): Promise<TripDocument> {
+  return (await http.patch<TripDocument>(path`/attachments/${attachmentId}`, { description })).data
+}
+
+/** deleteAttachment removes a file from its place. */
+export async function deleteAttachment(attachmentId: string): Promise<TripDocument> {
+  return (await http.delete<TripDocument>(path`/attachments/${attachmentId}`)).data
+}
+
+/**
+ * downloadAttachment saves a file attached to a place under its name. It needs
+ * the reader's token, which travels in a header, so it is fetched and handed to
+ * the browser rather than linked to.
+ */
+export async function downloadAttachment(attachment: Attachment): Promise<void> {
+  const response = await http.get<Blob>(path`/attachments/${attachment.id}/file`, { responseType: 'blob' })
+  saveBlob(response.data, attachment.original_name)
 }
 
 /**

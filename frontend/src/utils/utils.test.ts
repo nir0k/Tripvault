@@ -5,7 +5,7 @@ import { amountCents, centsToAmount, equalShares, evaluateFormula, invalidAmount
 import { categoryRows } from '@/utils/budget'
 import { errorMessage } from '@/utils/errors'
 import { packingText, parseQuickItem } from '@/utils/packing'
-import { addDays, describeUserAgent, formatClock, formatDayDate, formatDistance, formatDateRange, formatElapsed, formatMoney, formatSpeed, formatTimeOfDay, fromMetres, normalizeAmount, parseTimeOfDay, splitDuration, toMetres } from '@/utils/format'
+import { addDays, describeUserAgent, formatClock, formatDayDate, formatDistance, formatDateRange, formatElapsed, formatFileSize, formatMoney, formatSpeed, formatTimeOfDay, fromMetres, normalizeAmount, parseTimeOfDay, splitDuration, toMetres } from '@/utils/format'
 import { markdownExcerpt, renderMarkdown } from '@/utils/markdown'
 import { justifyRows, justifyStrip, previewSize, tileRatio } from '@/utils/justify'
 import { minutesBetween, minutesOfDay, planTimeLabel, timeOfDay } from '@/utils/plan'
@@ -258,6 +258,13 @@ describe('schedule formatting', () => {
     expect(formatElapsed(59)).toBe('0:00:59')
   })
 
+  it('shows the size of a file in the unit that reads shortest', () => {
+    expect(formatFileSize(512, 'en')).toBe('512 byte')
+    expect(formatFileSize(1536, 'en')).toBe('1.5 kB')
+    expect(formatFileSize(245 * 1024, 'en')).toBe('245 kB')
+    expect(formatFileSize(3.25 * 1024 * 1024, 'en')).toBe('3.3 MB')
+  })
+
   it('shows a distance in miles for a reader who counts in them', () => {
     // Below a tenth of a mile the small unit reads better, exactly as metres do
     // below a kilometre.
@@ -420,11 +427,11 @@ describe('media hints', () => {
     desired_time: null, visit_minutes: 0, is_optional: false, booking_ref: '', planned_cost_amount: null,
     cost_per_person: false, cost_category: 'other' as const,
     cost_note: '', paid_by: null, cost_split: 'none' as const, cost_shares: [], schedule: null, status: 'visited' as const,
-    story_md: '', actual_time: null, actual_end_time: null, rating: null, actual_cost_amount: null, difficulty: null, source_item_id: null, track: null,
+    story_md: '', actual_time: null, actual_end_time: null, rating: null, actual_cost_amount: null, difficulty: null, source_item_id: null, track: null, attachments: [],
     media: [], cover_media_id: null,
   })
   const day = (id: string, position: number, date: string, items: ReturnType<typeof place>[]) => ({
-    id, position, date, title: '', notes_md: '', start_time: '09:00', default_mode: null, timezone: null,
+    id, position, date, title: '', notes_md: '', highlight: '', start_time: '09:00', default_mode: null, timezone: null,
     morning_anchor: true, evening_anchor: true, no_overnight: false, items, legs: [],
     summary: {
       visit_minutes: 0, travel_minutes: 0, distance_m: 0, by_mode: [], unknown_travel: false,

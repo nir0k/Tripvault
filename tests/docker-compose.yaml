@@ -75,6 +75,7 @@ services:
       TRIPVAULT_MEDIA_MAX_SIZE_MB: ${TRIPVAULT_MEDIA_MAX_SIZE_MB:-25}
       TRIPVAULT_MEDIA_TRIP_QUOTA_MB: ${TRIPVAULT_MEDIA_TRIP_QUOTA_MB:-2048}
       TRIPVAULT_MEDIA_TRACK_MAX_SIZE_MB: ${TRIPVAULT_MEDIA_TRACK_MAX_SIZE_MB:-10}
+      TRIPVAULT_MEDIA_ATTACHMENT_MAX_SIZE_MB: ${TRIPVAULT_MEDIA_ATTACHMENT_MAX_SIZE_MB:-10}
       # The tiles the browser draws maps with. The stand uses the same default
       # as a real deployment, and the same variable changes it: a network that
       # blocks one tile server needs another, not a patched compose file.

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"image"
+	_ "image/jpeg"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -17,7 +19,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/nir0k/tripvault/backend/internal/domain"
-	"github.com/nir0k/tripvault/backend/internal/media"
 	"github.com/nir0k/tripvault/backend/internal/pdf"
 	"github.com/nir0k/tripvault/backend/internal/staticmap"
 )
@@ -32,6 +33,11 @@ import (
 // a face on paper, small enough that a report of two hundred pictures is still a
 // file somebody can send.
 const pdfPhotoWidth = 640
+
+// pdfHeroWidth is the preview width of the pictures the journal shows across
+// the page - the cover, the picture a day opens with and the large one of each
+// place - which at 640 px would print at barely 90 dots to the inch.
+const pdfHeroWidth = 1280
 
 // pdfWriteTimeout is how long one document may take to build and send. A report
 // of two hundred photographs rendered for the first time takes longer than the
@@ -130,17 +136,17 @@ func (s *Server) writeReportPDF(w http.ResponseWriter, r *http.Request, trip dom
 	// are fetched while the photographs are read.
 	var maps map[uuid.UUID]pdf.Map
 	var drawing sync.WaitGroup
-	drawing.Go(func() { maps = s.reportMaps(r.Context(), content) })
+	drawing.Go(func() { maps = s.reportMaps(r.Context(), pdf.ReportMapRequests(content)) })
 
 	// Photographs are what makes the document slow and large, so they are opt
 	// out: a reader who wants the words alone asks for photos=false.
 	if r.URL.Query().Get("photos") != "false" {
-		cover, photos, err := s.reportPhotos(r.Context(), trip, content, includePrivateMedia)
+		cover, photos, heroes, err := s.reportPhotos(r.Context(), trip, content, includePrivateMedia)
 		if err != nil {
 			s.writeDomainError(w, r, "read report photographs", err)
 			return
 		}
-		report.Cover, report.Photos = cover, photos
+		report.Cover, report.Photos, report.DayHeroes = cover, photos, heroes
 	}
 	drawing.Wait()
 	report.Maps, report.MapAttribution = maps, plainText(s.opts.MapAttribution)
@@ -175,12 +181,11 @@ func (s *Server) writeReportPDF(w http.ResponseWriter, r *http.Request, trip dom
 //
 // Arguments:
 //   - ctx: context bounding the fetches.
-//   - content: the report.
+//   - requests: the maps the document asks for.
 //
 // Returns:
-//   - the maps, keyed as pdf.MapRequests keys them.
-func (s *Server) reportMaps(ctx context.Context, content domain.DocumentContent) map[uuid.UUID]pdf.Map {
-	requests := pdf.MapRequests(content)
+//   - the maps, keyed as the requests key them.
+func (s *Server) reportMaps(ctx context.Context, requests []pdf.MapRequest) map[uuid.UUID]pdf.Map {
 	maps := make(map[uuid.UUID]pdf.Map, len(requests))
 	for _, request := range requests {
 		maps[request.Key] = pdf.Map{Frame: staticmap.Fit(request.Points, request.Width, request.Height)}
@@ -231,7 +236,13 @@ func plainText(attribution string) string {
 	return strings.Join(strings.Fields(html.UnescapeString(markup.ReplaceAllString(attribution, " "))), " ")
 }
 
-// reportPhotos renders the pictures of a report to the size the document uses.
+// reportPhotos renders the pictures of a report to the sizes the journal uses.
+//
+// Every picture of a day or a place is read at the width of a row; the ones
+// the journal shows across the page are read again at a width fit for it: the
+// cover, the picture each day opens with - its cover, or the first picture of
+// its places that is wider than tall - and the first such picture of each
+// place, which the place is laid out around.
 //
 // Arguments:
 //   - ctx: context bounding the reads.
@@ -240,31 +251,24 @@ func plainText(attribution string) string {
 //   - includePrivateMedia: whether files marked private may be shown.
 //
 // Returns:
-//   - the cover, empty when the trip has none or it cannot be read.
+//   - the cover, whole, empty when the trip has none or it cannot be read.
 //   - the pictures of each day and place, by the identifier they hang on.
+//   - the picture each day opens with, by the day.
 //   - an error only when the catalogue cannot be read; a single picture that
 //     cannot be rendered is left out rather than failing the document, because a
 //     report missing one photograph is worth more than no report at all.
 func (s *Server) reportPhotos(ctx context.Context, trip domain.TripSummary,
-	content domain.DocumentContent, includePrivateMedia bool) ([]byte, map[uuid.UUID][]pdf.Photo, error) {
+	content domain.DocumentContent, includePrivateMedia bool) ([]byte, map[uuid.UUID][]pdf.Photo,
+	map[uuid.UUID]pdf.Photo, error) {
 	pictures, err := s.galleryOf(ctx, trip.ID, includePrivateMedia)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	var cover []byte
 	if trip.CoverMediaID != nil {
 		if item, held := pictures.byID[*trip.CoverMediaID]; held {
-			cover, _ = s.photoPreview(ctx, item, coverPreviewWidth(trip.CoverCrop))
-		}
-		// The title page shows the part of the cover the trip is shown by
-		// everywhere else; a frame that cannot be cut leaves the whole picture.
-		if crop := trip.CoverCrop; cover != nil && crop != nil {
-			if framed, err := media.Crop(cover, crop.X, crop.Y, crop.W, crop.H); err == nil {
-				cover = framed
-			} else {
-				s.logger.Warn("the cover of a report was left uncut", slog.Any("error", err))
-			}
+			cover, _ = s.photoPreview(ctx, item, pdfHeroWidth)
 		}
 	}
 
@@ -272,58 +276,149 @@ func (s *Server) reportPhotos(ctx context.Context, trip domain.TripSummary,
 	// report over the limit loses its last pictures rather than an arbitrary
 	// scattering of them.
 	targets := make([]uuid.UUID, 0, len(content.Days)+len(content.Items))
+	placesOf := make(map[uuid.UUID][]uuid.UUID, len(content.Days))
 	for _, day := range content.Days {
 		targets = append(targets, day.ID)
 		for _, place := range content.Items {
-			if place.DayID != nil && *place.DayID == day.ID {
+			if place.DayID != nil && *place.DayID == day.ID && place.Kind.IsVisit() {
 				targets = append(targets, place.ID)
+				placesOf[day.ID] = append(placesOf[day.ID], place.ID)
 			}
 		}
 	}
 
-	type wanted struct {
-		target uuid.UUID
-		item   domain.Media
-		body   []byte
-	}
-	var chosen []wanted
+	var chosen []pictureJob
 	for _, target := range targets {
 		for _, item := range reportPictures(pictures.byTarget[target]) {
 			if len(chosen) < pdfPhotoLimit {
-				chosen = append(chosen, wanted{target: target, item: item})
+				chosen = append(chosen, pictureJob{target: target, item: item, width: pdfPhotoWidth})
 			}
 		}
 	}
-
-	// The pictures are read side by side and put back in the order chosen, so a
-	// document is as fast as the store allows and still reads the same each time.
-	var group sync.WaitGroup
-	workers := make(chan struct{}, pdfPhotoWorkers)
-	for index := range chosen {
-		group.Go(func() {
-			workers <- struct{}{}
-			defer func() { <-workers }()
-			body, err := s.photoPreview(ctx, chosen[index].item, pdfPhotoWidth)
-			if err != nil {
-				s.logger.Warn("a photograph was left out of a report",
-					slog.String("media_id", chosen[index].item.ID.String()), slog.Any("error", err))
-				return
-			}
-			chosen[index].body = body
-		})
-	}
-	group.Wait()
-	if err := ctx.Err(); err != nil {
-		return nil, nil, err
+	if err := s.readPictures(ctx, chosen); err != nil {
+		return nil, nil, nil, err
 	}
 
 	photos := make(map[uuid.UUID][]pdf.Photo)
-	for _, each := range chosen {
+	byTarget := make(map[uuid.UUID][]int)
+	for index, each := range chosen {
 		if each.body != nil {
-			photos[each.target] = append(photos[each.target], pdf.Photo{JPEG: each.body, TakenAt: each.item.TakenAt})
+			photos[each.target] = append(photos[each.target], pdf.Photo{ID: each.item.ID, JPEG: each.body})
+			byTarget[each.target] = append(byTarget[each.target], index)
 		}
 	}
-	return cover, photos, nil
+
+	// firstWide finds the first picture of a target that is wider than tall,
+	// other than the one to skip, as the document will look for it.
+	firstWide := func(target, skip uuid.UUID) (int, bool) {
+		for _, index := range byTarget[target] {
+			if chosen[index].item.ID != skip && isLandscape(chosen[index].body) {
+				return index, true
+			}
+		}
+		return 0, false
+	}
+
+	var sharp []pictureJob
+	heroOf := make(map[uuid.UUID]uuid.UUID, len(content.Days))
+	for _, day := range content.Days {
+		var hero *pictureJob
+		if day.CoverMediaID != nil {
+			if item, held := pictures.byID[*day.CoverMediaID]; held {
+				hero = &pictureJob{target: day.ID, item: item, width: pdfHeroWidth}
+			}
+		}
+		for _, place := range placesOf[day.ID] {
+			if hero != nil {
+				break
+			}
+			if index, ok := firstWide(place, uuid.Nil); ok {
+				hero = &pictureJob{target: day.ID, item: chosen[index].item, width: pdfHeroWidth}
+			}
+		}
+		if hero == nil {
+			if index, ok := firstWide(day.ID, uuid.Nil); ok {
+				hero = &pictureJob{target: day.ID, item: chosen[index].item, width: pdfHeroWidth}
+			}
+		}
+		if hero != nil {
+			heroOf[day.ID] = hero.item.ID
+			sharp = append(sharp, *hero)
+		}
+		for _, place := range placesOf[day.ID] {
+			if index, ok := firstWide(place, heroOf[day.ID]); ok {
+				sharp = append(sharp, pictureJob{target: place, item: chosen[index].item, width: pdfHeroWidth})
+			}
+		}
+	}
+	if err := s.readPictures(ctx, sharp); err != nil {
+		return nil, nil, nil, err
+	}
+
+	heroes := make(map[uuid.UUID]pdf.Photo)
+	for _, each := range sharp {
+		if each.body == nil {
+			continue
+		}
+		if isDayOf(content, each.target) && heroOf[each.target] == each.item.ID {
+			heroes[each.target] = pdf.Photo{ID: each.item.ID, JPEG: each.body}
+			continue
+		}
+		for index := range photos[each.target] {
+			if photos[each.target][index].ID == each.item.ID {
+				photos[each.target][index].JPEG = each.body
+			}
+		}
+	}
+	return cover, photos, heroes, nil
+}
+
+// pictureJob is one picture a document reads: what it hangs on, the file, the
+// width it is read at and, once read, its bytes.
+type pictureJob struct {
+	target uuid.UUID
+	item   domain.Media
+	width  int
+	body   []byte
+}
+
+// readPictures reads the pictures of jobs side by side, each at its width,
+// filling in their bytes in place; one that cannot be read is left empty.
+func (s *Server) readPictures(ctx context.Context, jobs []pictureJob) error {
+	var group sync.WaitGroup
+	workers := make(chan struct{}, pdfPhotoWorkers)
+	for index := range jobs {
+		group.Go(func() {
+			workers <- struct{}{}
+			defer func() { <-workers }()
+			body, err := s.photoPreview(ctx, jobs[index].item, jobs[index].width)
+			if err != nil {
+				s.logger.Warn("a photograph was left out of a report",
+					slog.String("media_id", jobs[index].item.ID.String()), slog.Any("error", err))
+				return
+			}
+			jobs[index].body = body
+		})
+	}
+	group.Wait()
+	return ctx.Err()
+}
+
+// isDayOf reports whether an identifier is one of the report's days.
+func isDayOf(content domain.DocumentContent, id uuid.UUID) bool {
+	for _, day := range content.Days {
+		if day.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// isLandscape reports whether a JPEG is wider than tall, from the size it
+// declares; one that cannot be read is not.
+func isLandscape(jpeg []byte) bool {
+	config, _, err := image.DecodeConfig(bytes.NewReader(jpeg))
+	return err == nil && config.Width > config.Height
 }
 
 // reportPictures picks the pictures a day or a place shows in the report: the
@@ -349,22 +444,6 @@ func reportPictures(gallery []shown) []domain.Media {
 		chosen = chosen[:domain.MediaFavoriteLimit]
 	}
 	return chosen
-}
-
-// coverPreviewWidth picks the preview a cover is cut from: the frame is drawn
-// across the page like a whole picture, so a frame of half the picture is cut
-// from a preview twice as wide, up to the widest one kept.
-func coverPreviewWidth(crop *domain.CoverCrop) int {
-	if crop == nil || crop.W <= 0 {
-		return pdfPhotoWidth
-	}
-	wanted := float64(pdfPhotoWidth) / crop.W
-	for _, size := range media.Sizes {
-		if float64(size) >= wanted {
-			return size
-		}
-	}
-	return media.Sizes[len(media.Sizes)-1]
 }
 
 // photoPreview returns a photograph at the given width, which is one of the
@@ -465,7 +544,7 @@ func (s *Server) writePlanPDF(w http.ResponseWriter, r *http.Request, trip domai
 	}
 	plan := pdf.Plan{
 		Trip: trip.Trip, Content: content, Language: language, Units: units,
-		Maps: s.reportMaps(r.Context(), content), MapAttribution: plainText(s.opts.MapAttribution),
+		Maps: s.reportMaps(r.Context(), pdf.MapRequests(content)), MapAttribution: plainText(s.opts.MapAttribution),
 	}
 	var document bytes.Buffer
 	if err := pdf.RenderPlan(&document, plan); err != nil {

@@ -342,7 +342,7 @@ const COLUMNS: { key: string; sort?: IdeaSort }[] = [
               </tr>
             </thead>
             <tbody>
-              <tr v-for="idea in page" :key="idea.id" class="hover:bg-base-200">
+              <tr v-for="idea in page" :key="idea.id" class="row-hover">
                 <td class="min-w-48">
                   <RouterLink
                     :to="{ name: 'idea', params: { ideaId: idea.id }, query: route.query }"

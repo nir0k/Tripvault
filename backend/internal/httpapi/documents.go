@@ -85,6 +85,9 @@ type itemResponse struct {
 	// Track is the line the place or activity was recorded along in a report,
 	// or is meant to follow in a plan; null when it has none.
 	Track *trackResponse `json:"track"`
+	// Attachments are the files the place carries; always empty for a
+	// read-only link, which never sees them.
+	Attachments []attachmentResponse `json:"attachments"`
 }
 
 // legResponse is the journey between two neighbouring elements. distance_m and
@@ -194,6 +197,7 @@ type dayResponse struct {
 	Date          *string            `json:"date"`
 	Title         string             `json:"title"`
 	NotesMD       string             `json:"notes_md"`
+	Highlight     string             `json:"highlight"`
 	StartTime     string             `json:"start_time"`
 	DefaultMode   *string            `json:"default_mode"`
 	Timezone      *string            `json:"timezone"`
@@ -480,8 +484,10 @@ func newStayResponse(stay domain.Stay) stayResponse {
 }
 
 // newDocumentResponse assembles a document with its schedules and totals.
+// attachments are the files of its places, nil for a reader who may not see
+// them.
 func newDocumentResponse(content domain.DocumentContent, trip domain.TripSummary,
-	pictures gallery) documentResponse {
+	pictures gallery, attachments []domain.Attachment) documentResponse {
 	stays := make(map[uuid.UUID]domain.Stay, len(content.Stays))
 	for _, stay := range content.Stays {
 		stays[stay.ID] = stay
@@ -519,6 +525,7 @@ func newDocumentResponse(content domain.DocumentContent, trip domain.TripSummary
 		for index, item := range items {
 			entry := newItemResponse(item, stays, &schedules[index], pictures)
 			entry.Track = newTrackResponse(domain.TrackOfItem(content.Tracks, item.ID))
+			entry.Attachments = newAttachmentResponses(domain.AttachmentsOfItem(attachments, item.ID))
 			dayItems = append(dayItems, entry)
 		}
 		// The leg in from the day before comes first, as it is travelled first.
@@ -554,6 +561,7 @@ func newDocumentResponse(content domain.DocumentContent, trip domain.TripSummary
 			Date:          formatDate(day.Date),
 			Title:         day.Title,
 			NotesMD:       day.NotesMD,
+			Highlight:     day.Highlight,
 			StartTime:     day.StartTime.String(),
 			DefaultMode:   mode,
 			Timezone:      day.Timezone,
@@ -582,6 +590,7 @@ func newDocumentResponse(content domain.DocumentContent, trip domain.TripSummary
 	for _, item := range domain.DayItems(content.Items, nil) {
 		entry := newItemResponse(item, stays, nil, pictures)
 		entry.Track = newTrackResponse(domain.TrackOfItem(content.Tracks, item.ID))
+		entry.Attachments = newAttachmentResponses(domain.AttachmentsOfItem(attachments, item.ID))
 		response.Unassigned = append(response.Unassigned, entry)
 	}
 	for _, stay := range content.Stays {
@@ -656,7 +665,12 @@ func (s *Server) writeDocument(w http.ResponseWriter, r *http.Request, status in
 		s.writeDomainError(w, r, "read media", err)
 		return
 	}
-	writeJSON(w, s.logger, status, newDocumentResponse(content, trip, pictures))
+	attachments, err := s.documents.Attachments(r.Context(), documentID)
+	if err != nil {
+		s.writeDomainError(w, r, "read attachments", err)
+		return
+	}
+	writeJSON(w, s.logger, status, newDocumentResponse(content, trip, pictures, attachments))
 }
 
 // handleGetDocument returns a whole document.
@@ -675,8 +689,10 @@ func (s *Server) handleGetDocument(w http.ResponseWriter, r *http.Request) {
 // Omitted fields keep their value; null returns the mode and zone to the
 // trip's.
 type dayFields struct {
-	Title         optional[string] `json:"title"`
-	NotesMD       optional[string] `json:"notes_md"`
+	Title   optional[string] `json:"title"`
+	NotesMD optional[string] `json:"notes_md"`
+	// Highlight is the moment a report's day is remembered by.
+	Highlight     optional[string] `json:"highlight"`
 	StartTime     optional[string] `json:"start_time"`
 	DefaultMode   optional[string] `json:"default_mode"`
 	Timezone      optional[string] `json:"timezone"`
@@ -694,6 +710,9 @@ func (f dayFields) apply(day domain.Day) (domain.Day, error) {
 	}
 	if f.NotesMD.Set {
 		day.NotesMD = f.NotesMD.Value
+	}
+	if f.Highlight.Set {
+		day.Highlight = f.Highlight.Value
 	}
 	if f.StartTime.Set {
 		clock, err := domain.ParseClockTime("start_time", f.StartTime.Value)
@@ -744,7 +763,8 @@ func (s *Server) handleCreateDay(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, ok := s.documentFor(w, r, documentID, domain.ActionEdit); !ok {
+	document, ok := s.documentFor(w, r, documentID, domain.ActionEdit)
+	if !ok {
 		return
 	}
 	var body createDayRequest
@@ -755,6 +775,9 @@ func (s *Server) handleCreateDay(w http.ResponseWriter, r *http.Request) {
 		ID: uuid.Must(uuid.NewV7()), DocumentID: documentID, StartTime: domain.DefaultDayStart,
 		MorningAnchor: true, EveningAnchor: true,
 	})
+	if err == nil {
+		err = day.CheckKind(document.Kind)
+	}
 	if err != nil {
 		s.writeDomainError(w, r, "validate day", err)
 		return
@@ -793,6 +816,9 @@ func (s *Server) handleUpdateDay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated, err := body.apply(day)
+	if err == nil {
+		err = updated.CheckKind(document.Kind)
+	}
 	if err != nil {
 		s.writeDomainError(w, r, "validate day", err)
 		return

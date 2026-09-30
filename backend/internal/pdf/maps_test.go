@@ -147,10 +147,10 @@ func TestArrowsAlongPointToTheFinish(t *testing.T) {
 // and without one, and that a background is a picture of the document.
 func TestRenderWithMaps(t *testing.T) {
 	report := placedReport(t)
-	report.Photos, report.Cover = nil, nil
+	report.Photos, report.Cover, report.DayHeroes = nil, nil, nil
 	report.MapAttribution = "© OpenStreetMap contributors"
 
-	report.Maps = framed(t, MapRequests(report.Content), false)
+	report.Maps = framed(t, ReportMapRequests(report.Content), false)
 	var plain bytes.Buffer
 	if err := Render(&plain, report); err != nil {
 		t.Fatalf("Render() without backgrounds returned an unexpected error: %v", err)
@@ -159,7 +159,7 @@ func TestRenderWithMaps(t *testing.T) {
 		t.Error("a map without a background put a picture in the document")
 	}
 
-	report.Maps = framed(t, MapRequests(report.Content), true)
+	report.Maps = framed(t, ReportMapRequests(report.Content), true)
 	var pictured bytes.Buffer
 	if err := Render(&pictured, report); err != nil {
 		t.Fatalf("Render() with backgrounds returned an unexpected error: %v", err)

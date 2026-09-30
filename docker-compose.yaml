@@ -77,6 +77,7 @@ services:
       TRIPVAULT_MEDIA_MAX_SIZE_MB: ${TRIPVAULT_MEDIA_MAX_SIZE_MB:-25}
       TRIPVAULT_MEDIA_TRIP_QUOTA_MB: ${TRIPVAULT_MEDIA_TRIP_QUOTA_MB:-2048}
       TRIPVAULT_MEDIA_TRACK_MAX_SIZE_MB: ${TRIPVAULT_MEDIA_TRACK_MAX_SIZE_MB:-10}
+      TRIPVAULT_MEDIA_ATTACHMENT_MAX_SIZE_MB: ${TRIPVAULT_MEDIA_ATTACHMENT_MAX_SIZE_MB:-10}
       # How often the schedule of the backups configured in the interface is
       # checked. They are written to the tripvault-backups volume or over SFTP,
       # and a restore reads them back from there.

@@ -16,8 +16,12 @@ import (
 // A plan's document is read on the way rather than afterwards: in a phone at a
 // bus stop, or printed and folded in a pocket. It is a reference, so it is laid
 // out to be looked things up in - a page a day, the stays and the journeys up
-// front - and every place can be found from it: its address opens the way there
-// in a map on a screen, and a QR code beside it does the same from paper.
+// front - and every place can be found from it: its address opens it on a map
+// on a screen, and a QR code beside it does the same from paper. A place's own
+// website is given as a QR code too, never as its address, which would take
+// lines to print and minutes to type; the two codes stand at opposite corners
+// of the place's block, each named, so a phone aimed at one does not read the
+// other.
 
 // qrSize is the side of a place's QR code: large enough for a phone to read
 // from a printed page at arm's length, small enough to sit beside the text.
@@ -25,6 +29,9 @@ const qrSize = 22.0
 
 // qrGap is the room between the text of a place and its QR code.
 const qrGap = 4.0
+
+// qrCaption is the height of the line naming a QR code.
+const qrCaption = 4.0
 
 // Plan is everything a plan's document is built from.
 type Plan struct {
@@ -166,10 +173,7 @@ func writePlanStay(doc *document, text labels, plan Plan, stay domain.Stay) {
 	if stay.Contacts != "" {
 		lines = append(lines, infoLine{text: stay.Contacts})
 	}
-	if stay.URL != "" {
-		lines = append(lines, infoLine{text: stay.URL, link: stay.URL})
-	}
-	writeInfoBlock(doc, stay.Name, lines, navigation(stay.Lat, stay.Lng))
+	writeInfoBlock(doc, text, stay.Name, lines, mapLink(stay.Lat, stay.Lng), stay.URL)
 	if stay.NotesMD != "" {
 		writeMarkdown(doc, stay.NotesMD)
 	}
@@ -266,13 +270,13 @@ func writeAnchor(doc *document, text labels, item domain.Item, stay domain.Stay,
 	if item.Anchor == domain.AnchorEvening {
 		title = fmt.Sprintf(text.night, stay.Name)
 	}
-	writeInfoBlock(doc, title, whereLines(stay.Address, stay.Lat, stay.Lng), "")
+	writeInfoBlock(doc, text, title, whereLines(stay.Address, stay.Lat, stay.Lng), "", "")
 	doc.space(1)
 }
 
 // writePlanPlace writes one place or activity: when it is reached, what it is,
-// how long it takes, where it is and what it costs, with a QR code of the way
-// there beside it. number is its number on the day's map, or empty.
+// how long it takes, where it is and what it costs, with a QR code of it on a
+// map beside it and one of its website below. number is its number on the day's map, or empty.
 func writePlanPlace(doc *document, text labels, plan Plan, place domain.Item, number string,
 	schedule *domain.ItemSchedule) {
 	title := place.Name
@@ -313,10 +317,7 @@ func writePlanPlace(doc *document, text labels, plan Plan, place domain.Item, nu
 	if place.BookingRef != "" {
 		lines = append(lines, infoLine{text: fmt.Sprintf(text.booking, place.BookingRef)})
 	}
-	if place.URL != "" {
-		lines = append(lines, infoLine{text: place.URL, link: place.URL})
-	}
-	writeInfoBlock(doc, title, lines, navigation(place.Lat, place.Lng))
+	writeInfoBlock(doc, text, title, lines, mapLink(place.Lat, place.Lng), place.URL)
 	if place.DescriptionMD != "" {
 		writeMarkdown(doc, place.DescriptionMD)
 	}
@@ -348,9 +349,9 @@ type infoLine struct {
 }
 
 // whereLines are the lines that say where something is: its address, or its
-// coordinates when it has none, either opening the way there.
+// coordinates when it has none, either opening it on a map.
 func whereLines(address string, lat, lng *float64) []infoLine {
-	target := navigation(lat, lng)
+	target := mapLink(lat, lng)
 	switch {
 	case address != "":
 		return []infoLine{{text: address, link: target}}
@@ -360,29 +361,55 @@ func whereLines(address string, lat, lng *float64) []infoLine {
 	return nil
 }
 
-// navigation is the address that opens the way to a position in a map on a
-// phone or a computer, or empty for something without one. A Google Maps
-// address opens the map application on either kind of phone, and a browser
-// everywhere else.
-func navigation(lat, lng *float64) string {
+// mapLink is the address that shows a position on a map, on a phone or a
+// computer, or empty for something without one. It opens the place rather than
+// the way to it: the reader sees where it is, and one tap there asks for the
+// way. A Google Maps address opens the map application on either kind of
+// phone, and a browser everywhere else.
+func mapLink(lat, lng *float64) string {
 	if lat == nil || lng == nil {
 		return ""
 	}
-	return "https://www.google.com/maps/dir/?api=1&destination=" +
+	return "https://www.google.com/maps/search/?api=1&query=" +
 		url.QueryEscape(fmt.Sprintf("%.6f,%.6f", *lat, *lng))
 }
 
-// writeInfoBlock writes an element's title and lines, the title in bold, with
-// a QR code of target to the right when there is one. The block is kept on one
-// page, and whatever follows it starts below both the text and the code.
-func writeInfoBlock(doc *document, title string, lines []infoLine, target string) {
+// siteName is the part of a website's address that says whose it is, such as
+// "parquesdesintra.pt", or empty when the address says nothing readable.
+func siteName(address string) string {
+	parsed, err := url.Parse(address)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimPrefix(parsed.Hostname(), "www.")
+}
+
+// writeInfoBlock - writes an element's title and lines, the title in bold,
+// with the element's QR codes: the one of its position at the top right, named
+// under it, and the one of its website at the bottom left, below the text and
+// named beside it. Standing at opposite corners, a phone held close enough to
+// read one does not see the other. The block is kept on one page, and whatever
+// follows it starts below the text and both codes.
+//
+// Arguments:
+//   - doc: the document being written.
+//   - text: the labels of its language.
+//   - title: the element's title.
+//   - lines: the lines under the title.
+//   - place: the address of the element on a map, or empty.
+//   - site: the element's website, or empty.
+func writeInfoBlock(doc *document, text labels, title string, lines []infoLine, place, site string) {
 	width := contentWidth
-	if target != "" {
+	if place != "" {
 		width -= qrSize + qrGap
 	}
-	height := sizeSubhead*0.5 + lineHeight*float64(len(lines))
-	if target != "" {
-		height = max(height, qrSize)
+	textHeight := sizeSubhead*0.5 + lineHeight*float64(len(lines))
+	height := textHeight
+	if place != "" {
+		height = max(height, qrSize+qrCaption)
+	}
+	if site != "" {
+		height = max(height, textHeight+qrGap+qrSize)
 	}
 	doc.keepTogether(height + 1)
 
@@ -408,8 +435,36 @@ func writeInfoBlock(doc *document, title string, lines []infoLine, target string
 		pdf.SetTextColor(0, 0, 0)
 	}
 	bottom := pdf.GetY()
-	if target != "" && doc.qrCode(target, pageWidth-marginRight-qrSize, top, qrSize) {
-		bottom = max(bottom, top+qrSize)
+	if place != "" {
+		left := pageWidth - marginRight - qrSize
+		if doc.qrCode(place, left, top, qrSize) {
+			pdf.LinkString(left, top, qrSize, qrSize, place)
+			pdf.SetFont(fontFamily, "", sizeSmall)
+			pdf.SetTextColor(grey[0], grey[1], grey[2])
+			pdf.SetXY(left-qrGap, top+qrSize)
+			pdf.CellFormat(qrSize+qrGap, qrCaption, text.qrPlace, "", 0, "C", false, 0, "")
+			pdf.SetTextColor(0, 0, 0)
+			bottom = max(bottom, top+qrSize+qrCaption)
+		}
+	}
+	if site != "" {
+		siteTop := pdf.GetY() + qrGap/2
+		if doc.qrCode(site, marginLeft, siteTop, qrSize) {
+			pdf.LinkString(marginLeft, siteTop, qrSize, qrSize, site)
+			captionLeft := marginLeft + qrSize + qrGap/2
+			captionWidth := width - qrSize - qrGap/2
+			pdf.SetXY(captionLeft, siteTop+qrSize/2-lineHeight)
+			pdf.SetFont(fontFamily, "B", sizeSmall)
+			pdf.CellFormat(captionWidth, lineHeight*0.85, text.qrSite, "", 2, "L", false, 0, site)
+			if name := siteName(site); name != "" {
+				pdf.SetX(captionLeft)
+				pdf.SetFont(fontFamily, "", sizeSmall)
+				pdf.SetTextColor(grey[0], grey[1], grey[2])
+				pdf.CellFormat(captionWidth, lineHeight*0.85, name, "", 2, "L", false, 0, site)
+				pdf.SetTextColor(0, 0, 0)
+			}
+			bottom = max(bottom, siteTop+qrSize)
+		}
 	}
 	pdf.SetXY(marginLeft, bottom)
 }
