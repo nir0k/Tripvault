@@ -87,10 +87,7 @@ func (d *document) labelWidth(text string, size float64) float64 {
 //   - x, y: where the label starts.
 //   - size: the type size, in points.
 //   - color: the ink.
-//
-// Returns:
-//   - the label's width, in millimetres.
-func (d *document) label(text string, x, y, size float64, color rgb) float64 {
+func (d *document) label(text string, x, y, size float64, color rgb) {
 	width := d.labelWidth(text, size)
 	d.ink(color)
 	d.pdf.SetXY(x, y)
@@ -98,7 +95,6 @@ func (d *document) label(text string, x, y, size float64, color rgb) float64 {
 	d.pdf.CellFormat(width+1, size*0.45, strings.ToUpper(text), "", 0, "L", false, 0, "")
 	d.pdf.RawWriteStr("0 Tc\n")
 	d.ink(inkColor)
-	return width
 }
 
 // minLabelSize is the smallest a label is set to fit its room, in points.
@@ -147,13 +143,12 @@ func labelLineHeight(size float64) float64 {
 }
 
 // fittedLabel writes a label fitted to width by fitLabel, its lines one under
-// the other from y, and returns how tall it came out.
-func (d *document) fittedLabel(text string, x, y, width, size float64, color rgb) float64 {
+// the other from y.
+func (d *document) fittedLabel(text string, x, y, width, size float64, color rgb) {
 	size, lines := d.fitLabel(text, width, size)
 	for index, line := range lines {
 		d.label(line, x, y+float64(index)*labelLineHeight(size), size, color)
 	}
-	return float64(len(lines)) * labelLineHeight(size)
 }
 
 // display writes a heading in the display face across width, wrapping as it

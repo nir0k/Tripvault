@@ -30,13 +30,14 @@ func NewSessionRepository(pool *pgxpool.Pool) *SessionRepository {
 }
 
 // sessionColumns is the shared select list, kept in step with scanSession.
-const sessionColumns = `id, user_id, token_hash, user_agent, created_at, last_used_at, expires_at, revoked_at`
+const sessionColumns = `id, user_id, token_hash, user_agent, created_at, last_used_at, expires_at, revoked_at,
+	rotated_at`
 
 // scanSession reads one row in the order of sessionColumns.
 func scanSession(row pgx.Row) (domain.Session, error) {
 	var s domain.Session
 	err := row.Scan(&s.ID, &s.UserID, &s.TokenHash, &s.UserAgent, &s.CreatedAt, &s.LastUsedAt,
-		&s.ExpiresAt, &s.RevokedAt)
+		&s.ExpiresAt, &s.RevokedAt, &s.RotatedAt)
 	return s, err
 }
 
@@ -81,7 +82,30 @@ func (r *SessionRepository) GetByHash(ctx context.Context, hash []byte) (domain.
 	return session, nil
 }
 
-// Rotate - replaces a live session's token.
+// Superseded - finds the session whose previous token has this hash: the one
+// it held before its last refresh.
+//
+// Arguments:
+//   - ctx: context bounding the query.
+//   - hash: the hash of the presented refresh token.
+//
+// Returns:
+//   - the session, with when it was last refreshed and whether it is revoked.
+//   - domain.ErrNotFound when no session held that token last.
+func (r *SessionRepository) Superseded(ctx context.Context, hash []byte) (domain.Session, error) {
+	session, err := scanSession(r.pool.QueryRow(ctx,
+		`SELECT `+sessionColumns+` FROM refresh_tokens WHERE previous_token_hash = $1`, hash))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Session{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("get superseded session: %w", err)
+	}
+	return session, nil
+}
+
+// Rotate - replaces a live session's token, keeping the one it replaces as the
+// previous token so a copy of it can be recognised later.
 //
 // The update matches on the old hash as well as the id, so of two refreshes
 // racing with the same token only one changes the row.
@@ -99,7 +123,8 @@ func (r *SessionRepository) GetByHash(ctx context.Context, hash []byte) (domain.
 func (r *SessionRepository) Rotate(ctx context.Context, id uuid.UUID, oldHash, newHash []byte,
 	usedAt, expiresAt time.Time) error {
 	tag, err := r.pool.Exec(ctx,
-		`UPDATE refresh_tokens SET token_hash = $3, last_used_at = $4, expires_at = $5
+		`UPDATE refresh_tokens
+		 SET previous_token_hash = token_hash, token_hash = $3, last_used_at = $4, rotated_at = $4, expires_at = $5
 		 WHERE id = $1 AND token_hash = $2 AND revoked_at IS NULL`,
 		id, oldHash, newHash, usedAt, expiresAt)
 	if err != nil {

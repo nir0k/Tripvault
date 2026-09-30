@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -85,22 +86,84 @@ func TestSignInLimitsStopGuessingOneAccount(t *testing.T) {
 	for i := range signInsPerAccount {
 		// Every attempt from a different client: rotating addresses must not
 		// buy more guesses at one account.
-		client := "10.0.0." + string(rune('a'+i))
+		client := "10.0." + strconv.Itoa(i/250) + "." + strconv.Itoa(i%250)
 		if _, ok := limits.admit(client, "owner@example.com"); !ok {
 			t.Fatalf("attempt %d was refused inside the allowance", i+1)
 		}
 		limits.failed(client)
 	}
-	if _, ok := limits.admit("10.0.1.1", "owner@example.com"); ok {
+	if _, ok := limits.admit("10.0.9.1", "owner@example.com"); ok {
 		t.Fatal("an attempt past the limit was allowed from a fresh client")
 	}
-	if _, ok := limits.admit("10.0.1.1", "other@example.com"); !ok {
+	if _, ok := limits.admit("10.0.9.1", "other@example.com"); !ok {
 		t.Error("another address was refused")
 	}
 
-	limits.succeeded("owner@example.com")
-	if _, ok := limits.admit("10.0.1.1", "owner@example.com"); !ok {
+	limits.succeeded("10.0.9.2", "owner@example.com")
+	if _, ok := limits.admit("10.0.9.1", "owner@example.com"); !ok {
 		t.Error("a right password did not clear the count")
+	}
+}
+
+// TestSignInLimitsStopGuessingFromOneClient checks one client is held to its
+// own count at an address, which leaves the owner signing in elsewhere alone.
+func TestSignInLimitsStopGuessingFromOneClient(t *testing.T) {
+	limits := newSignInLimits()
+
+	for i := range signInsPerAccountClient {
+		if _, ok := limits.admit("10.0.0.1", "owner@example.com"); !ok {
+			t.Fatalf("attempt %d was refused inside the allowance", i+1)
+		}
+		limits.failed("10.0.0.1")
+	}
+	if _, ok := limits.admit("10.0.0.1", "owner@example.com"); ok {
+		t.Error("the guessing client was allowed past its limit")
+	}
+	if _, ok := limits.admit("10.0.0.2", "owner@example.com"); !ok {
+		t.Error("the owner was locked out by somebody guessing from another client")
+	}
+}
+
+// TestSignInLimitsKeepKnownClientsOpen checks a client that signed in to an
+// address before is not held back by guessing at it from many other clients.
+func TestSignInLimitsKeepKnownClientsOpen(t *testing.T) {
+	limits := newSignInLimits()
+	if _, ok := limits.admit("192.168.1.10", "owner@example.com"); !ok {
+		t.Fatal("the first sign-in was refused")
+	}
+	limits.succeeded("192.168.1.10", "owner@example.com")
+
+	for i := range signInsPerAccount {
+		client := "10.0." + strconv.Itoa(i/250) + "." + strconv.Itoa(i%250)
+		limits.admit(client, "owner@example.com")
+		limits.failed(client)
+	}
+	if _, ok := limits.admit("10.0.9.1", "owner@example.com"); ok {
+		t.Fatal("an unknown client was allowed past the count across clients")
+	}
+	if _, ok := limits.admit("192.168.1.10", "owner@example.com"); !ok {
+		t.Error("the owner's known client was locked out")
+	}
+}
+
+// TestKnownClientsExpire checks a remembered client stops being exempt once
+// its lifetime passes, and that expired entries are dropped.
+func TestKnownClientsExpire(t *testing.T) {
+	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	known := newKnownClients(time.Hour)
+	known.now = func() time.Time { return now }
+
+	known.remember("old")
+	if !known.has("old") {
+		t.Fatal("a fresh entry was not found")
+	}
+	now = now.Add(25 * time.Hour)
+	if known.has("old") {
+		t.Error("an expired entry was still found")
+	}
+	known.remember("new")
+	if _, found := known.until["old"]; found {
+		t.Error("an expired entry was not dropped")
 	}
 }
 

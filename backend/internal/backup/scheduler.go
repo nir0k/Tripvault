@@ -68,16 +68,15 @@ func ParseSchedule(expression string) (cron.Schedule, error) {
 // next tick with nothing to reload, and a restart does not lose track of what
 // has already been done today.
 type Scheduler struct {
-	store    ScheduleStore
-	runner   *Runner
-	logger   *slog.Logger
-	interval time.Duration
+	store  ScheduleStore
+	runner *Runner
+	logger *slog.Logger
 }
 
-// defaultTick is how often the scheduler looks for work when the caller names no
-// interval. A minute is the resolution a cron expression has, so checking more
-// often could not find anything new.
-const defaultTick = time.Minute
+// tick is how often the scheduler looks for work. A minute is the resolution a
+// cron expression has, so checking more often could not find anything new, and
+// checking less often would only start backups late.
+const tick = time.Minute
 
 // NewScheduler - builds the scheduler.
 //
@@ -85,16 +84,11 @@ const defaultTick = time.Minute
 //   - store: where the configurations are read from.
 //   - runner: what carries a due configuration out.
 //   - logger: where scheduling decisions and failures are reported.
-//   - interval: how often to look for due configurations.
 //
 // Returns:
 //   - a scheduler ready to be started with Run.
-func NewScheduler(store ScheduleStore, runner *Runner, logger *slog.Logger,
-	interval time.Duration) *Scheduler {
-	if interval <= 0 {
-		interval = defaultTick
-	}
-	return &Scheduler{store: store, runner: runner, logger: logger, interval: interval}
+func NewScheduler(store ScheduleStore, runner *Runner, logger *slog.Logger) *Scheduler {
+	return &Scheduler{store: store, runner: runner, logger: logger}
 }
 
 // Run - looks for due configurations on every tick until the context is cancelled.
@@ -102,7 +96,7 @@ func NewScheduler(store ScheduleStore, runner *Runner, logger *slog.Logger,
 // Arguments:
 //   - ctx: cancelling it stops the loop after the pass in flight.
 func (s *Scheduler) Run(ctx context.Context) {
-	ticker := time.NewTicker(s.interval)
+	ticker := time.NewTicker(tick)
 	defer ticker.Stop()
 
 	for {

@@ -82,9 +82,7 @@ func main() {
 		return
 	}
 	if *restorePath != "" {
-		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-		defer stop()
-		if err := restoreArchive(ctx, *restorePath, *restorePassphraseFile); err != nil {
+		if err := restoreFromFlags(*restorePath, *restorePassphraseFile); err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", telemetry.ServiceName, err)
 			os.Exit(1)
 		}
@@ -96,6 +94,15 @@ func main() {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", telemetry.ServiceName, err)
 		os.Exit(1)
 	}
+}
+
+// restoreFromFlags runs the restore asked for on the command line, called off
+// by an interrupt. It is a function of its own so the signal handler is
+// released before main exits with the restore's outcome.
+func restoreFromFlags(archivePath, passphrasePath string) error {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	return restoreArchive(ctx, archivePath, passphrasePath)
 }
 
 // restoreArchive replaces the configured database and media store before the
@@ -218,16 +225,18 @@ func serve() error {
 	}
 	routes := postgres.NewRoutingRepository(pool)
 
+	routingLimits := cfg.Routing.Limits()
 	router := routing.NewService(roadRouter(cfg, logger), routes, routes, routing.Options{
-		PerMinute: cfg.Routing.RequestsPerMinute,
-		Daily:     cfg.Routing.DailyLimit,
+		PerMinute: routingLimits.PerMinute,
+		Daily:     routingLimits.Daily,
 		CacheTTL:  cfg.Routing.CacheTTL,
 	}, logger)
 
 	geocodes := postgres.NewGeocodingRepository(pool)
+	geocodingLimits := cfg.Geocoding.Limits()
 	places := geocoding.NewService(placeFinder(cfg, logger), geocodes, geocodes, geocoding.Options{
-		PerMinute: cfg.Geocoding.RequestsPerMinute,
-		Daily:     cfg.Geocoding.DailyLimit,
+		PerMinute: geocodingLimits.PerMinute,
+		Daily:     geocodingLimits.Daily,
 		CacheTTL:  cfg.Geocoding.CacheTTL,
 	}, logger)
 
@@ -269,7 +278,7 @@ func serve() error {
 		destinations = backup.NewResolver(archives, sealer, backups)
 		runner = backup.NewRunner(backups, mediaFiles, destinations, backups,
 			logger, telemetry.Build().Version)
-		go backup.NewScheduler(backups, runner, logger, cfg.Backup.SchedulerInterval).Run(ctx)
+		go backup.NewScheduler(backups, runner, logger).Run(ctx)
 	}
 
 	server := httpapi.NewServer(httpapi.Options{
@@ -297,12 +306,12 @@ func serve() error {
 		AttachmentMaxBytes: cfg.Media.AttachmentMaxBytes(),
 		Routing:            router,
 		RoutingStats:       routes,
-		RoutingDailyLimit:  cfg.Routing.DailyLimit,
+		RoutingDailyLimit:  routingLimits.Daily,
 		RoutingProvider:    cfg.Routing.Provider,
 		GeocodingProvider:  cfg.Geocoding.Provider,
 		Geocoder:           places,
 		GeocodeStats:       geocodes,
-		GeocodeDailyLimit:  cfg.Geocoding.DailyLimit,
+		GeocodeDailyLimit:  geocodingLimits.Daily,
 		Expander:           geocoding.NewExpander(),
 		Database:           postgres.NewProbe(pool),
 		// The report's PDF draws its maps over the same tiles the interface
@@ -553,6 +562,11 @@ func (s backupService) Progress(runID uuid.UUID) (backup.Progress, bool) {
 // HoldForRestore keeps backups away while the service is being restored.
 func (s backupService) HoldForRestore() (func(), error) {
 	return s.runner.HoldForRestore()
+}
+
+// Check tries a configuration's destination without taking a backup.
+func (s backupService) Check(ctx context.Context, config domain.BackupConfig) backup.CheckResult {
+	return s.destinations.Check(ctx, config)
 }
 
 // Archives lists what a destination holds, newest first; a nil configuration

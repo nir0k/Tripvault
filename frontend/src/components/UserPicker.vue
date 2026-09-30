@@ -34,8 +34,10 @@ watch(query, (text) => {
   searched.value = false
   searching.value = false
   results.value = []
+  // The server finds people by three letters of a name or by a whole email,
+  // and answers nothing to less.
   const trimmed = text.trim()
-  if (trimmed.length < 2) {
+  if (trimmed.length < 3) {
     return
   }
   timer = setTimeout(async () => {

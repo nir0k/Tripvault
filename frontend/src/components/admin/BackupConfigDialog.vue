@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, reactive, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { createBackupConfig, updateBackupConfig, type BackupConfigInput } from '@/api/backups'
-import type { BackupConfig } from '@/api/types'
+import { checkBackupConfig, createBackupConfig, updateBackupConfig, type BackupConfigInput } from '@/api/backups'
+import type { BackupCheck, BackupConfig } from '@/api/types'
 import { errorMessage } from '@/utils/errors'
 
 const props = defineProps<{ config: BackupConfig | null }>()
@@ -16,8 +16,16 @@ const { t, te } = useI18n()
 type Keeping = 'count' | 'days' | 'everything'
 
 const dialog = useTemplateRef<HTMLDialogElement>('dialog')
+const formElement = useTemplateRef<HTMLFormElement>('formElement')
 const error = ref('')
 const busy = ref(false)
+const checking = ref(false)
+// check is what the last check found, checkedFor the destination it was made
+// against, and hostKeyFilled whether it filled the host key in. A result is
+// shown only while the destination is still the one checked.
+const check = ref<BackupCheck | null>(null)
+const checkedFor = ref('')
+const hostKeyFilled = ref(false)
 
 const form = reactive({
   destination: 'local',
@@ -42,6 +50,14 @@ const form = reactive({
 const isSFTP = computed(() => form.destination === 'sftp')
 const editing = computed(() => props.config !== null)
 
+// destinationKey sums up everything a check depends on, so that changing any of
+// it hides a result that no longer describes the form.
+const destinationKey = computed(() =>
+  JSON.stringify([form.destination, form.host, form.port, form.path, form.user, form.hostKey,
+    form.password, form.privateKey, form.keyPassphrase]),
+)
+const checkShown = computed(() => (check.value && checkedFor.value === destinationKey.value ? check.value : null))
+
 // holds says whether the configuration being edited already keeps a credential,
 // which is what lets the form offer "leave it as it is" instead of showing it.
 function holds(name: string): boolean {
@@ -51,6 +67,8 @@ function holds(name: string): boolean {
 // fill puts a configuration into the form, or the defaults of a new one.
 function fill(config: BackupConfig | null): void {
   error.value = ''
+  check.value = null
+  hostKeyFilled.value = false
   form.password = ''
   form.privateKey = ''
   form.keyPassphrase = ''
@@ -149,24 +167,55 @@ function params(): Record<string, string> {
   return destination
 }
 
+// input is the form as the API takes it, for saving and for checking alike.
+function input(): BackupConfigInput {
+  return {
+    destination_type: form.destination,
+    destination_params: params(),
+    secrets: secrets(),
+    encrypted: form.encrypted,
+    schedule_cron: form.scheduled ? form.schedule.trim() : '',
+    retain_count: form.keeping === 'count' ? Number(form.retainCount) : 0,
+    retain_days: form.keeping === 'days' ? Number(form.retainDays) : 0,
+    enabled: form.enabled,
+  }
+}
+
+// checkDestination tries the destination as the form describes it, saving
+// nothing. A host key the server presented to a form that pins none is filled
+// in, so saving pins the key that was just seen rather than whatever answers
+// the first backup.
+async function checkDestination(): Promise<void> {
+  if (!formElement.value?.reportValidity()) {
+    return
+  }
+  checking.value = true
+  error.value = ''
+  hostKeyFilled.value = false
+  try {
+    const found = await checkBackupConfig(props.config?.id ?? null, input())
+    if (isSFTP.value && found.host_key && !form.hostKey.trim()) {
+      form.hostKey = found.host_key
+      hostKeyFilled.value = true
+    }
+    check.value = found
+    checkedFor.value = destinationKey.value
+  } catch (err) {
+    check.value = null
+    error.value = errorMessage(err, t, te)
+  } finally {
+    checking.value = false
+  }
+}
+
 // submit stores the configuration and hands it back to the page.
 async function submit(): Promise<void> {
   busy.value = true
   error.value = ''
   try {
-    const input: BackupConfigInput = {
-      destination_type: form.destination,
-      destination_params: params(),
-      secrets: secrets(),
-      encrypted: form.encrypted,
-      schedule_cron: form.scheduled ? form.schedule.trim() : '',
-      retain_count: form.keeping === 'count' ? Number(form.retainCount) : 0,
-      retain_days: form.keeping === 'days' ? Number(form.retainDays) : 0,
-      enabled: form.enabled,
-    }
     const saved = props.config
-      ? await updateBackupConfig(props.config.id, input)
-      : await createBackupConfig(input)
+      ? await updateBackupConfig(props.config.id, input())
+      : await createBackupConfig(input())
     dialog.value?.close()
     emit('saved', saved)
   } catch (err) {
@@ -181,7 +230,7 @@ defineExpose({ open })
 
 <template>
   <dialog ref="dialog" class="modal modal-top sm:modal-middle">
-    <form class="modal-box flex max-h-[90vh] flex-col gap-3 overflow-y-auto sm:max-w-2xl" @submit.prevent="submit">
+    <form ref="formElement" class="modal-box flex max-h-[90vh] flex-col gap-3 overflow-y-auto sm:max-w-2xl" @submit.prevent="submit">
       <h2 class="text-lg font-bold">{{ editing ? t('backups.editTitle') : t('backups.createTitle') }}</h2>
 
       <label class="floating-label">
@@ -299,9 +348,24 @@ defineExpose({ open })
         <span>{{ t('backups.enabled') }}</span>
       </label>
 
+      <div v-if="checkShown" role="status" class="alert alert-soft" :class="checkShown.ok ? 'alert-success' : 'alert-error'">
+        <div class="flex min-w-0 flex-col gap-1">
+          <span v-if="checkShown.ok">{{ t('backups.check.passed', { count: checkShown.archives }) }}</span>
+          <template v-else>
+            <span>{{ t('backups.check.failed', { step: t(`backups.check.steps.${checkShown.step ?? 'connect'}`) }) }}</span>
+            <span v-if="checkShown.message" class="font-mono text-xs break-words">{{ checkShown.message }}</span>
+          </template>
+          <span v-if="hostKeyFilled">{{ t('backups.check.hostKeyFilled') }}</span>
+        </div>
+      </div>
+
       <p v-if="error" role="alert" class="text-sm text-error">{{ error }}</p>
 
       <div class="modal-action">
+        <button type="button" class="btn btn-outline mr-auto" :disabled="checking || busy" @click="checkDestination">
+          <span v-if="checking" class="loading loading-spinner loading-sm"></span>
+          {{ t('backups.check.action') }}
+        </button>
         <button type="button" class="btn btn-ghost" @click="close">{{ t('common.cancel') }}</button>
         <button type="submit" class="btn btn-primary" :disabled="busy">
           <span v-if="busy" class="loading loading-spinner loading-sm"></span>

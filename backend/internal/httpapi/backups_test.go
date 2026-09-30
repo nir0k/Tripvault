@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -136,6 +137,10 @@ type fakeBackupService struct {
 	// opening, when set, is waited on before an archive is opened, which
 	// holds a restore in the middle of its work for as long as a test needs.
 	opening chan struct{}
+	// checked is the last configuration a check was asked of, and check is
+	// what that check finds.
+	checked *domain.BackupConfig
+	check   backup.CheckResult
 }
 
 // Start records a run against the configuration and leaves it running.
@@ -201,6 +206,12 @@ func (f *fakeBackupService) HoldForRestore() (func(), error) {
 	}
 	f.held.Add(1)
 	return func() { f.held.Add(-1) }, nil
+}
+
+// Check remembers the configuration it was asked of and reports what the test set.
+func (f *fakeBackupService) Check(_ context.Context, config domain.BackupConfig) backup.CheckResult {
+	f.checked = &config
+	return f.check
 }
 
 // testArchiveTime is when every archive in these tests was written.
@@ -775,4 +786,94 @@ func TestMaintenanceEndsRequestsInFlight(t *testing.T) {
 	}
 	<-finished
 	s.leaveMaintenance()
+}
+
+// TestCheckBackupDestinationSavesNothing checks a form can try its destination
+// before it is saved, and that trying it stores no configuration.
+func TestCheckBackupDestinationSavesNothing(t *testing.T) {
+	s, store, service := newBackupServer(t, fakeSealer{})
+	service.check = backup.CheckResult{HostKey: "ssh-ed25519 AAAA", Archives: 3}
+
+	recorder := send(s, http.MethodPost, "/api/v1/admin/backup-configs/check", "good", `{
+		"destination_type":"sftp",
+		"destination_params":{"host":"backups.example.com","user":"tripvault"},
+		"secrets":{"password":"hunter2"}
+	}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("%d %s", recorder.Code, recorder.Body.String())
+	}
+	var found backupCheckResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &found); err != nil {
+		t.Fatalf("response %q is not a check: %v", recorder.Body.String(), err)
+	}
+	if !found.OK || found.HostKey != "ssh-ed25519 AAAA" || found.Archives != 3 || found.Message != "" {
+		t.Errorf("the check answered %+v", found)
+	}
+	if len(store.configs) != 0 {
+		t.Errorf("a check stored %d configurations", len(store.configs))
+	}
+	if service.checked == nil || string(service.checked.SealedSecrets["password"]) != "sealed:hunter2" {
+		t.Errorf("the check was not given the typed password: %+v", service.checked)
+	}
+}
+
+// TestCheckBackupDestinationReportsTheFailedStep checks a destination that
+// fails is an answer naming the step and the reason, not an error status.
+func TestCheckBackupDestinationReportsTheFailedStep(t *testing.T) {
+	s, _, service := newBackupServer(t, fakeSealer{})
+	service.check = backup.CheckResult{Step: backup.CheckStepWrite, Err: errors.New("permission denied")}
+
+	recorder := send(s, http.MethodPost, "/api/v1/admin/backup-configs/check", "good",
+		`{"destination_type":"local"}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("%d %s", recorder.Code, recorder.Body.String())
+	}
+	var found backupCheckResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &found); err != nil {
+		t.Fatalf("response %q is not a check: %v", recorder.Body.String(), err)
+	}
+	if found.OK || found.Step != backup.CheckStepWrite || found.Message != "permission denied" {
+		t.Errorf("the check answered %+v", found)
+	}
+
+	// What cannot be checked without reaching the server is refused as the
+	// form would be on saving.
+	recorder = send(s, http.MethodPost, "/api/v1/admin/backup-configs/check", "good",
+		`{"destination_type":"sftp","destination_params":{"user":"tripvault"},"secrets":{"password":"x"}}`)
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Errorf("a destination with no host: %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// TestCheckStoredBackupDestinationUsesItsCredentials checks a configuration
+// being edited is tried with the credentials it holds when the form does not
+// repeat them, and that the check changes nothing stored.
+func TestCheckStoredBackupDestinationUsesItsCredentials(t *testing.T) {
+	s, store, service := newBackupServer(t, fakeSealer{})
+	created := createConfig(t, s, `{
+		"destination_type":"sftp",
+		"destination_params":{"host":"backups.example.com","user":"tripvault"},
+		"secrets":{"password":"hunter2"}
+	}`)
+
+	recorder := send(s, http.MethodPost, "/api/v1/admin/backup-configs/"+created.ID+"/check", "good", `{
+		"destination_type":"sftp",
+		"destination_params":{"host":"other.example.com","user":"tripvault"}
+	}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("%d %s", recorder.Code, recorder.Body.String())
+	}
+	if service.checked == nil || string(service.checked.SealedSecrets["password"]) != "sealed:hunter2" ||
+		service.checked.DestinationParams["host"] != "other.example.com" {
+		t.Errorf("the check was given %+v", service.checked)
+	}
+	if store.configs[uuid.MustParse(created.ID)].DestinationParams["host"] != "backups.example.com" {
+		t.Error("a check changed the stored configuration")
+	}
+
+	recorder = send(s, http.MethodPost, "/api/v1/admin/backup-configs/"+uuid.NewString()+"/check", "good",
+		`{"destination_type":"local"}`)
+	if recorder.Code != http.StatusNotFound {
+		t.Errorf("an unknown configuration: %d %s", recorder.Code, recorder.Body.String())
+	}
 }

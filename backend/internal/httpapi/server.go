@@ -44,6 +44,7 @@ type AuthService interface {
 	Logout(ctx context.Context, refreshToken string) error
 	Authenticate(ctx context.Context, token string) (domain.User, uuid.UUID, error)
 	ChangePassword(ctx context.Context, user domain.User, sessionID uuid.UUID, current, next string) error
+	CheckPassword(ctx context.Context, user domain.User, password string) error
 }
 
 // UserStore is the account persistence the profile and administration
@@ -159,6 +160,9 @@ type MediaStore interface {
 	Get(ctx context.Context, id uuid.UUID) (domain.Media, error)
 	ListByTrip(ctx context.Context, tripID uuid.UUID) ([]domain.Media, error)
 	ListAll(ctx context.Context) ([]domain.Media, error)
+	// OtherKeys names the objects of the store kept outside the catalogue of
+	// trips' files: account avatars and the photos of ideas with their previews.
+	OtherKeys(ctx context.Context) ([]string, error)
 	Update(ctx context.Context, id uuid.UUID, changes domain.MediaChanges) (domain.Media, error)
 	Delete(ctx context.Context, id uuid.UUID) (string, error)
 	UsedBytes(ctx context.Context, tripID uuid.UUID) (int64, error)
@@ -315,6 +319,10 @@ type Server struct {
 	// downloads are the tickets of the downloads the browser opens itself.
 	downloads downloadTickets
 
+	// passwordChecks counts the times each signed-in account typed its current
+	// password, so a session cannot be used to guess it.
+	passwordChecks *attemptLimiter
+
 	signIns *signInLimits
 	docs    *docs.Handler
 	http    *http.Server
@@ -379,6 +387,8 @@ func NewServer(opts Options, logger *slog.Logger, deps Dependencies) *Server {
 		restoreWorkDir: deps.RestoreWorkDir,
 		workContext:    workContext,
 		restoreJobs:    make(map[uuid.UUID]*restoreJob),
+
+		passwordChecks: newAttemptLimiter(passwordChecksPerAccount, attemptWindow),
 
 		signIns: newSignInLimits(),
 		now:     time.Now,
@@ -596,9 +606,11 @@ func (s *Server) routes() http.Handler {
 
 						backups.Get("/admin/backup-configs", s.handleListBackupConfigs)
 						backups.Post("/admin/backup-configs", s.handleCreateBackupConfig)
+						backups.Post("/admin/backup-configs/check", s.handleCheckBackupConfig)
 						backups.Put("/admin/backup-configs/{configID}", s.handleUpdateBackupConfig)
 						backups.Delete("/admin/backup-configs/{configID}", s.handleDeleteBackupConfig)
 						backups.Post("/admin/backup-configs/{configID}/run", s.handleRunBackup)
+						backups.Post("/admin/backup-configs/{configID}/check", s.handleCheckStoredBackupConfig)
 
 						backups.Get("/admin/backup-runs", s.handleListBackupRuns)
 						backups.Get("/admin/backup-runs/{runID}", s.handleGetBackupRun)

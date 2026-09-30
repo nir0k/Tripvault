@@ -15,7 +15,7 @@ import { fileChecksum, shrinkPicture } from '@/utils/picture'
 // difference.
 
 /** UploadState is where one file stands. */
-export type UploadState = 'waiting' | 'uploading' | 'done' | 'failed' | 'cancelled'
+type UploadState = 'waiting' | 'uploading' | 'done' | 'failed' | 'cancelled'
 
 /** UploadSettings are the choices made where the files were picked. */
 export interface UploadSettings {

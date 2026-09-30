@@ -29,6 +29,10 @@ const account = reactive({
 const accountBusy = ref(false)
 const accountMessage = ref('')
 const accountError = ref('')
+// deletePassword is the password the account is deleted with, and deleteError
+// what went wrong with the deletion, shown in its own card.
+const deletePassword = ref('')
+const deleteError = ref('')
 const passwordMessage = ref('')
 const avatarError = ref('')
 
@@ -140,10 +144,14 @@ async function signOut(): Promise<void> {
   await router.push({ name: 'login' })
 }
 
-// removeAccount deletes the account and everything only it holds. It is asked
-// for by typing the word, as deleting a trip is, because there is no undo and
-// the trips this account owns go with it.
+// removeAccount deletes the account and everything only it holds. It needs the
+// account's password, which the server checks, and is asked for by typing the
+// word, as deleting a trip is, because there is no undo and the trips this
+// account owns go with it.
 async function removeAccount(): Promise<void> {
+  if (deletePassword.value === '') {
+    return
+  }
   const confirmed = await confirmDialog.value?.ask(t('profile.deleteConfirm'), {
     danger: true,
     confirmWord: t('settings.deleteWord'),
@@ -151,13 +159,13 @@ async function removeAccount(): Promise<void> {
   if (!confirmed) {
     return
   }
-  accountError.value = ''
+  deleteError.value = ''
   try {
-    await deleteAccount()
+    await deleteAccount(deletePassword.value)
     session.forget()
     await router.push({ name: 'login' })
   } catch (err) {
-    accountError.value = errorMessage(err, t, te)
+    deleteError.value = errorMessage(err, t, te)
   }
 }
 
@@ -331,16 +339,23 @@ onMounted(loadSessions)
          never reached for on the way to an ordinary setting. -->
     <div class="border-t border-base-300 pt-6">
       <div class="card border border-error/40 bg-base-100">
-        <div class="card-body gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <form class="card-body gap-3" @submit.prevent="removeAccount">
           <div class="space-y-1">
             <h2 class="card-title text-error">{{ t('profile.deleteTitle') }}</h2>
             <p class="text-sm text-base-content/70">{{ t('profile.deleteHint') }}</p>
           </div>
-          <button type="button" class="btn btn-error btn-outline w-fit shrink-0" @click="removeAccount">
-            <AppIcon name="trash" />
-            {{ t('profile.delete') }}
-          </button>
-        </div>
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <label class="flex flex-col gap-1 sm:max-w-xs sm:flex-1">
+              <span class="label">{{ t('profile.deletePassword') }}</span>
+              <input v-model="deletePassword" type="password" autocomplete="current-password" class="input w-full" />
+            </label>
+            <button type="submit" class="btn btn-error btn-outline w-fit shrink-0" :disabled="deletePassword === ''">
+              <AppIcon name="trash" />
+              {{ t('profile.delete') }}
+            </button>
+          </div>
+          <p v-if="deleteError" role="alert" class="text-sm text-error">{{ deleteError }}</p>
+        </form>
       </div>
     </div>
 

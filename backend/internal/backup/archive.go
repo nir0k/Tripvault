@@ -246,7 +246,13 @@ func Build(ctx context.Context, w io.Writer, source Source, files FileOpener,
 		Files:  make([]FileMetadata, 0, len(media)+len(additional)),
 	}
 
-	compressed := gzip.NewWriter(w)
+	// Most of an archive is photographs, which gzip cannot make smaller; the
+	// fastest level still halves the table dumps and spends a fraction of the
+	// time trying on the rest. Any gzip reader opens it.
+	compressed, err := gzip.NewWriterLevel(w, gzip.BestSpeed)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("start compression: %w", err)
+	}
 	archive := tar.NewWriter(compressed)
 
 	// Each table is spooled to a temporary file because tar needs its length in

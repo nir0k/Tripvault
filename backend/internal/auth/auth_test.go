@@ -88,11 +88,14 @@ type fakeStore struct {
 	mu       sync.Mutex
 	users    map[uuid.UUID]domain.User
 	sessions map[uuid.UUID]domain.Session
+	// previous is the hash each session held before its last refresh.
+	previous map[uuid.UUID][]byte
 }
 
 // newFakeStore creates an empty in-memory store.
 func newFakeStore() *fakeStore {
-	return &fakeStore{users: map[uuid.UUID]domain.User{}, sessions: map[uuid.UUID]domain.Session{}}
+	return &fakeStore{users: map[uuid.UUID]domain.User{}, sessions: map[uuid.UUID]domain.Session{},
+		previous: map[uuid.UUID][]byte{}}
 }
 
 // addUser stores an account with the given password.
@@ -167,7 +170,8 @@ func (f *fakeStore) GetByHash(_ context.Context, hash []byte) (domain.Session, e
 	return domain.Session{}, domain.ErrNotFound
 }
 
-// Rotate replaces the hash while the old one is still current.
+// Rotate replaces the hash while the old one is still current, remembering it
+// as the previous one.
 func (f *fakeStore) Rotate(_ context.Context, id uuid.UUID, oldHash, newHash []byte, usedAt, expiresAt time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -175,9 +179,23 @@ func (f *fakeStore) Rotate(_ context.Context, id uuid.UUID, oldHash, newHash []b
 	if !ok || !bytes.Equal(session.TokenHash, oldHash) || session.RevokedAt != nil {
 		return domain.ErrNotFound
 	}
+	f.previous[id] = oldHash
 	session.TokenHash, session.LastUsedAt, session.ExpiresAt = newHash, usedAt, expiresAt
+	session.RotatedAt = &usedAt
 	f.sessions[id] = session
 	return nil
+}
+
+// Superseded finds a session by the hash it held before its last refresh.
+func (f *fakeStore) Superseded(_ context.Context, hash []byte) (domain.Session, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id, previous := range f.previous {
+		if bytes.Equal(previous, hash) {
+			return f.sessions[id], nil
+		}
+	}
+	return domain.Session{}, domain.ErrNotFound
 }
 
 // Revoke ends a session.
@@ -330,6 +348,71 @@ func TestChangePassword(t *testing.T) {
 	}
 	if _, err := service.Login(ctx, "ann@example.com", "brand new password", ""); err != nil {
 		t.Errorf("the new password does not sign in: %v", err)
+	}
+}
+
+// TestRefreshReuse checks a refresh token presented again moments after its
+// session moved on is only refused, and one presented later ends the session
+// for whoever holds its current token as well.
+func TestRefreshReuse(t *testing.T) {
+	ctx := context.Background()
+	service, store := newTestService(t)
+	store.addUser(t, "ann@example.com", "long enough", true)
+	session, err := service.Login(ctx, "ann@example.com", "long enough", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshed, err := service.Refresh(ctx, session.RefreshToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A second tab refreshing with the same token at once.
+	if _, err := service.Refresh(ctx, session.RefreshToken); !errors.Is(err, domain.ErrTokenInvalid) ||
+		errors.Is(err, domain.ErrTokenReused) {
+		t.Fatalf("a token replaced moments ago: %v", err)
+	}
+	if _, _, err := service.Authenticate(ctx, refreshed.AccessToken); err != nil {
+		t.Fatalf("a race between two tabs ended the session: %v", err)
+	}
+
+	later := time.Now().Add(time.Minute)
+	service.now = func() time.Time { return later }
+	if _, err := service.Refresh(ctx, session.RefreshToken); !errors.Is(err, domain.ErrTokenReused) {
+		t.Fatalf("a replaced token presented later: %v", err)
+	}
+	if _, err := service.Refresh(ctx, refreshed.RefreshToken); !errors.Is(err, domain.ErrTokenInvalid) {
+		t.Fatalf("the session survived a replayed token: %v", err)
+	}
+}
+
+// TestHashingBusy checks a password is not checked while the bound on
+// concurrent hashing is taken, and is checked once it frees up.
+func TestHashingBusy(t *testing.T) {
+	ctx := context.Background()
+	service, store := newTestService(t)
+	user := store.addUser(t, "ann@example.com", "long enough", true)
+	service.hashingWait = 10 * time.Millisecond
+	for range cap(service.hashing) {
+		service.hashing <- struct{}{}
+	}
+
+	if _, err := service.Login(ctx, "ann@example.com", "long enough", ""); !errors.Is(err, domain.ErrBusy) {
+		t.Fatalf("login with no room to hash: %v", err)
+	}
+	if _, err := service.Login(ctx, "nobody@example.com", "long enough", ""); !errors.Is(err, domain.ErrBusy) {
+		t.Fatalf("login of an unknown address with no room to hash: %v", err)
+	}
+	if err := service.CheckPassword(ctx, user, "long enough"); !errors.Is(err, domain.ErrBusy) {
+		t.Fatalf("check with no room to hash: %v", err)
+	}
+
+	<-service.hashing
+	if err := service.CheckPassword(ctx, user, "long enough"); err != nil {
+		t.Fatalf("check once room freed up: %v", err)
+	}
+	if err := service.CheckPassword(ctx, user, "wrong password"); !errors.Is(err, domain.ErrInvalidCredentials) {
+		t.Fatalf("a wrong password: %v", err)
 	}
 }
 

@@ -39,6 +39,7 @@ func (s *Server) handleImportItemTrack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.extendUploadDeadlines(w, r)
+	limitUpload(w, r, s.trackMaxBytes)
 	reader, err := r.MultipartReader()
 	if err != nil {
 		s.writeError(w, r, http.StatusBadRequest, "invalid_request",
@@ -253,7 +254,9 @@ func (s *Server) writeTrackFile(w http.ResponseWriter, r *http.Request, recorded
 	_, _ = w.Write(file.Data)
 }
 
-// readFilePart reads the file of a multipart upload, bounded by limit: a
+// readFilePart reads the file of a multipart upload, bounded by limit - and the
+// whole request by the same limit, which limitUpload sets before the reader is
+// made: a
 // recording is a few megabytes of text, and a ticket or a booking hardly more,
 // so anything far larger is not a file the endpoint reads. The form fields sent
 // before the file are put into fields, a kilobyte of each at most, when fields
@@ -266,7 +269,7 @@ func (s *Server) readFilePart(w http.ResponseWriter, r *http.Request,
 			break
 		}
 		if err != nil {
-			s.writeError(w, r, http.StatusBadRequest, "invalid_request", "The upload is malformed")
+			s.writeUploadReadError(w, r, err)
 			return nil, "", false
 		}
 		if part.FormName() != "file" {
@@ -280,6 +283,11 @@ func (s *Server) readFilePart(w http.ResponseWriter, r *http.Request,
 		data, err := io.ReadAll(io.LimitReader(part, limit+1))
 		name := part.FileName()
 		_ = part.Close()
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			s.writeUploadReadError(w, r, err)
+			return nil, "", false
+		}
 		if err != nil {
 			s.internalError(w, r, "read upload", err)
 			return nil, "", false

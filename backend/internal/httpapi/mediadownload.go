@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"archive/zip"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -19,6 +20,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/nir0k/tripvault/backend/internal/auth"
 	"github.com/nir0k/tripvault/backend/internal/domain"
 	"github.com/nir0k/tripvault/backend/internal/media"
 )
@@ -38,6 +40,11 @@ import (
 // manager may ask twice, and a retry after a dropped connection asks again.
 // It is kept in memory, since the service runs as one process; a restart ends
 // the downloads it would end anyway.
+//
+// A ticket remembers who it was issued to rather than what they could read
+// then: every time the address is opened the reader is checked against the
+// trip again and the pictures are read afresh, so a revoked link, a removed
+// member or a picture deleted or made private stops a download at once.
 
 // maxDownloadMedia bounds the pictures one download holds: a whole gallery of
 // a long trip fits, a request naming everything the service has does not.
@@ -66,12 +73,21 @@ type downloadResponse struct {
 	URL string `json:"url"`
 }
 
+// downloadReader is who a download was issued to: an account, or a read-only
+// link known by the hash of its token. Exactly one of the two is set.
+type downloadReader struct {
+	userID    *uuid.UUID
+	shareHash []byte
+}
+
 // downloadTicket is what one download address serves: one picture as its
 // file, or several as an archive named after the trip.
 type downloadTicket struct {
 	secret  [sha256.Size]byte
 	expires time.Time
 	title   string
+	tripID  uuid.UUID
+	reader  downloadReader
 	items   []domain.Media
 }
 
@@ -83,7 +99,8 @@ type downloadTickets struct {
 
 // issue stores a ticket for some pictures and returns its identifier and
 // secret; expired tickets go at the same time.
-func (d *downloadTickets) issue(now time.Time, title string, items []domain.Media) (string, string) {
+func (d *downloadTickets) issue(now time.Time, title string, tripID uuid.UUID, reader downloadReader,
+	items []domain.Media) (string, string) {
 	id := randomToken(16)
 	secret := randomToken(32)
 	d.mu.Lock()
@@ -97,7 +114,8 @@ func (d *downloadTickets) issue(now time.Time, title string, items []domain.Medi
 		}
 	}
 	d.tickets[id] = downloadTicket{
-		secret: sha256.Sum256([]byte(secret)), expires: now.Add(downloadLifetime), title: title, items: items,
+		secret: sha256.Sum256([]byte(secret)), expires: now.Add(downloadLifetime), title: title,
+		tripID: tripID, reader: reader, items: items,
 	}
 	return id, secret
 }
@@ -138,7 +156,8 @@ func (s *Server) handleMediaDownload(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.issueDownload(w, r, trip.Trip, true)
+	userID := principalFrom(r.Context()).user.ID
+	s.issueDownload(w, r, trip.Trip, downloadReader{userID: &userID}, true)
 }
 
 // handleSharedMediaDownload issues a download to a read-only link that allows
@@ -150,7 +169,8 @@ func (s *Server) handleSharedMediaDownload(w http.ResponseWriter, r *http.Reques
 		s.writeError(w, r, http.StatusForbidden, "download_not_allowed", errDownloadNotAllowed.Error())
 		return
 	}
-	s.issueDownload(w, r, access.Trip.Trip, access.Link.IncludePrivateMedia)
+	reader := downloadReader{shareHash: auth.HashShareToken(strings.TrimSpace(r.Header.Get(shareTokenHeader)))}
+	s.issueDownload(w, r, access.Trip.Trip, reader, access.Link.IncludePrivateMedia)
 }
 
 // issueDownload checks the pictures named in the request and answers with the
@@ -160,8 +180,10 @@ func (s *Server) handleSharedMediaDownload(w http.ResponseWriter, r *http.Reques
 // Arguments:
 //   - w, r: the request and its answer.
 //   - trip: the trip the pictures must belong to.
+//   - reader: who the download is issued to, checked again on every opening.
 //   - includePrivate: whether pictures marked private may be included.
-func (s *Server) issueDownload(w http.ResponseWriter, r *http.Request, trip domain.Trip, includePrivate bool) {
+func (s *Server) issueDownload(w http.ResponseWriter, r *http.Request, trip domain.Trip, reader downloadReader,
+	includePrivate bool) {
 	var body downloadRequest
 	if !s.decodeJSON(w, r, &body) {
 		return
@@ -197,7 +219,7 @@ func (s *Server) issueDownload(w http.ResponseWriter, r *http.Request, trip doma
 		}
 	}
 
-	id, secret := s.downloads.issue(s.now(), trip.Title, chosen)
+	id, secret := s.downloads.issue(s.now(), trip.Title, trip.ID, reader, chosen)
 	address := "/api/v1/downloads/" + id
 	http.SetCookie(w, &http.Cookie{
 		Name: downloadCookie + id, Value: secret, Path: address, MaxAge: int(downloadLifetime.Seconds()),
@@ -223,11 +245,89 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusNotFound, "not_found", "Resource not found")
 		return
 	}
+	items, err := s.stillDownloadable(r.Context(), ticket)
+	if err != nil {
+		s.internalError(w, r, "check download", err)
+		return
+	}
+	if len(items) == 0 {
+		s.writeError(w, r, http.StatusNotFound, "not_found", "Resource not found")
+		return
+	}
+	ticket.items = items
 	if len(ticket.items) == 1 {
 		s.writeDownloadedFile(w, r, ticket.items[0])
 		return
 	}
 	s.writeArchive(w, r, ticket)
+}
+
+// stillDownloadable checks the reader of a ticket against its trip as things
+// stand now and returns the ticket's pictures that reader may still download,
+// read afresh from the catalogue, in the ticket's order.
+//
+// Arguments:
+//   - ctx: context of the lookups.
+//   - ticket: the redeemed ticket.
+//
+// Returns:
+//   - the pictures still downloadable; none when the reader lost access.
+//   - an error when the catalogue cannot be read.
+func (s *Server) stillDownloadable(ctx context.Context, ticket downloadTicket) ([]domain.Media, error) {
+	includePrivate := true
+	switch {
+	case ticket.reader.userID != nil:
+		// An account switched off since keeps its memberships, but not its
+		// downloads.
+		user, err := s.users.GetByID(ctx, *ticket.reader.userID)
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !user.IsActive {
+			return nil, nil
+		}
+		trip, err := s.trips.Get(ctx, ticket.tripID, user.ID)
+		if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrForbidden) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !trip.Role.Can(domain.ActionView) {
+			return nil, nil
+		}
+	default:
+		access, err := s.trips.ShareAccess(ctx, ticket.reader.shareHash, s.now())
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if access.Trip.ID != ticket.tripID || !access.Link.AllowDownload {
+			return nil, nil
+		}
+		includePrivate = access.Link.IncludePrivateMedia
+	}
+
+	current, err := s.media.ListByTrip(ctx, ticket.tripID)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[uuid.UUID]domain.Media, len(current))
+	for _, item := range current {
+		byID[item.ID] = item
+	}
+	items := make([]domain.Media, 0, len(ticket.items))
+	for _, chosen := range ticket.items {
+		if item, found := byID[chosen.ID]; found && item.VisibleTo(includePrivate) {
+			items = append(items, item)
+		}
+	}
+	return items, nil
 }
 
 // writeDownloadedFile sends one picture to be saved under its original name,

@@ -14,6 +14,7 @@ import { markdownExcerpt } from '@/utils/markdown'
 import { dayColor, isVisit, itemIcon, itemKindLabel } from '@/utils/plan'
 import { activeUnits } from '@/utils/units'
 import { decodePolyline, type LatLng } from '@/utils/polyline'
+import { mapText } from '@/utils/mapText'
 
 // The map of a plan: places, stays and the lines of the legs, each day in its
 // own colour. Every day of the document is drawn at once, because a trip is
@@ -321,7 +322,7 @@ function draw(): void {
           if (segment.stop && segment.stop.lat !== null && segment.stop.lng !== null) {
             L.circleMarker([segment.stop.lat, segment.stop.lng], {
               radius: 4, color, weight: 2, fillColor: '#ffffff', fillOpacity: 1,
-            }).bindTooltip(segment.stop.name).addTo(layers)
+            }).bindTooltip(mapText(segment.stop.name)).addTo(layers)
           }
         }
         continue
@@ -340,7 +341,7 @@ function draw(): void {
         L.marker(middle, { icon: pinIcon('flight', color), interactive: false }).addTo(layers)
       }
       if (showDistances.value && leg.distance_m !== null) {
-        polyline.bindTooltip(formatDistance(leg.distance_m, locale.value, activeUnits.value), {
+        polyline.bindTooltip(mapText(formatDistance(leg.distance_m, locale.value, activeUnits.value)), {
           permanent: true, direction: 'center', className: 'map-distance',
         })
       }
@@ -370,7 +371,7 @@ function draw(): void {
       L.marker(recorded[0]!, { icon: trackEndIcon('start', color, !current), interactive: false, zIndexOffset: -1000 }).addTo(layers)
       L.marker(recorded.at(-1)!, { icon: trackEndIcon('finish', color, !current), interactive: false, zIndexOffset: -1000 }).addTo(layers)
       if (showDistances.value) {
-        track.bindTooltip(trackLabel(item.track.distance_m), {
+        track.bindTooltip(mapText(trackLabel(item.track.distance_m)), {
           permanent: true, direction: 'center', className: 'map-distance',
         })
       }

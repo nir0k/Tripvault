@@ -221,3 +221,33 @@ func TestSharedIsReadOnly(t *testing.T) {
 		t.Errorf("a share token changed the plan: %d %s", recorder.Code, recorder.Body.String())
 	}
 }
+
+// TestSharedHidesTheTravellersDetails checks a link reads a document without
+// its booking references, contacts and payers, which the members still read.
+func TestSharedHidesTheTravellersDetails(t *testing.T) {
+	s, docs := newDocumentServer(domain.RoleOwner)
+	payer := uuid.New()
+	docs.stay.BookingRef, docs.stay.Contacts = "STAY-REF-1", "+354 555 0101"
+	docs.place.BookingRef, docs.place.PaidBy = "PLACE-REF-2", &payer
+	docs.transfer = &domain.Transfer{ID: uuid.New(), DocumentID: docs.document.ID, Kind: domain.TransferFlight,
+		Name: "FI 204", DepartureDate: time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC), BookingRef: "FLIGHT-REF-3"}
+	secrets := []string{"STAY-REF-1", "+354 555 0101", "PLACE-REF-2", "FLIGHT-REF-3", payer.String()}
+
+	member := send(s, http.MethodGet, "/api/v1/documents/"+docs.document.ID.String(), "good", "")
+	for _, secret := range secrets {
+		if !strings.Contains(member.Body.String(), secret) {
+			t.Errorf("a member does not read %q", secret)
+		}
+	}
+
+	link := createLink(t, s, docs.document.TripID.String(), `{}`)
+	shared := sendShared(s, "/api/v1/shared/document", link.Token)
+	if shared.Code != http.StatusOK {
+		t.Fatalf("read the shared document: %d %s", shared.Code, shared.Body.String())
+	}
+	for _, secret := range secrets {
+		if strings.Contains(shared.Body.String(), secret) {
+			t.Errorf("a link reads %q", secret)
+		}
+	}
+}

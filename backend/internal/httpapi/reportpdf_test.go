@@ -112,6 +112,11 @@ func (f *fakePDFMedia) ListAll(context.Context) ([]domain.Media, error) {
 	return f.items, nil
 }
 
+// OtherKeys names no avatars or idea photos.
+func (f *fakePDFMedia) OtherKeys(context.Context) ([]string, error) {
+	return nil, nil
+}
+
 // LinksOfTrip returns where each file is shown.
 func (f *fakePDFMedia) LinksOfTrip(context.Context, uuid.UUID) ([]domain.MediaLink, error) {
 	return f.links, nil

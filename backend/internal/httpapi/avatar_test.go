@@ -154,13 +154,24 @@ func TestAvatarIsRemovedWithItsBytes(t *testing.T) {
 	}
 }
 
-// TestDeleteOwnAccount checks the account goes with its files, and that the
-// last active administrator is refused instead - the service must keep one.
+// TestDeleteOwnAccount checks the account goes with its files once its
+// password is given, and that the last active administrator is refused
+// instead - the service must keep one.
 func TestDeleteOwnAccount(t *testing.T) {
 	s, user, users, files := newAvatarServer(false)
 	files.files[avatarKey(user.ID)] = []byte("bytes of a picture")
+	confirmed := `{"current_password":"` + fakePassword + `"}`
 
-	if recorder := send(s, http.MethodDelete, "/api/v1/me", "good", ""); recorder.Code != http.StatusNoContent {
+	for _, body := range []string{"", `{}`, `{"current_password":"wrong"}`} {
+		if recorder := send(s, http.MethodDelete, "/api/v1/me", "good", body); recorder.Code == http.StatusNoContent {
+			t.Fatalf("the account was deleted without its password (%q)", body)
+		}
+	}
+	if _, gone := users.deleted[user.ID]; gone {
+		t.Fatal("the account was deleted without its password")
+	}
+
+	if recorder := send(s, http.MethodDelete, "/api/v1/me", "good", confirmed); recorder.Code != http.StatusNoContent {
 		t.Fatalf("delete the account: %d %s", recorder.Code, recorder.Body.String())
 	}
 	if _, gone := users.deleted[user.ID]; !gone {
@@ -171,7 +182,33 @@ func TestDeleteOwnAccount(t *testing.T) {
 	}
 
 	last, _, _, _ := newAvatarServer(true)
-	if recorder := send(last, http.MethodDelete, "/api/v1/me", "good", ""); recorder.Code != http.StatusConflict {
+	if recorder := send(last, http.MethodDelete, "/api/v1/me", "good", confirmed); recorder.Code != http.StatusConflict {
 		t.Errorf("the last administrator deleting itself: %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// TestPasswordChecksAreLimited checks a signed-in account may type a wrong
+// current password only so often, and that a right one clears the count.
+func TestPasswordChecksAreLimited(t *testing.T) {
+	s, user, _, _ := newAvatarServer(true)
+	wrong := `{"current_password":"wrong"}`
+	for i := range passwordChecksPerAccount {
+		if recorder := send(s, http.MethodDelete, "/api/v1/me", "good", wrong); recorder.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("wrong password %d: %d %s", i+1, recorder.Code, recorder.Body.String())
+		}
+	}
+	recorder := send(s, http.MethodDelete, "/api/v1/me", "good", `{"current_password":"`+fakePassword+`"}`)
+	if recorder.Code != http.StatusTooManyRequests || recorder.Header().Get("Retry-After") == "" {
+		t.Fatalf("a password over the limit: %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	s.passwordChecks.forget(user.ID.String())
+	send(s, http.MethodDelete, "/api/v1/me", "good", wrong)
+	// The last administrator is refused after the password, which clears the count.
+	send(s, http.MethodDelete, "/api/v1/me", "good", `{"current_password":"`+fakePassword+`"}`)
+	for i := range passwordChecksPerAccount {
+		if recorder := send(s, http.MethodDelete, "/api/v1/me", "good", wrong); recorder.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("wrong password %d after a right one: %d %s", i+1, recorder.Code, recorder.Body.String())
+		}
 	}
 }

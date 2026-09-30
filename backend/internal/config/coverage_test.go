@@ -33,6 +33,22 @@ var notExposed = map[string]string{
 	"TRIPVAULT_HTTP_SHUTDOWN_TIMEOUT": "tuning, left at its default",
 	"TRIPVAULT_DB_MIN_CONNS":          "tuning, left at its default",
 	"TRIPVAULT_DB_CONNECT_TIMEOUT":    "tuning, left at its default",
+	"TRIPVAULT_DB_MAX_CONNS":          "tuning, left at its default",
+	"TRIPVAULT_AUTH_ACCESS_TOKEN_TTL": "tuning, left at its default",
+	// Upload limits nobody needs to raise: a track is text and an attachment a
+	// ticket; the photograph limit and the trip quota stay in the files.
+	"TRIPVAULT_MEDIA_TRACK_MAX_SIZE_MB":      "tuning, left at its default",
+	"TRIPVAULT_MEDIA_ATTACHMENT_MAX_SIZE_MB": "tuning, left at its default",
+	// Worked out from the service's address when not set.
+	"TRIPVAULT_ROUTING_REQUESTS_PER_MINUTE":   "worked out from the address",
+	"TRIPVAULT_ROUTING_DAILY_LIMIT":           "worked out from the address",
+	"TRIPVAULT_GEOCODING_REQUESTS_PER_MINUTE": "worked out from the address",
+	"TRIPVAULT_GEOCODING_DAILY_LIMIT":         "worked out from the address",
+	// How long an answer is reused; the defaults are in the code.
+	"TRIPVAULT_ROUTING_CACHE_TTL":   "tuning, left at its default",
+	"TRIPVAULT_GEOCODING_CACHE_TTL": "tuning, left at its default",
+	// Changed in the profile after signing in.
+	"TRIPVAULT_ADMIN_DISPLAY_NAME": "changed in the profile",
 }
 
 // The files each variable has to appear in, unless it is not exposed at all.

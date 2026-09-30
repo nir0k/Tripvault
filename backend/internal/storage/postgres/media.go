@@ -183,6 +183,33 @@ func (r *MediaRepository) ListAll(ctx context.Context) ([]domain.Media, error) {
 	return items, nil
 }
 
+// OtherKeys - names the objects of the media store the catalogue of trips'
+// files does not list.
+//
+// Arguments:
+//   - ctx: context bounding the query.
+//
+// Returns:
+//   - the storage keys of every account avatar and of every idea photo and
+//     its preview.
+//   - an error when the query fails.
+func (r *MediaRepository) OtherKeys(ctx context.Context) ([]string, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT avatar_key FROM users WHERE avatar_key <> ''
+		 UNION ALL
+		 SELECT storage_key FROM idea_photos
+		 UNION ALL
+		 SELECT thumb_key FROM idea_photos`)
+	if err != nil {
+		return nil, fmt.Errorf("list avatars and idea photos: %w", err)
+	}
+	keys, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, fmt.Errorf("list avatars and idea photos: %w", err)
+	}
+	return keys, nil
+}
+
 // Update - changes what can be changed about a stored file.
 //
 // Arguments:

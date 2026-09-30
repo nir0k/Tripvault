@@ -898,7 +898,7 @@ func TestParseSchedule(t *testing.T) {
 // between: never run, run recently, and run long enough ago.
 func TestSchedulerRunsWhatIsDue(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	scheduler := NewScheduler(nil, nil, logger, time.Minute)
+	scheduler := NewScheduler(nil, nil, logger)
 	now := time.Date(2026, 6, 20, 3, 30, 0, 0, time.UTC)
 
 	cases := map[string]struct {
@@ -954,7 +954,7 @@ func TestSchedulerPassRunsOnlyTheDueConfiguration(t *testing.T) {
 		{Config: notDue, LastStartedAt: now.Add(-30 * time.Minute)},
 	}
 
-	NewScheduler(store, runner, logger, time.Minute).pass(context.Background(), now)
+	NewScheduler(store, runner, logger).pass(context.Background(), now)
 
 	if len(history.started) != 1 || history.started[0].ConfigID != due.ID {
 		t.Errorf("the pass ran %+v", history.started)

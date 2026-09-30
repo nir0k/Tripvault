@@ -146,6 +146,27 @@ func (d *LocalDestination) Store(_ context.Context, name string, r io.Reader) (i
 	return written, nil
 }
 
+// probe writes a small file into the directory and removes it, reporting the
+// step that failed. The directory was proved writable at start-up, but a volume
+// may since have filled up, gone read-only or changed hands.
+func (d *LocalDestination) probe(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return CheckStepWrite, err
+	}
+	name, err := probeName()
+	if err != nil {
+		return CheckStepWrite, err
+	}
+	path := filepath.Join(d.root, name)
+	if err := os.WriteFile(path, []byte("tripvault\n"), 0o600); err != nil {
+		return CheckStepWrite, fmt.Errorf("write a file to the backup directory: %w", err)
+	}
+	if err := os.Remove(path); err != nil {
+		return CheckStepDelete, fmt.Errorf("remove a file from the backup directory: %w", err)
+	}
+	return "", nil
+}
+
 // Open - reads an archive back.
 //
 // Arguments:

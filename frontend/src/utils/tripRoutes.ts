@@ -46,7 +46,7 @@ const SHARED_ROUTE_NAMES: Partial<Record<TripSection, string>> = {
  * tripRouteName names the route of one page of a plan or a report; a page the
  * kind does not have - a report's packing list - is its document.
  */
-export function tripRouteName(kind: DocumentKind, section: TripSection = 'document'): string {
+function tripRouteName(kind: DocumentKind, section: TripSection = 'document'): string {
   return ROUTE_NAMES[kind][section] ?? ROUTE_NAMES[kind].document ?? ''
 }
 

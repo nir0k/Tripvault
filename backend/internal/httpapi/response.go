@@ -151,6 +151,9 @@ func (s *Server) writeDomainError(w http.ResponseWriter, r *http.Request, action
 		s.writeError(w, r, http.StatusForbidden, "forbidden", "Your role does not allow that")
 	case errors.Is(err, domain.ErrAlreadyMember):
 		s.writeError(w, r, http.StatusConflict, "already_member", "The person already has access to the trip")
+	case errors.Is(err, domain.ErrBusy):
+		w.Header().Set("Retry-After", "1")
+		s.writeError(w, r, http.StatusServiceUnavailable, "busy", "The server is busy. Try again in a moment.")
 	default:
 		s.internalError(w, r, action, err)
 	}

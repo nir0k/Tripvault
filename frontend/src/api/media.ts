@@ -7,7 +7,7 @@ import type { ListResponse, Media, MediaTarget } from './types'
 // are the paths that composable asks for.
 
 /** MEDIA_SIZES are the widths previews are served at. */
-export const MEDIA_SIZES = [160, 320, 640, 1280, 1920] as const
+export const MEDIA_SIZES = [320, 640, 1280, 1920] as const
 
 /** MediaSize is one of the widths a preview is served at. */
 export type MediaSize = (typeof MEDIA_SIZES)[number]

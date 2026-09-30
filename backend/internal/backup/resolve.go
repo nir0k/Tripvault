@@ -78,7 +78,7 @@ func (r *Resolver) Resolve(ctx context.Context, config domain.BackupConfig) (Des
 		if err != nil {
 			return nil, nil, err
 		}
-		destination, err := DialSFTP(config.DestinationParams, secrets)
+		destination, err := DialSFTP(ctx, config.DestinationParams, secrets)
 		if err != nil {
 			return nil, nil, err
 		}

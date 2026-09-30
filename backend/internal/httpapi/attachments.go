@@ -57,6 +57,7 @@ func (s *Server) handleCreateAttachment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.extendUploadDeadlines(w, r)
+	limitUpload(w, r, s.attachmentMaxBytes)
 	reader, err := r.MultipartReader()
 	if err != nil {
 		s.writeError(w, r, http.StatusBadRequest, "invalid_request",

@@ -201,6 +201,7 @@
     "deleteTitle": "Delete account",
     "delete": "Delete my account",
     "deleteHint": "Deleting removes this account, the trips it owns and their photographs for every participant at once. There is no undo.",
+    "deletePassword": "Your password",
     "deleteConfirm": "Delete this account and the trips it owns?"
   },
   "sessions": {
@@ -292,6 +293,7 @@
     "forbidden": "You do not have permission to do that.",
     "password_change_required": "Change your temporary password first.",
     "too_many_attempts": "Too many attempts. Try again in {minutes} min.",
+    "busy": "The server is busy. Try again in a moment.",
     "not_found": "It no longer exists.",
     "invalid_share_token": "This link does not work. It may have been revoked or have expired; ask for a new one.",
     "already_exists": "An account with this email already exists.",
@@ -363,6 +365,7 @@
     "geocoding_limited": "Place search is busy. Try again in a minute.",
     "geocoding_unavailable": "Place search did not answer. Try again later.",
     "file_too_large": "The file is larger than this server accepts.",
+    "too_many_files": "Upload at most 50 files at once.",
     "media_quota": "The trip has no space left for more files.",
     "duplicate_media": "This photograph is already in the gallery of this trip.",
     "unsupported_file": "Only JPEG, PNG and WebP pictures are accepted.",
@@ -480,7 +483,7 @@
     "add": "Add",
     "remove": "Remove {name}",
     "removeConfirm": "Remove {name} from the trip?",
-    "searchPlaceholder": "Name or email",
+    "searchPlaceholder": "Name or full email",
     "noResults": "Nobody found.",
     "onlyOwner": "Only the owner decides who has access to the trip."
   },
@@ -507,6 +510,21 @@
     "privateKey": "Private key",
     "privateKeyHint": "-----BEGIN OPENSSH PRIVATE KEY-----",
     "keyPassphrase": "Key passphrase",
+    "check": {
+      "action": "Check",
+      "passed": "The destination works: an archive can be written and removed there. Archives already there: {count}.",
+      "failed": "The check failed: {step}.",
+      "hostKeyFilled": "The server's host key has been filled in. Compare it with the key on the server before saving: saving holds every later connection to it.",
+      "steps": {
+        "credentials": "the credentials could not be read",
+        "connect": "the server could not be reached",
+        "sign_in": "the server refused the host key or the account",
+        "directory": "the directory could not be created",
+        "write": "a file could not be written",
+        "delete": "a file could not be removed",
+        "list": "the directory could not be read"
+      }
+    },
     "hostKey": "Host key",
     "hostKeyHint": "ssh-ed25519 AAAAC3... - leave empty to accept the key the server presents the first time and hold it to that key afterwards.",
     "secretKept": "Stored - leave empty to keep it",
@@ -1445,8 +1463,6 @@
     "addPlace": "Add a place",
     "when": "When and for how long",
     "months": "Best time to go",
-    "daysMin": "Days, at least",
-    "daysMax": "Days, at most",
     "duration": "How long it takes",
     "days": "{n} day | {n} days",
     "daysRange": "{from}–{to} days",
@@ -1473,7 +1489,6 @@
     },
     "cost": "Rough cost",
     "costHint": "For the whole trip besides getting there; the total adds the cheapest and the dearest way.",
-    "costTotal": "Total",
     "costs": {
       "stay": "Accommodation",
       "food": "Food",

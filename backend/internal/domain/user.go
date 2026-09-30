@@ -68,6 +68,9 @@ type Session struct {
 	LastUsedAt time.Time
 	ExpiresAt  time.Time
 	RevokedAt  *time.Time
+	// RotatedAt is when the token was last exchanged for a new one; nil for a
+	// session that was never refreshed.
+	RotatedAt *time.Time
 }
 
 // IsUsable - reports whether the session may still be refreshed.

@@ -48,6 +48,17 @@ func (f *fakeAuth) ChangePassword(context.Context, domain.User, uuid.UUID, strin
 	return nil
 }
 
+// fakePassword is the only password fakeAuth.CheckPassword accepts.
+const fakePassword = "right password"
+
+// CheckPassword accepts fakePassword and nothing else.
+func (f *fakeAuth) CheckPassword(_ context.Context, _ domain.User, password string) error {
+	if password != fakePassword {
+		return domain.ErrInvalidCredentials
+	}
+	return nil
+}
+
 // fakeUsers answers the account queries the gated routes reach.
 // fakeUsers stands in for the account store. Its zero value answers what the
 // tests that do not care about accounts need; the maps are given only by the
@@ -129,9 +140,12 @@ func (fakeUsers) ResetPassword(context.Context, uuid.UUID, string) error { retur
 // Stats is not used by these tests.
 func (fakeUsers) Stats(context.Context) (domain.UserStats, error) { return domain.UserStats{}, nil }
 
-// Search finds nobody.
+// searchedUser is the one person fakeUsers.Search finds, whatever is typed.
+var searchedUser = domain.TripUser{ID: uuid.New(), DisplayName: "Ann Lee", Email: "ann.lee@example.com"}
+
+// Search finds searchedUser.
 func (fakeUsers) Search(context.Context, string, uuid.UUID) ([]domain.TripUser, error) {
-	return nil, nil
+	return []domain.TripUser{searchedUser}, nil
 }
 
 // newTestServer builds a server whose token "good" signs in as user.

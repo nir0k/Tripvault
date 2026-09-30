@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/nir0k/tripvault/backend/internal/domain"
+	"github.com/nir0k/tripvault/backend/internal/media"
 	"github.com/nir0k/tripvault/backend/internal/pdf"
 	"github.com/nir0k/tripvault/backend/internal/staticmap"
 )
@@ -68,7 +69,7 @@ func (s *Server) handleReportPDF(w http.ResponseWriter, r *http.Request) {
 	reader := principalFrom(r.Context()).user
 	// Somebody who may read the trip may read all of its files: private keeps a
 	// photograph out of a read-only link, not away from the people on the trip.
-	s.writeReportPDF(w, r, trip, *trip.ReportID, true, reader.Locale, reader.Units)
+	s.writeReportPDF(w, r, trip, *trip.ReportID, true, false, reader.Locale, reader.Units)
 }
 
 // handleSharedReportPDF renders the report a read-only link opens.
@@ -86,7 +87,7 @@ func (s *Server) handleSharedReportPDF(w http.ResponseWriter, r *http.Request) {
 	// the request: whoever opened the link is reading in their own browser, and
 	// the page sends what it is showing them.
 	s.writeReportPDF(w, r, access.Trip, *access.Trip.ReportID,
-		access.Link.IncludePrivateMedia, r.URL.Query().Get("lang"),
+		access.Link.IncludePrivateMedia, true, r.URL.Query().Get("lang"),
 		domain.Units(r.URL.Query().Get("units")))
 }
 
@@ -95,9 +96,10 @@ func (s *Server) handleSharedReportPDF(w http.ResponseWriter, r *http.Request) {
 // The words of the trip are written in the language asked for as content_lang,
 // or in the language of the document's own labels, when the report is
 // translated into it; otherwise, and field by field where nobody translated,
-// in the original.
+// in the original. byLink renders what a read-only link reads, without the
+// travellers' own details (domain.DocumentContent.ForShareLink).
 func (s *Server) writeReportPDF(w http.ResponseWriter, r *http.Request, trip domain.TripSummary,
-	documentID uuid.UUID, includePrivateMedia bool, language string, units domain.Units) {
+	documentID uuid.UUID, includePrivateMedia, byLink bool, language string, units domain.Units) {
 	// A recorder in a test cannot move its deadline, and nothing else refuses to.
 	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(pdfWriteTimeout)); err != nil &&
 		!errors.Is(err, http.ErrNotSupported) {
@@ -108,6 +110,9 @@ func (s *Server) writeReportPDF(w http.ResponseWriter, r *http.Request, trip dom
 	if err != nil {
 		s.writeDomainError(w, r, "read report", err)
 		return
+	}
+	if byLink {
+		content = content.ForShareLink()
 	}
 	requested := r.URL.Query().Get("content_lang")
 	if requested == "" {
@@ -457,6 +462,7 @@ func (s *Server) photoPreview(ctx context.Context, item domain.Media, width int)
 	if s.mediaFiles == nil {
 		return nil, fmt.Errorf("this service has no media store")
 	}
+	width = media.ServedWidth(width, item.Width)
 	if preview, ok := s.storedPreview(ctx, item, width); ok {
 		return preview, nil
 	}
@@ -510,7 +516,7 @@ func (s *Server) handlePlanPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reader := principalFrom(r.Context()).user
-	s.writePlanPDF(w, r, trip, *trip.PlanID, reader.Locale, reader.Units)
+	s.writePlanPDF(w, r, trip, *trip.PlanID, false, reader.Locale, reader.Units)
 }
 
 // handleSharedPlanPDF renders the plan a read-only link opens, in the language
@@ -521,14 +527,15 @@ func (s *Server) handleSharedPlanPDF(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusNotFound, "not_found", "Resource not found")
 		return
 	}
-	s.writePlanPDF(w, r, access.Trip, *access.Trip.PlanID, r.URL.Query().Get("lang"),
+	s.writePlanPDF(w, r, access.Trip, *access.Trip.PlanID, true, r.URL.Query().Get("lang"),
 		domain.Units(r.URL.Query().Get("units")))
 }
 
 // writePlanPDF renders one plan with its maps and streams it back. A plan has
-// no photographs and is written in its one language.
+// no photographs and is written in its one language. byLink renders what a
+// read-only link reads, without the travellers' own details.
 func (s *Server) writePlanPDF(w http.ResponseWriter, r *http.Request, trip domain.TripSummary,
-	documentID uuid.UUID, language string, units domain.Units) {
+	documentID uuid.UUID, byLink bool, language string, units domain.Units) {
 	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(pdfWriteTimeout)); err != nil &&
 		!errors.Is(err, http.ErrNotSupported) {
 		s.logger.Warn("extend the plan deadline failed",
@@ -538,6 +545,9 @@ func (s *Server) writePlanPDF(w http.ResponseWriter, r *http.Request, trip domai
 	if err != nil {
 		s.writeDomainError(w, r, "read plan", err)
 		return
+	}
+	if byLink {
+		content = content.ForShareLink()
 	}
 	if domain.ValidateUnits(units) != nil {
 		units = domain.UnitsKilometres

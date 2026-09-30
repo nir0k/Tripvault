@@ -118,9 +118,10 @@ func (s *Server) handleRetryEstimatedLegs(w http.ResponseWriter, r *http.Request
 	s.writeDocument(w, r, http.StatusOK, documentID)
 }
 
-// legFor loads the leg named in the path and checks the role on its trip.
-func (s *Server) legFor(w http.ResponseWriter, r *http.Request,
-	action domain.TripAction) (domain.Leg, domain.Document, bool) {
+// legFor loads the leg named in the path for somebody who may edit its trip:
+// every request about one leg changes it, even one only asking for its routes,
+// which are fetched from the provider on the trip's account.
+func (s *Server) legFor(w http.ResponseWriter, r *http.Request) (domain.Leg, domain.Document, bool) {
 	legID, ok := s.pathUUID(w, r, "legID")
 	if !ok {
 		return domain.Leg{}, domain.Document{}, false
@@ -130,7 +131,7 @@ func (s *Server) legFor(w http.ResponseWriter, r *http.Request,
 		s.writeDomainError(w, r, "get leg", err)
 		return domain.Leg{}, domain.Document{}, false
 	}
-	document, ok := s.documentFor(w, r, leg.DocumentID, action)
+	document, ok := s.documentFor(w, r, leg.DocumentID, domain.ActionEdit)
 	return leg, document, ok
 }
 
@@ -169,7 +170,7 @@ func applyNullableInt(change optional[int], target **int) {
 // the way it is routed. A new mode, preference or set of via points sends the
 // leg back to pending.
 func (s *Server) handleUpdateLeg(w http.ResponseWriter, r *http.Request) {
-	leg, document, ok := s.legFor(w, r, domain.ActionEdit)
+	leg, document, ok := s.legFor(w, r)
 	if !ok {
 		return
 	}
@@ -227,7 +228,7 @@ func (s *Server) handleUpdateLeg(w http.ResponseWriter, r *http.Request) {
 // handleRecalculateLeg calculates one leg again, bypassing the route cache:
 // the "retry" next to an estimate.
 func (s *Server) handleRecalculateLeg(w http.ResponseWriter, r *http.Request) {
-	leg, _, ok := s.legFor(w, r, domain.ActionEdit)
+	leg, _, ok := s.legFor(w, r)
 	if !ok {
 		return
 	}
@@ -330,7 +331,7 @@ type routeListResponse struct {
 // handlePinLegRoute. Alternatives run between the two ends; a leg routed
 // through points of its own has only the one route those points make.
 func (s *Server) handleLegAlternatives(w http.ResponseWriter, r *http.Request) {
-	leg, _, ok := s.legFor(w, r, domain.ActionEdit)
+	leg, _, ok := s.legFor(w, r)
 	if !ok {
 		return
 	}
@@ -397,7 +398,7 @@ const maxRouteGeometryLength = 1 << 20
 // is kept - not calculated again, not replaced by an estimate - until the leg's
 // ends, mode or routing change or it is recalculated on purpose.
 func (s *Server) handlePinLegRoute(w http.ResponseWriter, r *http.Request) {
-	leg, _, ok := s.legFor(w, r, domain.ActionEdit)
+	leg, _, ok := s.legFor(w, r)
 	if !ok {
 		return
 	}
@@ -487,7 +488,7 @@ func linkVia(route googlelink.Route, from, to domain.Point) []domain.Point {
 // first, asking only Google's own hosts where it leads. Nothing is stored: the
 // editor shows the points and saves them with the leg.
 func (s *Server) handleLegGoogleLink(w http.ResponseWriter, r *http.Request) {
-	leg, _, ok := s.legFor(w, r, domain.ActionEdit)
+	leg, _, ok := s.legFor(w, r)
 	if !ok {
 		return
 	}

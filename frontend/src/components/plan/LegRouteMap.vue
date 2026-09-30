@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n'
 import type { GeoPoint } from '@/api/types'
 import { useTileLayer } from '@/composables/useTileLayer'
 import { decodePolyline } from '@/utils/polyline'
+import { mapText } from '@/utils/mapText'
 
 // The routes a leg could take, side by side on a small map, so a choice between
 // them is a choice between roads one can see rather than between two numbers.
@@ -60,7 +61,7 @@ function draw(): void {
       opacity: active ? 0.95 : 0.55,
       dashArray: active ? undefined : '6 6',
     }).addTo(layers)
-    polyline.bindTooltip(t('leg.routeOption', { number: index + 1 }), { sticky: true })
+    polyline.bindTooltip(mapText(t('leg.routeOption', { number: index + 1 })), { sticky: true })
     polyline.on('click', () => emit('select', index))
   }
   for (const point of props.via) {

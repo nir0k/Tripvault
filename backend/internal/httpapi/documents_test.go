@@ -922,3 +922,28 @@ func TestLinkViaTrimsTheEnds(t *testing.T) {
 		t.Errorf("by coordinates: %+v", via)
 	}
 }
+
+// TestCreatePlaceChecksCover checks a new place may be shown only by a file of
+// its own trip, as a changed one may.
+func TestCreatePlaceChecksCover(t *testing.T) {
+	s, docs := newDocumentServer(domain.RoleOwner)
+	files := newFakeMedia()
+	own := domain.Media{ID: uuid.New(), TripID: docs.document.TripID}
+	foreign := domain.Media{ID: uuid.New(), TripID: uuid.New()}
+	files.items[own.ID], files.items[foreign.ID] = own, foreign
+	s.media = files
+	path := "/api/v1/days/" + docs.day.ID.String() + "/items"
+
+	recorder := send(s, http.MethodPost, path, "good", `{"name":"Skógafoss","cover_media_id":"`+foreign.ID.String()+`"}`)
+	if recorder.Code != http.StatusUnprocessableEntity || docs.changed != 0 {
+		t.Fatalf("a cover of another trip was accepted: %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	recorder = send(s, http.MethodPost, path, "good", `{"name":"Skógafoss","cover_media_id":"`+own.ID.String()+`"}`)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("a cover of the trip was refused: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if docs.created.CoverMediaID == nil || *docs.created.CoverMediaID != own.ID {
+		t.Errorf("cover %v, want %s", docs.created.CoverMediaID, own.ID)
+	}
+}

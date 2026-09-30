@@ -96,11 +96,15 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	key := p.user.ID.String()
+	if wait, ok := s.passwordChecks.take(key); !ok {
+		s.writeTooManyAttempts(w, r, wait)
+		return
+	}
 	err := s.auth.ChangePassword(r.Context(), p.user, p.sessionID, body.CurrentPassword, body.NewPassword)
+	s.settlePasswordCheck(key, err)
 	if errors.Is(err, domain.ErrInvalidCredentials) {
-		s.writeErrorDetails(w, r, http.StatusUnprocessableEntity, "validation_failed",
-			"current_password: is incorrect",
-			map[string]any{"field": "current_password", "reason": "incorrect"})
+		s.writeIncorrectPassword(w, r)
 		return
 	}
 	if err != nil {
@@ -108,6 +112,58 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteMeRequest is the body of DELETE /api/v1/me.
+type deleteMeRequest struct {
+	CurrentPassword string `json:"current_password"`
+}
+
+// confirmPassword checks the signed-in person typed their own password, within
+// the account's allowance of attempts, and writes the refusal itself.
+//
+// Arguments:
+//   - w, r: the exchange being answered.
+//   - password: the password the person typed.
+//
+// Returns:
+//   - true when the password is theirs.
+func (s *Server) confirmPassword(w http.ResponseWriter, r *http.Request, password string) bool {
+	user := principalFrom(r.Context()).user
+	key := user.ID.String()
+	if wait, ok := s.passwordChecks.take(key); !ok {
+		s.writeTooManyAttempts(w, r, wait)
+		return false
+	}
+	err := s.auth.CheckPassword(r.Context(), user, password)
+	s.settlePasswordCheck(key, err)
+	if errors.Is(err, domain.ErrInvalidCredentials) {
+		s.writeIncorrectPassword(w, r)
+		return false
+	}
+	if err != nil {
+		s.writeDomainError(w, r, "check password", err)
+		return false
+	}
+	return true
+}
+
+// settlePasswordCheck clears an account's count of password checks once one
+// got past the password. A wrong password keeps its count, and so does one the
+// server was too busy to check, which says nothing about the password.
+func (s *Server) settlePasswordCheck(key string, err error) {
+	if errors.Is(err, domain.ErrInvalidCredentials) || errors.Is(err, domain.ErrBusy) {
+		return
+	}
+	s.passwordChecks.forget(key)
+}
+
+// writeIncorrectPassword refuses a request whose current password is wrong, as
+// a validation failure of that field so the form can mark it.
+func (s *Server) writeIncorrectPassword(w http.ResponseWriter, r *http.Request) {
+	s.writeErrorDetails(w, r, http.StatusUnprocessableEntity, "validation_failed",
+		"current_password: is incorrect",
+		map[string]any{"field": "current_password", "reason": "incorrect"})
 }
 
 // sessionItemResponse is one signed-in device in the session list.

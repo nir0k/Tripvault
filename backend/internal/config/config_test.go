@@ -87,28 +87,20 @@ func TestBackupDefaults(t *testing.T) {
 	}
 }
 
-// TestBackupSettingsAreChecked checks a scheduler interval below the resolution
-// of a cron expression, and an instance with nowhere to keep its key, are both
-// refused at start-up.
+// TestBackupSettingsAreChecked checks an instance with nowhere to keep its key
+// is refused at start-up.
 func TestBackupSettingsAreChecked(t *testing.T) {
 	setBaseEnv(t)
-	t.Setenv("TRIPVAULT_BACKUP_SCHEDULER_INTERVAL", "10s")
 	// A variable left empty falls back to the default, so a file of spaces is
 	// what "configured, but to nowhere" looks like.
 	t.Setenv("TRIPVAULT_SECRETS_KEY_FILE", "   ")
 
 	_, err := Load()
-	if err == nil {
-		t.Fatal("an unusable backup configuration loaded")
-	}
-	for _, want := range []string{"TRIPVAULT_BACKUP_SCHEDULER_INTERVAL", "TRIPVAULT_SECRETS_KEY_FILE"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not mention %s", err, want)
-		}
+	if err == nil || !strings.Contains(err.Error(), "TRIPVAULT_SECRETS_KEY_FILE") {
+		t.Fatalf("an instance with nowhere to keep its key: %v", err)
 	}
 
 	// A key configured directly is the other supported way to have one.
-	t.Setenv("TRIPVAULT_BACKUP_SCHEDULER_INTERVAL", "5m")
 	t.Setenv("TRIPVAULT_SECRETS_KEY", "AGE-SECRET-KEY-1")
 	if _, err := Load(); err != nil {
 		t.Errorf("a valid backup configuration was refused: %v", err)
@@ -198,5 +190,49 @@ func TestProviderSettingsAreChecked(t *testing.T) {
 	t.Setenv("TRIPVAULT_ROUTING_DAILY_LIMIT", "0")
 	if _, err := Load(); err != nil {
 		t.Errorf("a server of one's own with no limits was refused: %v", err)
+	}
+}
+
+// TestProviderLimits checks the limits are worked out from the service's
+// address - the hosted plans, the public servers' usage policies, none for a
+// server of one's own - and that a limit set explicitly wins, zero included.
+func TestProviderLimits(t *testing.T) {
+	setBaseEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Routing.Limits(); got != (Limits{PerMinute: 40, Daily: 9000}) {
+		t.Errorf("hosted routing limits = %+v", got)
+	}
+	if got := cfg.Geocoding.Limits(); got != (Limits{PerMinute: 100, Daily: 12000}) {
+		t.Errorf("hosted geocoding limits = %+v", got)
+	}
+
+	t.Setenv("TRIPVAULT_ROUTING_PROVIDER", "osrm")
+	t.Setenv("TRIPVAULT_ROUTING_BASE_URL", "https://router.project-osrm.org")
+	t.Setenv("TRIPVAULT_GEOCODING_PROVIDER", "nominatim")
+	t.Setenv("TRIPVAULT_GEOCODING_BASE_URL", "https://nominatim.openstreetmap.org")
+	if cfg, err = Load(); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Routing.Limits(); got != (Limits{PerMinute: 20, Daily: 2000}) {
+		t.Errorf("OSRM demo server limits = %+v", got)
+	}
+	if got := cfg.Geocoding.Limits(); got != (Limits{PerMinute: 50}) {
+		t.Errorf("public Nominatim limits = %+v", got)
+	}
+
+	t.Setenv("TRIPVAULT_ROUTING_BASE_URL", "http://osrm:5000")
+	t.Setenv("TRIPVAULT_GEOCODING_REQUESTS_PER_MINUTE", "0")
+	t.Setenv("TRIPVAULT_GEOCODING_DAILY_LIMIT", "500")
+	if cfg, err = Load(); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Routing.Limits(); got != (Limits{}) {
+		t.Errorf("a server of one's own is limited: %+v", got)
+	}
+	if got := cfg.Geocoding.Limits(); got != (Limits{Daily: 500}) {
+		t.Errorf("explicit limits = %+v", got)
 	}
 }

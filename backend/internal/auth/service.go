@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,6 +27,8 @@ type SessionStore interface {
 	// Rotate replaces the token of a live session, but only while it still
 	// holds oldHash, so two refreshes racing with one token cannot both win.
 	Rotate(ctx context.Context, id uuid.UUID, oldHash, newHash []byte, usedAt, expiresAt time.Time) error
+	// Superseded finds the session whose previous token has this hash.
+	Superseded(ctx context.Context, hash []byte) (domain.Session, error)
 	Revoke(ctx context.Context, userID, id uuid.UUID, at time.Time) error
 	// ActiveUser returns the account behind a live session of an active user.
 	ActiveUser(ctx context.Context, userID, sessionID uuid.UUID, now time.Time) (domain.User, error)
@@ -42,12 +45,26 @@ type Session struct {
 	User      domain.User
 }
 
+// reuseGrace is how soon after a refresh the token it replaced may be presented
+// again without ending the session. Two tabs of one browser share the token
+// and may refresh at the same moment; the one that loses is not a thief.
+const reuseGrace = 30 * time.Second
+
+// hashingWait is how long a request waits for room to hash a password before
+// it is told the server is busy.
+const hashingWait = 2 * time.Second
+
 // Service performs sign-in, session refresh, sign-out and password changes.
 type Service struct {
 	users    UserStore
 	sessions SessionStore
 	issuer   *TokenIssuer
 	now      func() time.Time
+	// hashing bounds the Argon2id work done at once. Each hash holds about
+	// 19 MiB, and the sign-in limits count attempts only once they finish, so
+	// without it a burst of sign-ins to many addresses could take all memory.
+	hashing     chan struct{}
+	hashingWait time.Duration
 }
 
 // NewService - creates the authentication service.
@@ -60,7 +77,64 @@ type Service struct {
 // Returns:
 //   - a ready service.
 func NewService(users UserStore, sessions SessionStore, issuer *TokenIssuer) *Service {
-	return &Service{users: users, sessions: sessions, issuer: issuer, now: time.Now}
+	return &Service{
+		users: users, sessions: sessions, issuer: issuer, now: time.Now,
+		hashing:     make(chan struct{}, max(2, runtime.GOMAXPROCS(0)/2)),
+		hashingWait: hashingWait,
+	}
+}
+
+// acquireHashing waits for room to hash a password and returns what gives it
+// back, or domain.ErrBusy when none frees up in time.
+func (s *Service) acquireHashing(ctx context.Context) (func(), error) {
+	timer := time.NewTimer(s.hashingWait)
+	defer timer.Stop()
+	select {
+	case s.hashing <- struct{}{}:
+		return func() { <-s.hashing }, nil
+	case <-timer.C:
+		return nil, domain.ErrBusy
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// verifyPassword checks a password against a stored hash within the bound on
+// concurrent hashing. The errors of waiting are returned as they are, so
+// domain.ErrBusy reaches the caller.
+func (s *Service) verifyPassword(ctx context.Context, encodedHash, password string) (bool, error) {
+	release, err := s.acquireHashing(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	ok, err := VerifyPassword(encodedHash, password)
+	if err != nil {
+		return false, fmt.Errorf("verify password: %w", err)
+	}
+	return ok, nil
+}
+
+// CheckPassword - confirms a signed-in person knows their own password, before
+// something that cannot be undone, such as deleting the account.
+//
+// Arguments:
+//   - ctx: context bounding the operation.
+//   - user: the signed-in account.
+//   - password: the password they typed.
+//
+// Returns:
+//   - domain.ErrInvalidCredentials when it is not their password.
+//   - domain.ErrBusy when the server has no room to check it now.
+func (s *Service) CheckPassword(ctx context.Context, user domain.User, password string) error {
+	ok, err := s.verifyPassword(ctx, user.PasswordHash, password)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return domain.ErrInvalidCredentials
+	}
+	return nil
 }
 
 // Login - exchanges an email and password for a new session.
@@ -78,19 +152,22 @@ func NewService(users UserStore, sessions SessionStore, issuer *TokenIssuer) *Se
 // Returns:
 //   - the new session.
 //   - domain.ErrInvalidCredentials when the pair does not open an active account.
+//   - domain.ErrBusy when the server has no room to check the password now.
 func (s *Service) Login(ctx context.Context, email, password, userAgent string) (Session, error) {
 	user, err := s.users.GetByEmail(ctx, email)
 	if errors.Is(err, domain.ErrNotFound) {
-		_, _ = VerifyPassword(dummyPasswordHash(), password)
+		if _, err := s.verifyPassword(ctx, dummyPasswordHash(), password); errors.Is(err, domain.ErrBusy) {
+			return Session{}, err
+		}
 		return Session{}, domain.ErrInvalidCredentials
 	}
 	if err != nil {
 		return Session{}, err
 	}
 
-	ok, err := VerifyPassword(user.PasswordHash, password)
+	ok, err := s.verifyPassword(ctx, user.PasswordHash, password)
 	if err != nil {
-		return Session{}, fmt.Errorf("verify password: %w", err)
+		return Session{}, err
 	}
 	if !ok || !user.IsActive {
 		return Session{}, domain.ErrInvalidCredentials
@@ -124,7 +201,9 @@ func (s *Service) Login(ctx context.Context, email, password, userAgent string) 
 // Refresh - exchanges a refresh token for a new token pair on the same session.
 //
 // The presented token is replaced, so it can be used only once: a copy that
-// leaked stops working as soon as the real client refreshes.
+// leaked stops working as soon as the real client refreshes. A token presented
+// again after its session exchanged it means two parties hold the session, and
+// the session is ended for both (see replayed).
 //
 // Arguments:
 //   - ctx: context bounding the operation.
@@ -134,11 +213,13 @@ func (s *Service) Login(ctx context.Context, email, password, userAgent string) 
 //   - the refreshed session.
 //   - domain.ErrTokenInvalid when the token is unknown, expired, revoked, or
 //     its account has been deactivated.
+//   - domain.ErrTokenReused, which is also an ErrTokenInvalid, when the token
+//     had been exchanged already and its session was ended for it.
 func (s *Service) Refresh(ctx context.Context, refreshToken string) (Session, error) {
 	oldHash := HashRefreshToken(refreshToken)
 	stored, err := s.sessions.GetByHash(ctx, oldHash)
 	if errors.Is(err, domain.ErrNotFound) {
-		return Session{}, domain.ErrTokenInvalid
+		return Session{}, s.replayed(ctx, oldHash)
 	}
 	if err != nil {
 		return Session{}, err
@@ -168,6 +249,40 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (Session, er
 		return Session{}, err
 	}
 	return s.session(stored.ID, newToken, user)
+}
+
+// replayed answers a refresh token that opens no session.
+//
+// A token its session has already exchanged is a copy that should not exist:
+// either a thief refreshed first and the owner is presenting the old one, or
+// the other way round. Nobody can tell which, so the session is ended for both
+// and the owner signs in again. A token exchanged moments ago is only refused,
+// because two tabs sharing it may simply have refreshed at once.
+//
+// Arguments:
+//   - ctx: context bounding the lookup and the revocation.
+//   - hash: the hash of the presented token.
+//
+// Returns:
+//   - domain.ErrTokenReused when the session was ended for it.
+//   - domain.ErrTokenInvalid in every other case.
+//   - an error if the store fails.
+func (s *Service) replayed(ctx context.Context, hash []byte) error {
+	stored, err := s.sessions.Superseded(ctx, hash)
+	if errors.Is(err, domain.ErrNotFound) {
+		return domain.ErrTokenInvalid
+	}
+	if err != nil {
+		return err
+	}
+	now := s.now()
+	if stored.RevokedAt != nil || stored.RotatedAt == nil || now.Sub(*stored.RotatedAt) < reuseGrace {
+		return domain.ErrTokenInvalid
+	}
+	if err := s.sessions.Revoke(ctx, stored.UserID, stored.ID, now); err != nil && !errors.Is(err, domain.ErrNotFound) {
+		return err
+	}
+	return domain.ErrTokenReused
 }
 
 // Logout - revokes the session a refresh token belongs to.
@@ -241,14 +356,11 @@ func (s *Service) Authenticate(ctx context.Context, token string) (domain.User, 
 // Returns:
 //   - domain.ErrInvalidCredentials when the current password is wrong.
 //   - a *domain.ValidationError when the new password is unacceptable.
+//   - domain.ErrBusy when the server has no room to hash a password now.
 func (s *Service) ChangePassword(ctx context.Context, user domain.User, sessionID uuid.UUID,
 	current, next string) error {
-	ok, err := VerifyPassword(user.PasswordHash, current)
-	if err != nil {
-		return fmt.Errorf("verify password: %w", err)
-	}
-	if !ok {
-		return domain.ErrInvalidCredentials
+	if err := s.CheckPassword(ctx, user, current); err != nil {
+		return err
 	}
 	if err := CheckPasswordStrength("new_password", next); err != nil {
 		return err
@@ -257,7 +369,12 @@ func (s *Service) ChangePassword(ctx context.Context, user domain.User, sessionI
 		return domain.NewValidationError("new_password", "unchanged", "must differ from the current password")
 	}
 
+	release, err := s.acquireHashing(ctx)
+	if err != nil {
+		return err
+	}
 	hash, err := HashPassword(next)
+	release()
 	if err != nil {
 		return err
 	}

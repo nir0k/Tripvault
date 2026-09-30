@@ -87,12 +87,12 @@ export function activeFilters(filter: IdeaFilter): number {
  * ideaCost reads what an idea's whole trip costs at its least: with the
  * cheapest way of getting there. Null while it is unknown.
  */
-export function ideaCost(idea: Idea): number | null {
+function ideaCost(idea: Idea): number | null {
   return idea.cost_min === null ? null : Number(idea.cost_min)
 }
 
 /** ideaDays reads the days an idea takes as a range, either end standing for the other; null while not said. */
-export function ideaDays(idea: Idea): [number, number] | null {
+function ideaDays(idea: Idea): [number, number] | null {
   const least = idea.days_min ?? idea.days_ideal ?? idea.days_max
   const most = idea.days_max ?? idea.days_ideal ?? idea.days_min
   return least === null || most === null ? null : [least, most]
@@ -108,7 +108,7 @@ export function ideaDays(idea: Idea): [number, number] | null {
  *   - filter: what the list is narrowed by.
  *   - locale: the reader's language, which the country names are searched in.
  */
-export function matchesIdea(idea: Idea, filter: IdeaFilter, locale: string): boolean {
+function matchesIdea(idea: Idea, filter: IdeaFilter, locale: string): boolean {
   const query = filter.query.trim().toLocaleLowerCase(locale)
   if (query !== '') {
     const text = [idea.title, idea.description_md, ...idea.places.map((place) => place.name),

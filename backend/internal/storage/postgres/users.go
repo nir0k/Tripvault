@@ -478,7 +478,9 @@ func isUniqueViolation(err error) bool {
 // not browse the directory.
 const maxUserSearchResults = 10
 
-// Search - finds active accounts by name or email, for adding trip members.
+// Search - finds active accounts for adding trip members: by a part of their
+// name, or by their whole email address. A part of an address finds nobody, so
+// the search cannot be used to read the addresses of every account.
 //
 // Arguments:
 //   - ctx: context bounding the query.
@@ -492,9 +494,9 @@ func (r *UserRepository) Search(ctx context.Context, query string, exclude uuid.
 	rows, err := r.pool.Query(ctx,
 		`SELECT u.id, u.display_name, u.email FROM users u
 		 WHERE u.is_active AND u.id <> $2
-		   AND (u.display_name ILIKE $1 ESCAPE '\' OR u.email ILIKE $1 ESCAPE '\')
+		   AND (u.display_name ILIKE $1 ESCAPE '\' OR lower(u.email) = lower($4))
 		 ORDER BY lower(u.display_name), u.email
-		 LIMIT $3`, likePattern(query), exclude, maxUserSearchResults)
+		 LIMIT $3`, likePattern(query), exclude, maxUserSearchResults, query)
 	if err != nil {
 		return nil, fmt.Errorf("search users: %w", err)
 	}

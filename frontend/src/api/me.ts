@@ -46,10 +46,11 @@ export async function deleteAvatar(): Promise<User> {
 
 /**
  * deleteAccount deletes the signed-in account with the trips it owns, their
- * photographs and its sessions. There is no undo.
+ * photographs and its sessions, once the server has checked its password.
+ * There is no undo.
  */
-export async function deleteAccount(): Promise<void> {
-  await http.delete('/api/v1/me')
+export async function deleteAccount(currentPassword: string): Promise<void> {
+  await http.delete('/api/v1/me', { data: { current_password: currentPassword } })
 }
 
 /** changePassword replaces the signed-in account's password. */

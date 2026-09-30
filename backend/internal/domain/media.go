@@ -26,17 +26,13 @@ var (
 	ErrMediaDuplicate = errors.New("the trip already holds this picture")
 )
 
-// MediaStatus says whether a file is ready to be served. Everything the current
-// scope accepts is ready at once; the other two belong to the formats a later
-// stage converts in the background.
+// MediaStatus says whether a file is ready to be served. Everything the
+// service accepts is ready the moment it is stored, so ready is the only
+// status there is; the column keeps room for more.
 type MediaStatus string
 
-// Media statuses.
-const (
-	MediaReady      MediaStatus = "ready"
-	MediaProcessing MediaStatus = "processing"
-	MediaFailed     MediaStatus = "failed"
-)
+// MediaReady is the status of every stored file.
+const MediaReady MediaStatus = "ready"
 
 // MediaTarget is the kind of thing a file is shown under.
 type MediaTarget string

@@ -10,14 +10,14 @@ export const MAX_QUANTITY = 999
  * PackingTemplateItem is a thing of a template: a key of the dictionaries, how
  * many, and whether the dictionaries hold a note for it under the same key.
  */
-export interface PackingTemplateItem {
+interface PackingTemplateItem {
   key: string
   quantity?: number
   note?: boolean
 }
 
 /** PackingTemplateCategory is a category a template adds, with its look and its things. */
-export interface PackingTemplateCategory {
+interface PackingTemplateCategory {
   key: string
   icon: PackingIcon
   // color is left out for the server to pick by the category's place.

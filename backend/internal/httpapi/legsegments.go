@@ -225,7 +225,7 @@ func collapseLeg(leg domain.Leg, segments []domain.LegSegment, tickets []domain.
 // which takes the part's mode and typed values and its tickets' cost. Parts that
 // kept their mode and ends keep their calculation; the others wait for one.
 func (s *Server) handleSetLegSegments(w http.ResponseWriter, r *http.Request) {
-	leg, document, ok := s.legFor(w, r, domain.ActionEdit)
+	leg, document, ok := s.legFor(w, r)
 	if !ok {
 		return
 	}

@@ -145,6 +145,7 @@ func (s *Server) handleGetAvatar(w http.ResponseWriter, r *http.Request) {
 //   - the bytes that were sent.
 //   - false when the request was refused, in which case the answer is written.
 func (s *Server) readAvatarPart(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	limitUpload(w, r, s.mediaMaxBytes)
 	reader, err := r.MultipartReader()
 	if err != nil {
 		s.writeError(w, r, http.StatusBadRequest, "invalid_request",
@@ -157,7 +158,7 @@ func (s *Server) readAvatarPart(w http.ResponseWriter, r *http.Request) ([]byte,
 			break
 		}
 		if err != nil {
-			s.writeError(w, r, http.StatusBadRequest, "invalid_request", "The upload is malformed")
+			s.writeUploadReadError(w, r, err)
 			return nil, false
 		}
 		if part.FormName() != "file" {
@@ -168,6 +169,11 @@ func (s *Server) readAvatarPart(w http.ResponseWriter, r *http.Request) ([]byte,
 		// limit is accepted and the first byte above it is noticed.
 		data, err := io.ReadAll(io.LimitReader(part, s.mediaMaxBytes+1))
 		_ = part.Close()
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			s.writeMediaError(w, r, domain.ErrMediaTooLarge)
+			return nil, false
+		}
 		if err != nil {
 			s.internalError(w, r, "read avatar", err)
 			return nil, false
@@ -212,8 +218,16 @@ func (s *Server) deleteAvatarBytes(r *http.Request, key string) {
 // with their documents, costs and photographs, and so do its memberships of
 // other people's trips and its sessions. What it uploaded into somebody else's
 // trip stays there; only the record of who added it is forgotten. There is no
-// undo, which is why the interface asks for the word first.
+// undo, so the request carries the account's password: a session left open on
+// somebody else's device, or a token stolen from the browser, is not enough.
 func (s *Server) handleDeleteMe(w http.ResponseWriter, r *http.Request) {
+	var body deleteMeRequest
+	if !s.decodeJSON(w, r, &body) {
+		return
+	}
+	if !s.confirmPassword(w, r, body.CurrentPassword) {
+		return
+	}
 	user := principalFrom(r.Context()).user
 	keys, err := s.users.Delete(r.Context(), user.ID)
 	if err != nil {

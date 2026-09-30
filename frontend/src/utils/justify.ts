@@ -8,7 +8,7 @@ import { MEDIA_SIZES, type MediaSize } from '@/api/media'
 // stand out from the rows that were stretched.
 
 /** JustifiedTile is where one picture goes: its index in the input and its size in pixels. */
-export interface JustifiedTile {
+interface JustifiedTile {
   index: number
   width: number
   height: number
@@ -206,6 +206,6 @@ function fixedRow(ratios: number[], start: number, end: number, target: number):
  */
 export function previewSize(width: number, density: number): MediaSize {
   const needed = width * Math.max(density, 1)
-  const offered = MEDIA_SIZES.filter((size) => size >= 320 && size <= 1280)
+  const offered = MEDIA_SIZES.filter((size) => size <= 1280)
   return offered.find((size) => size >= needed) ?? offered[offered.length - 1]!
 }

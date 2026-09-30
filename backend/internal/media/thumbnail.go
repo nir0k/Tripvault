@@ -8,7 +8,6 @@ import (
 	_ "image/jpeg" // registers the JPEG decoder
 	_ "image/png"  // registers the PNG decoder
 	"log/slog"
-	"math"
 	"sync"
 	"sync/atomic"
 
@@ -21,11 +20,13 @@ import (
 // safely.
 var ErrNoThumbnail = errors.New("no preview can be made of this file")
 
-// Sizes are the widths a preview is served at. A fixed set keeps the work
-// bounded and lets a browser cache what it has already fetched instead of
-// asking for one more pixel every time a layout changes. The widest one is for
-// a photograph opened across a large or dense screen.
-var Sizes = []int{160, 320, 640, 1280, 1920}
+// Sizes are the widths a preview is served at, narrowest first. A fixed set
+// keeps the work bounded and lets a browser cache what it has already fetched
+// instead of asking for one more pixel every time a layout changes. The widest
+// one is for a photograph opened across a large or dense screen. A width taken
+// out of this list stays in renderedSizes, so its previews are still found
+// and removed.
+var Sizes = []int{320, 640, 1280, 1920}
 
 // RendererVersion names the way previews are rendered. It is part of every
 // preview's storage key and of its ETag, so a change of renderer makes the
@@ -99,20 +100,22 @@ func Thumbnail(data []byte, width int) ([]byte, error) {
 	return previews[width], nil
 }
 
-// Previews - renders a picture at every width in Sizes.
+// Previews - renders a picture at each of the given widths.
 //
 // Every width is rendered from the original, each decoded at no more of its
 // size than that width needs, so no preview is scaled from another one that
-// has already lost detail. The previews follow the rules of Thumbnail.
+// has already lost detail. The previews follow the rules of Thumbnail. The
+// widths a file needs are PreviewWidths of its own width.
 //
 // Arguments:
 //   - data: the file's bytes.
+//   - widths: the widths to render, each one of Sizes.
 //
 // Returns:
-//   - a JPEG for every width in Sizes, keyed by that width.
+//   - a JPEG for every requested width, keyed by that width.
 //   - ErrNoThumbnail when the file cannot be decoded, or another error.
-func Previews(data []byte) (map[int][]byte, error) {
-	return render(data, Sizes)
+func Previews(data []byte, widths []int) (map[int][]byte, error) {
+	return render(data, widths)
 }
 
 // renderer holds the one start of libvips a process makes and the logger its
@@ -244,52 +247,4 @@ func renderWidth(data []byte, width int) ([]byte, error) {
 		return nil, fmt.Errorf("encode preview: %w", err)
 	}
 	return preview, nil
-}
-
-// Crop - cuts a frame out of a preview, for a cover shown by only a part of it.
-//
-// The frame is measured on the preview as it is drawn - upright, the way a
-// browser shows it - so it is applied to a rendered preview rather than to the
-// original, whose pixels may still be stored on their side.
-//
-// Arguments:
-//   - data: a JPEG preview.
-//   - x, y: the frame's top left corner, as fractions of the width and height.
-//   - w, h: the frame's width and height, as fractions of the same.
-//
-// Returns:
-//   - a JPEG of the frame.
-//   - ErrNoThumbnail when the preview cannot be read, or another error.
-func Crop(data []byte, x, y, w, h float64) ([]byte, error) {
-	if err := startRenderer(); err != nil {
-		return nil, fmt.Errorf("start libvips: %w", err)
-	}
-	picture, err := vips.NewImageFromBuffer(data)
-	if err != nil {
-		return nil, ErrNoThumbnail
-	}
-	defer picture.Close()
-
-	width, height := picture.Width(), picture.Height()
-	left := clampPixel(x*float64(width), width-1)
-	top := clampPixel(y*float64(height), height-1)
-	frameWidth := max(1, min(width-left, int(math.Round(w*float64(width)))))
-	frameHeight := max(1, min(height-top, int(math.Round(h*float64(height)))))
-	if err := picture.ExtractArea(left, top, frameWidth, frameHeight); err != nil {
-		return nil, fmt.Errorf("cut the frame: %w", err)
-	}
-	cropped, _, err := picture.ExportJpeg(&vips.JpegExportParams{
-		Quality:        thumbnailQuality,
-		StripMetadata:  true,
-		OptimizeCoding: true,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("encode frame: %w", err)
-	}
-	return cropped, nil
-}
-
-// clampPixel rounds a position to a pixel between zero and limit.
-func clampPixel(value float64, limit int) int {
-	return max(0, min(limit, int(math.Round(value))))
 }

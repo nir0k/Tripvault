@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -55,6 +56,9 @@ type BackupService interface {
 	// HoldForRestore refuses backups until the returned function is called, and
 	// fails with backup.ErrBackupRunning while one is being written.
 	HoldForRestore() (func(), error)
+	// Check tries a configuration's destination without taking a backup and
+	// without recording anything.
+	Check(ctx context.Context, config domain.BackupConfig) backup.CheckResult
 }
 
 // backupConfigRequest is the body of a create or an update.
@@ -419,6 +423,70 @@ func (s *Server) handleUpdateBackupConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, s.logger, http.StatusOK, newBackupConfigResponse(updated))
+}
+
+// backupCheckResponse is what a check of a destination found.
+//
+// A failed check is an answer rather than an error status: the form is asking
+// exactly that question. The message is the underlying error, which only an
+// administrator ever sees and which is the one thing that says what to fix.
+type backupCheckResponse struct {
+	OK       bool   `json:"ok"`
+	Step     string `json:"step,omitempty"`
+	Message  string `json:"message,omitempty"`
+	HostKey  string `json:"host_key,omitempty"`
+	Archives int    `json:"archives"`
+}
+
+// handleCheckBackupConfig tries the destination of a configuration that has not
+// been saved yet, as the form currently describes it.
+func (s *Server) handleCheckBackupConfig(w http.ResponseWriter, r *http.Request) {
+	config, ok := s.toBackupConfig(w, r, uuid.Nil, nil)
+	if !ok {
+		return
+	}
+	s.writeBackupCheck(w, r, config)
+}
+
+// handleCheckStoredBackupConfig tries the destination of a configuration being
+// edited, as the form currently describes it: credentials the form does not
+// repeat are the stored ones, exactly as saving it would keep them.
+func (s *Server) handleCheckStoredBackupConfig(w http.ResponseWriter, r *http.Request) {
+	id, ok := s.pathUUID(w, r, "configID")
+	if !ok {
+		return
+	}
+
+	existing, err := s.backups.GetConfig(r.Context(), id)
+	if err != nil {
+		s.writeDomainError(w, r, "load backup configuration", err)
+		return
+	}
+
+	config, ok := s.toBackupConfig(w, r, id, existing.SealedSecrets)
+	if !ok {
+		return
+	}
+	s.writeBackupCheck(w, r, config)
+}
+
+// writeBackupCheck runs the check and answers with what it found.
+func (s *Server) writeBackupCheck(w http.ResponseWriter, r *http.Request, config domain.BackupConfig) {
+	result := s.backupService.Check(r.Context(), config)
+	response := backupCheckResponse{
+		OK:       result.Err == nil,
+		Step:     result.Step,
+		HostKey:  result.HostKey,
+		Archives: result.Archives,
+	}
+	if result.Err != nil {
+		response.Message = result.Err.Error()
+		s.logger.Info("backup destination check failed",
+			slog.String("request_id", RequestIDFrom(r.Context())),
+			slog.String("destination", config.DestinationType),
+			slog.String("step", result.Step), slog.Any("error", result.Err))
+	}
+	writeJSON(w, s.logger, http.StatusOK, response)
 }
 
 // handleDeleteBackupConfig withdraws a configuration, leaving its archives and

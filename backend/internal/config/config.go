@@ -98,8 +98,7 @@ func (m Media) AttachmentMaxBytes() int64 {
 	return int64(m.AttachmentMaxSizeMB) * 1024 * 1024
 }
 
-// Backup holds where archives are written and how often the schedule is
-// checked.
+// Backup holds where archives are written.
 //
 // What to copy, when, and with what passphrase is not here: it is configured on
 // the site by an administrator, because it is their decision rather than the
@@ -107,10 +106,6 @@ func (m Media) AttachmentMaxBytes() int64 {
 type Backup struct {
 	// Path is the directory local backups are written to.
 	Path string `env:"PATH" envDefault:"/app/backups"`
-	// SchedulerInterval is how often the service looks for a configuration that
-	// has come due. A cron expression has a resolution of one minute, so
-	// checking more often than that could not find anything new.
-	SchedulerInterval time.Duration `env:"SCHEDULER_INTERVAL" envDefault:"1m"`
 }
 
 // Secrets holds the key that seals the credentials the service has to store: an
@@ -205,12 +200,11 @@ type Routing struct {
 	// APIKey is sent to services that need one. A service of one's own usually
 	// does not, and then routes are calculated without a key.
 	APIKey string `env:"API_KEY"`
-	// RequestsPerMinute and DailyLimit keep this service below the provider's
-	// own limits; the defaults sit under the openrouteservice standard plan (60
-	// a minute and 10 000 a day). Zero means no limit, which is what a service
-	// of one's own wants.
-	RequestsPerMinute int           `env:"REQUESTS_PER_MINUTE" envDefault:"40"`
-	DailyLimit        int           `env:"DAILY_LIMIT" envDefault:"9000"`
+	// RequestsPerMinute and DailyLimit override the limits this service keeps
+	// itself under, which are otherwise worked out from its address (Limits).
+	// Zero means no limit.
+	RequestsPerMinute *int          `env:"REQUESTS_PER_MINUTE"`
+	DailyLimit        *int          `env:"DAILY_LIMIT"`
 	CacheTTL          time.Duration `env:"CACHE_TTL" envDefault:"2160h"`
 }
 
@@ -221,10 +215,10 @@ type Geocoding struct {
 	Provider string `env:"PROVIDER" envDefault:"pelias"`
 	BaseURL  string `env:"BASE_URL"`
 	APIKey   string `env:"API_KEY"`
-	// The defaults sit under the Pelias standard plan (150 a minute and 15 000
-	// a day). Zero means no limit.
-	RequestsPerMinute int           `env:"REQUESTS_PER_MINUTE" envDefault:"100"`
-	DailyLimit        int           `env:"DAILY_LIMIT" envDefault:"12000"`
+	// RequestsPerMinute and DailyLimit override the limits worked out from the
+	// address, as Routing's do. Zero means no limit.
+	RequestsPerMinute *int          `env:"REQUESTS_PER_MINUTE"`
+	DailyLimit        *int          `env:"DAILY_LIMIT"`
 	CacheTTL          time.Duration `env:"CACHE_TTL" envDefault:"720h"`
 }
 
@@ -265,6 +259,69 @@ func (g Geocoding) Address() string {
 		return address
 	}
 	return defaultGeocodingBaseURL
+}
+
+// Limits are how many requests this service allows itself to send to an
+// outside one, per minute and per rolling day. Zero means no limit.
+type Limits struct {
+	PerMinute int
+	Daily     int
+}
+
+// routingLimits and geocodingLimits are the limits kept by default, by the host
+// of the service's address. They sit under the plans and usage policies of the
+// public servers: the openrouteservice standard plan (60 a minute, 10 000 a
+// day), the Pelias one (150 a minute, 15 000 a day), and the one request a
+// second the OSRM demo server and the public Nominatim ask for. A server of the
+// operator's own is in neither list and is not limited.
+var (
+	routingLimits = map[string]Limits{
+		"api.heigit.org":          {PerMinute: 40, Daily: 9000},
+		"router.project-osrm.org": {PerMinute: 20, Daily: 2000},
+	}
+	geocodingLimits = map[string]Limits{
+		"api.heigit.org":              {PerMinute: 100, Daily: 12000},
+		"nominatim.openstreetmap.org": {PerMinute: 50},
+	}
+)
+
+// Limits - returns the limits the routing service is called under.
+//
+// Returns:
+//   - the limits configured, or those of its address when none are.
+func (r Routing) Limits() Limits {
+	return resolveLimits(routingLimits, r.Address(), r.RequestsPerMinute, r.DailyLimit)
+}
+
+// Limits - returns the limits the geocoding service is called under.
+//
+// Returns:
+//   - the limits configured, or those of its address when none are.
+func (g Geocoding) Limits() Limits {
+	return resolveLimits(geocodingLimits, g.Address(), g.RequestsPerMinute, g.DailyLimit)
+}
+
+// resolveLimits works out the limits of one outside service.
+//
+// Arguments:
+//   - known: the default limits by host.
+//   - address: the service's API root.
+//   - perMinute, daily: the configured overrides, nil when not set.
+//
+// Returns:
+//   - the limits of the address's host, each replaced by its override if set.
+func resolveLimits(known map[string]Limits, address string, perMinute, daily *int) Limits {
+	var limits Limits
+	if parsed, err := url.Parse(address); err == nil {
+		limits = known[strings.ToLower(parsed.Hostname())]
+	}
+	if perMinute != nil {
+		limits.PerMinute = *perMinute
+	}
+	if daily != nil {
+		limits.Daily = *daily
+	}
+	return limits
 }
 
 // Map holds the raster tiles the browser draws maps with. The default OSM
@@ -323,7 +380,7 @@ func (c *Config) validateRouting() []error {
 	return validateProvider(serviceSettings{
 		prefix: "TRIPVAULT_ROUTING_", role: "routing", provider: c.Routing.Provider, allowed: routers,
 		needsKey: c.Routing.NeedsKey(), baseURL: c.Routing.BaseURL, address: c.Routing.Address(),
-		perMinute: c.Routing.RequestsPerMinute, daily: c.Routing.DailyLimit, cacheTTL: c.Routing.CacheTTL,
+		limits: c.Routing.Limits(), cacheTTL: c.Routing.CacheTTL,
 	})
 }
 
@@ -332,7 +389,7 @@ func (c *Config) validateGeocoding() []error {
 	return validateProvider(serviceSettings{
 		prefix: "TRIPVAULT_GEOCODING_", role: "geocoding", provider: c.Geocoding.Provider, allowed: geocoders,
 		needsKey: c.Geocoding.NeedsKey(), baseURL: c.Geocoding.BaseURL, address: c.Geocoding.Address(),
-		perMinute: c.Geocoding.RequestsPerMinute, daily: c.Geocoding.DailyLimit, cacheTTL: c.Geocoding.CacheTTL,
+		limits: c.Geocoding.Limits(), cacheTTL: c.Geocoding.CacheTTL,
 	})
 }
 
@@ -342,15 +399,14 @@ type serviceSettings struct {
 	// prefix is the variables' common prefix, such as TRIPVAULT_ROUTING_.
 	prefix string
 	// role names the service in a message: routing or geocoding.
-	role      string
-	provider  string
-	allowed   []string
-	needsKey  bool
-	baseURL   string
-	address   string
-	perMinute int
-	daily     int
-	cacheTTL  time.Duration
+	role     string
+	provider string
+	allowed  []string
+	needsKey bool
+	baseURL  string
+	address  string
+	limits   Limits
+	cacheTTL time.Duration
 }
 
 // validateProvider checks an outside service can be reached as described.
@@ -378,10 +434,10 @@ func validateProvider(service serviceSettings) []error {
 	if !isHTTPAddress(service.address) {
 		errs = append(errs, fmt.Errorf("%sBASE_URL: must be an http or https address", service.prefix))
 	}
-	if service.perMinute < 0 {
+	if service.limits.PerMinute < 0 {
 		errs = append(errs, fmt.Errorf("%sREQUESTS_PER_MINUTE: must not be negative", service.prefix))
 	}
-	if service.daily < 0 {
+	if service.limits.Daily < 0 {
 		errs = append(errs, fmt.Errorf("%sDAILY_LIMIT: must not be negative", service.prefix))
 	}
 	if service.cacheTTL < time.Hour {
@@ -471,9 +527,6 @@ func (c *Config) validate() error {
 	}
 	if strings.TrimSpace(c.Backup.Path) == "" {
 		errs = append(errs, errors.New("TRIPVAULT_BACKUP_PATH: required"))
-	}
-	if c.Backup.SchedulerInterval < time.Minute {
-		errs = append(errs, errors.New("TRIPVAULT_BACKUP_SCHEDULER_INTERVAL: must be at least 1m"))
 	}
 	// The key file is where a key is made when none is configured, so an
 	// instance with neither has no way to store a credential at all.

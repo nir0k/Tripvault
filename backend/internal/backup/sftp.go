@@ -197,7 +197,12 @@ func parseHostKey(value string) (ssh.PublicKey, error) {
 type SFTPDestination struct {
 	client *sftp.Client
 	ssh    *ssh.Client
-	root   string
+	// raw is the connection under ssh, whose deadline bounds a check.
+	raw  net.Conn
+	root string
+	// release stops closing the connection when the context it was opened
+	// under ends, once it is closed on purpose.
+	release func() bool
 	// learnedHostKey is the key the server presented on a connection made with
 	// no key configured, in authorized_keys form; empty when a key was pinned.
 	learnedHostKey string
@@ -214,26 +219,48 @@ type SFTPDestination struct {
 // the caller is expected to pin it: every connection after the first is then
 // held to it, so a server that changes identity later is refused.
 //
+// The connection belongs to the context it was opened under: when that ends,
+// the connection is closed and whatever the server was doing fails, so a
+// server that stops answering halfway cannot hold a backup or a restore
+// forever once it is called off.
+//
 // Arguments:
+//   - ctx: bounds the connection for as long as it is open.
 //   - params: the destination parameters.
 //   - secrets: the credentials the configuration holds sealed, already opened.
 //
 // Returns:
 //   - the destination, which the caller must close.
 //   - an error if the parameters are unusable or the server cannot be reached.
-func DialSFTP(params map[string]string, secrets map[string]string) (*SFTPDestination, error) {
+func DialSFTP(ctx context.Context, params map[string]string, secrets map[string]string) (*SFTPDestination, error) {
+	destination, _, _, err := dialSFTP(ctx, params, secrets)
+	return destination, err
+}
+
+// dialSFTP opens the connection DialSFTP describes and says how far it got.
+//
+// A check of a destination needs to tell a server that does not answer from one
+// that refuses the account or has no room for the directory, and it needs the
+// key the server presented even when signing in failed afterwards, so the form
+// can offer it. DialSFTP is this without either answer.
+//
+// Returns the destination; the host key learned on first use in authorized_keys
+// form, empty when one was pinned or none was presented; the step that failed
+// (one of the CheckStep constants), empty on success; and the error.
+func dialSFTP(ctx context.Context, params map[string]string, secrets map[string]string) (
+	*SFTPDestination, string, string, error) {
 	if err := ValidateSFTPParams(params); err != nil {
-		return nil, err
+		return nil, "", CheckStepCredentials, err
 	}
 
 	port, err := sftpPortOf(params)
 	if err != nil {
-		return nil, err
+		return nil, "", CheckStepCredentials, err
 	}
 
 	methods, err := sftpAuthMethods(secrets)
 	if err != nil {
-		return nil, err
+		return nil, "", CheckStepCredentials, err
 	}
 
 	config := &ssh.ClientConfig{
@@ -246,7 +273,7 @@ func DialSFTP(params map[string]string, secrets map[string]string) (*SFTPDestina
 	if pinned := strings.TrimSpace(params[sftpHostKey]); pinned != "" {
 		expected, err := parseHostKey(pinned)
 		if err != nil {
-			return nil, err
+			return nil, "", CheckStepCredentials, err
 		}
 		// The key is pinned to the one the configuration names, and anything
 		// else is refused.
@@ -265,17 +292,39 @@ func DialSFTP(params map[string]string, secrets map[string]string) (*SFTPDestina
 			return nil
 		}
 	}
-
-	address := net.JoinHostPort(strings.TrimSpace(params[sftpHost]), strconv.Itoa(port))
-	connection, err := ssh.Dial("tcp", address, config)
-	if err != nil {
-		return nil, fmt.Errorf("connect to %s: %w", address, err)
+	learnedKey := func() string {
+		if learned == nil {
+			return ""
+		}
+		return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(learned)))
 	}
+
+	// The two halves of ssh.Dial are taken apart so that a server that does not
+	// answer is told from one that refuses the key or the account. The handshake
+	// is bounded as well, since a port that accepts and then says nothing would
+	// otherwise hold the connection for good.
+	address := net.JoinHostPort(strings.TrimSpace(params[sftpHost]), strconv.Itoa(port))
+	dialer := net.Dialer{Timeout: sftpTimeout}
+	raw, err := dialer.DialContext(ctx, "tcp", address)
+	if err != nil {
+		return nil, "", CheckStepConnect, fmt.Errorf("connect to %s: %w", address, err)
+	}
+	release := context.AfterFunc(ctx, func() { _ = raw.Close() })
+	_ = raw.SetDeadline(time.Now().Add(sftpTimeout))
+	conn, channels, requests, err := ssh.NewClientConn(raw, address, config)
+	if err != nil {
+		release()
+		_ = raw.Close()
+		return nil, learnedKey(), CheckStepSignIn, fmt.Errorf("sign in to %s: %w", address, err)
+	}
+	_ = raw.SetDeadline(time.Time{})
+	connection := ssh.NewClient(conn, channels, requests)
 
 	client, err := sftp.NewClient(connection)
 	if err != nil {
+		release()
 		_ = connection.Close()
-		return nil, fmt.Errorf("open sftp on %s: %w", address, err)
+		return nil, learnedKey(), CheckStepSignIn, fmt.Errorf("open sftp on %s: %w", address, err)
 	}
 
 	root := strings.TrimSpace(params[sftpPath])
@@ -283,16 +332,15 @@ func DialSFTP(params map[string]string, secrets map[string]string) (*SFTPDestina
 		root = defaultSFTPPath
 	}
 	if err := client.MkdirAll(root); err != nil {
+		release()
 		_ = client.Close()
 		_ = connection.Close()
-		return nil, fmt.Errorf("create %s on the server: %w", root, err)
+		return nil, learnedKey(), CheckStepDirectory, fmt.Errorf("create %s on the server: %w", root, err)
 	}
 
-	destination := &SFTPDestination{client: client, ssh: connection, root: root}
-	if learned != nil {
-		destination.learnedHostKey = strings.TrimSpace(string(ssh.MarshalAuthorizedKey(learned)))
-	}
-	return destination, nil
+	destination := &SFTPDestination{client: client, ssh: connection, raw: raw, root: root, release: release,
+		learnedHostKey: learnedKey()}
+	return destination, destination.learnedHostKey, "", nil
 }
 
 // LearnedHostKey - returns the host key this connection accepted on first use.
@@ -348,6 +396,7 @@ func parseSigner(pem, passphrase string) (ssh.Signer, error) {
 // Returns:
 //   - the first error either half reported, or nil.
 func (d *SFTPDestination) Close() error {
+	d.release()
 	clientErr := d.client.Close()
 	sshErr := d.ssh.Close()
 	if clientErr != nil {
@@ -414,6 +463,36 @@ func (d *SFTPDestination) Store(ctx context.Context, name string, r io.Reader) (
 		return 0, fmt.Errorf("put %s in place on the server: %w", name, err)
 	}
 	return written, nil
+}
+
+// probe writes a small file into the server's directory and removes it,
+// reporting the step that failed: an account may be let in and see the
+// directory without being allowed to write or delete there.
+func (d *SFTPDestination) probe(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return CheckStepWrite, err
+	}
+	name, err := probeName()
+	if err != nil {
+		return CheckStepWrite, err
+	}
+	target := path.Join(d.root, name)
+	file, err := d.client.Create(target)
+	if err != nil {
+		return CheckStepWrite, fmt.Errorf("create %s on the server: %w", target, err)
+	}
+	_, err = file.Write([]byte("tripvault\n"))
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = d.client.Remove(target)
+		return CheckStepWrite, fmt.Errorf("write %s on the server: %w", target, err)
+	}
+	if err := d.client.Remove(target); err != nil {
+		return CheckStepDelete, fmt.Errorf("remove %s from the server: %w", target, err)
+	}
+	return "", nil
 }
 
 // Open - reads an archive back from the server.

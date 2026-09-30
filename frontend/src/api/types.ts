@@ -323,6 +323,22 @@ export interface BackupConfig {
   next_run_at: string | null
 }
 
+/** BackupCheckStep is a step of a destination check, named when it fails. */
+export type BackupCheckStep = 'credentials' | 'connect' | 'sign_in' | 'directory' | 'write' | 'delete' | 'list'
+
+/**
+ * BackupCheck is what trying a destination found. A failure names the step and
+ * carries the server's own reason; host_key is the key an SFTP server presented
+ * to a form that pins none.
+ */
+export interface BackupCheck {
+  ok: boolean
+  step?: BackupCheckStep
+  message?: string
+  host_key?: string
+  archives: number
+}
+
 /** BackupProgress is how far a run in flight has got. */
 export interface BackupProgress {
   stage: 'connecting' | 'reading' | 'archiving' | 'rotating'
@@ -452,7 +468,7 @@ export interface Media {
    * anywhere in the report.
    */
   is_favorite: boolean
-  status: 'ready' | 'processing' | 'failed'
+  status: 'ready'
   created_at: string
 }
 

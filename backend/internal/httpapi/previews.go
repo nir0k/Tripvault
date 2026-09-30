@@ -112,8 +112,8 @@ type previewRender struct {
 	err      error
 }
 
-// previewsFor returns every preview width of a file, rendering them when they
-// are not all kept yet.
+// previewsFor returns every preview a file has, rendering them when they are
+// not all kept yet: the widths media.PreviewWidths gives for its size.
 //
 // A gallery opened right after an upload asks for the very pictures the
 // background is rendering, and on a small server decoding one twice costs
@@ -125,7 +125,7 @@ type previewRender struct {
 //   - item: the file.
 //
 // Returns:
-//   - a JPEG for every width in media.Sizes, keyed by that width.
+//   - a JPEG for every width the file is rendered at, keyed by that width.
 //   - media.ErrNotFound when the original is gone, media.ErrNoThumbnail when
 //     it is not a picture this service decodes, or another error.
 func (s *Server) previewsFor(ctx context.Context, item domain.Media) (map[int][]byte, error) {
@@ -307,7 +307,7 @@ func (s *Server) renderPreviews(ctx context.Context, item domain.Media) (map[int
 	return previews, nil
 }
 
-// decodePreviews reads the original and renders every preview width of it.
+// decodePreviews reads the original and renders the preview widths it needs.
 func (s *Server) decodePreviews(ctx context.Context, item domain.Media) (map[int][]byte, error) {
 	file, err := s.mediaFiles.Open(ctx, item.StorageKey)
 	if err != nil {
@@ -318,12 +318,13 @@ func (s *Server) decodePreviews(ctx context.Context, item domain.Media) (map[int
 	if err != nil {
 		return nil, fmt.Errorf("read media: %w", err)
 	}
-	return media.Previews(data)
+	return media.Previews(data, media.PreviewWidths(item.Width))
 }
 
-// keepPreviews stores rendered previews and removes those an older renderer
-// made of the same file. Failing to keep one costs only a render next time, so
-// it is logged rather than returned.
+// keepPreviews stores rendered previews and removes the others kept of the same
+// file: those an older renderer made and those at widths it no longer needs.
+// Failing to keep one costs only a render next time, so it is logged rather
+// than returned.
 //
 // The file may be deleted while its previews are being rendered, and a preview
 // stored after that deletion would keep a copy of a removed photograph on the
@@ -339,8 +340,12 @@ func (s *Server) keepPreviews(ctx context.Context, item domain.Media, previews m
 	original, err := s.mediaFiles.Open(ctx, item.StorageKey)
 	if err == nil {
 		_ = original.Close()
-		if err := media.DeleteLegacyPreviews(ctx, s.mediaFiles, item.StorageKey); err != nil {
-			s.logger.Warn("delete previews of an older renderer failed", "error", err, "media_id", item.ID.String())
+		kept := make([]int, 0, len(previews))
+		for width := range previews {
+			kept = append(kept, width)
+		}
+		if err := media.DeleteStalePreviews(ctx, s.mediaFiles, item.StorageKey, kept); err != nil {
+			s.logger.Warn("delete previews no longer served failed", "error", err, "media_id", item.ID.String())
 		}
 		return
 	}
@@ -349,9 +354,9 @@ func (s *Server) keepPreviews(ctx context.Context, item domain.Media, previews m
 	}
 }
 
-// hasAllPreviews says whether every preview width of a file is already kept.
+// hasAllPreviews says whether every preview width a file needs is already kept.
 func (s *Server) hasAllPreviews(ctx context.Context, item domain.Media) bool {
-	for _, width := range media.Sizes {
+	for _, width := range media.PreviewWidths(item.Width) {
 		file, err := s.mediaFiles.Open(ctx, media.PreviewKey(item.StorageKey, width))
 		if err != nil {
 			return false
@@ -457,6 +462,7 @@ func (s *Server) requestPreviewBackfill() {
 		for {
 			for s.backfillWanted.Swap(false) {
 				s.backfillPreviews()
+				s.sweepStore()
 			}
 			s.backfillRunning.Store(false)
 			// A request that arrived between the last walk and the line above

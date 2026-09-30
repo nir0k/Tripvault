@@ -238,10 +238,40 @@ func (s *Server) extendUploadDeadlines(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// maxUploadFiles is the most files one upload request may carry. The interface
+// sends one at a time; the bound keeps a hand-made request from streaming files
+// for as long as its deadline lasts.
+const maxUploadFiles = 50
+
+// uploadOverhead is the room a multipart request gets beyond its files, for the
+// boundaries, the part headers and the small fields sent beside them.
+const uploadOverhead = 1 << 20
+
+// limitUpload bounds the whole body of a multipart request to what its files
+// may add up to, so parts that are not files cannot be streamed without end
+// either. A limit of zero or less leaves the body as it is.
+func limitUpload(w http.ResponseWriter, r *http.Request, files int64) {
+	if files > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, files+uploadOverhead)
+	}
+}
+
+// writeUploadReadError answers a failure to read a multipart request: a body
+// over its bound is too large, anything else is a malformed upload.
+func (s *Server) writeUploadReadError(w http.ResponseWriter, r *http.Request, err error) {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		s.writeError(w, r, http.StatusRequestEntityTooLarge, "file_too_large",
+			"The file is larger than this service accepts")
+		return
+	}
+	s.writeError(w, r, http.StatusBadRequest, "invalid_request", "The upload is malformed")
+}
+
 // handleUploadMedia stores the files of a multipart request against a trip.
 //
 // The whole request is bounded by the configured size of a single file times
-// the number of parts a client may send at once, and every part is checked
+// the number of files a client may send at once, and every part is checked
 // again on its own: the limit is about what lands on the disk, not about what
 // somebody claims in a header.
 func (s *Server) handleUploadMedia(w http.ResponseWriter, r *http.Request) {
@@ -256,6 +286,7 @@ func (s *Server) handleUploadMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	limitUpload(w, r, s.mediaMaxBytes*maxUploadFiles)
 	reader, err := r.MultipartReader()
 	if err != nil {
 		s.writeError(w, r, http.StatusBadRequest, "invalid_request",
@@ -274,7 +305,7 @@ func (s *Server) handleUploadMedia(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if err != nil {
-			s.writeError(w, r, http.StatusBadRequest, "invalid_request", "The upload is malformed")
+			s.writeUploadReadError(w, r, err)
 			return
 		}
 		// A "private" field before the files marks everything that follows as
@@ -303,6 +334,12 @@ func (s *Server) handleUploadMedia(w http.ResponseWriter, r *http.Request) {
 		if part.FormName() != "file" {
 			_ = part.Close()
 			continue
+		}
+		if len(stored) == maxUploadFiles {
+			_ = part.Close()
+			s.writeError(w, r, http.StatusRequestEntityTooLarge, "too_many_files",
+				fmt.Sprintf("An upload may carry at most %d files", maxUploadFiles))
+			return
 		}
 
 		item, err := s.storePart(r, trip.ID, part, private, source, used)
@@ -337,6 +374,10 @@ func (s *Server) storePart(r *http.Request, tripID uuid.UUID, part *multipart.Pa
 	// One byte over the limit is read on purpose, so a file exactly at the
 	// limit is accepted and the first byte above it is noticed.
 	data, err := io.ReadAll(io.LimitReader(part, s.mediaMaxBytes+1))
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		return domain.Media{}, domain.ErrMediaTooLarge
+	}
 	if err != nil {
 		return domain.Media{}, fmt.Errorf("read upload: %w", err)
 	}
@@ -717,22 +758,29 @@ func (s *Server) writeMediaFile(w http.ResponseWriter, r *http.Request, item dom
 	}
 }
 
+// defaultPreviewWidth is the preview served when a request names no width.
+const defaultPreviewWidth = 320
+
 // writeMediaThumbnail serves a preview of the requested width. Previews are
 // rendered in the background after an upload and kept in the store; one still
 // missing is rendered here, every width at once, so the original - often
 // megabytes of camera output - is decoded once rather than once per width or
 // per reader. A browser then keeps what it has seen under the ETag.
 func (s *Server) writeMediaThumbnail(w http.ResponseWriter, r *http.Request, item domain.Media) {
-	size := media.Sizes[1]
+	size := defaultPreviewWidth
 	if raw := r.URL.Query().Get("size"); raw != "" {
 		value, err := strconv.Atoi(raw)
-		if err != nil || !media.HasSize(value) {
+		offered, known := media.OfferedSize(value)
+		if err != nil || !known {
 			s.writeDomainError(w, r, "read preview size",
 				domain.NewValidationError("size", "invalid_size", "must be one of the offered preview widths"))
 			return
 		}
-		size = value
+		size = offered
 	}
+	// A picture narrower than the width asked for is served by its widest
+	// preview, which is the picture at its own size.
+	size = media.ServedWidth(size, item.Width)
 
 	// The renderer's version is part of the tag, so a browser holding a
 	// preview an older renderer made fetches the new one.
@@ -774,9 +822,10 @@ func (s *Server) writeMediaThumbnail(w http.ResponseWriter, r *http.Request, ite
 	}
 }
 
-// storedPreview reads a preview rendered earlier. Anything short of a clean
-// read - nothing stored yet, or a store that fails - is answered by rendering
-// the preview again, so it reports only whether one was found.
+// storedPreview reads a preview rendered earlier, of a width media.ServedWidth
+// gave. Anything short of a clean read - nothing stored yet, or a store that
+// fails - is answered by rendering the preview again, so it reports only
+// whether one was found.
 func (s *Server) storedPreview(ctx context.Context, item domain.Media, size int) ([]byte, bool) {
 	file, err := s.mediaFiles.Open(ctx, media.PreviewKey(item.StorageKey, size))
 	if err != nil {

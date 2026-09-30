@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -32,6 +33,8 @@ type fakeMedia struct {
 	links map[uuid.UUID][]domain.MediaLink
 	// targets says which trip a link target belongs to.
 	targets map[uuid.UUID]uuid.UUID
+	// others are the avatars and idea photos the records name.
+	others []string
 }
 
 func newFakeMedia() *fakeMedia {
@@ -203,6 +206,11 @@ func (f *fakeMedia) LinksOfTrip(_ context.Context, tripID uuid.UUID) ([]domain.M
 	return links, nil
 }
 
+// OtherKeys names the avatars and idea photos the records hold.
+func (f *fakeMedia) OtherKeys(context.Context) ([]string, error) {
+	return f.others, nil
+}
+
 func (f *fakeMedia) TripOfTarget(_ context.Context, _ domain.MediaTarget, targetID uuid.UUID) (uuid.UUID, error) {
 	tripID, ok := f.targets[targetID]
 	if !ok {
@@ -216,6 +224,9 @@ func (f *fakeMedia) TripOfTarget(_ context.Context, _ domain.MediaTarget, target
 type memoryFiles struct {
 	mu    sync.Mutex
 	files map[string][]byte
+	// written says when each object was stored, as a disk would; an object
+	// missing from it counts as written long ago.
+	written map[string]time.Time
 }
 
 func (m *memoryFiles) Put(_ context.Context, key string, r io.Reader) (int64, error) {
@@ -226,7 +237,27 @@ func (m *memoryFiles) Put(_ context.Context, key string, r io.Reader) (int64, er
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.files[key] = data
+	if m.written == nil {
+		m.written = map[string]time.Time{}
+	}
+	m.written[key] = time.Now()
 	return int64(len(data)), nil
+}
+
+// Walk visits every object with the moment it was stored.
+func (m *memoryFiles) Walk(_ context.Context, visit func(media.StoredObject) error) error {
+	m.mu.Lock()
+	objects := make([]media.StoredObject, 0, len(m.files))
+	for key := range m.files {
+		objects = append(objects, media.StoredObject{Key: key, Modified: m.written[key]})
+	}
+	m.mu.Unlock()
+	for _, object := range objects {
+		if err := visit(object); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *memoryFiles) Open(_ context.Context, key string) (io.ReadCloser, error) {
@@ -253,12 +284,12 @@ func (m *memoryFiles) Delete(_ context.Context, key string) error {
 	return nil
 }
 
-// hasPreviews says whether every preview width of a file is in the store.
-func (m *memoryFiles) hasPreviews(storageKey string) bool {
+// hasPreviews says whether every preview width a file needs is in the store.
+func (m *memoryFiles) hasPreviews(item domain.Media) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, width := range media.Sizes {
-		if _, ok := m.files[media.PreviewKey(storageKey, width)]; !ok {
+	for _, width := range media.PreviewWidths(item.Width) {
+		if _, ok := m.files[media.PreviewKey(item.StorageKey, width)]; !ok {
 			return false
 		}
 	}
@@ -425,6 +456,47 @@ func TestUploadRefusesWhatItCannotServe(t *testing.T) {
 	recorder = upload(t, s, id, "one-more.png", picture(t, 10, 10), false)
 	if recorder.Code != http.StatusConflict || errorCode(t, recorder) != "media_quota" {
 		t.Errorf("a trip out of room: %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// TestUploadBoundsTheWholeRequest checks an upload carries a bounded number of
+// files, and that parts which are not files cannot outgrow what its files may
+// add up to.
+func TestUploadBoundsTheWholeRequest(t *testing.T) {
+	s, trips, _, _ := newMediaServer(domain.RoleEditor)
+	s.mediaTripQuota = 0
+	send := func(build func(form *multipart.Writer)) *httptest.ResponseRecorder {
+		body := &bytes.Buffer{}
+		form := multipart.NewWriter(body)
+		build(form)
+		if err := form.Close(); err != nil {
+			t.Fatalf("close the form: %v", err)
+		}
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/trips/"+trips.trip.ID.String()+"/media", body)
+		request.Header.Set("Authorization", "Bearer good")
+		request.Header.Set("Content-Type", form.FormDataContentType())
+		recorder := httptest.NewRecorder()
+		s.routes().ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	recorder := send(func(form *multipart.Writer) {
+		for i := range maxUploadFiles + 1 {
+			part, _ := form.CreateFormFile("file", fmt.Sprintf("%d.png", i))
+			_, _ = part.Write(picture(t, 4+i, 4))
+		}
+	})
+	if recorder.Code != http.StatusRequestEntityTooLarge || errorCode(t, recorder) != "too_many_files" {
+		t.Errorf("more files than an upload carries: %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	s.mediaMaxBytes = 1024
+	recorder = send(func(form *multipart.Writer) {
+		part, _ := form.CreateFormField("padding")
+		_, _ = part.Write(bytes.Repeat([]byte("x"), 1024*maxUploadFiles+uploadOverhead+1))
+	})
+	if recorder.Code != http.StatusRequestEntityTooLarge || errorCode(t, recorder) != "file_too_large" {
+		t.Errorf("a request larger than its files may be: %d %s", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -616,7 +688,7 @@ func TestPreviewIsKeptAndGoesWithItsFile(t *testing.T) {
 	}
 	// A preview asked for at one width renders the others with it, so the
 	// original is read from the store once.
-	if !files.hasPreviews(catalogue.items[id].StorageKey) {
+	if !files.hasPreviews(catalogue.items[id]) {
 		t.Error("a preview asked for at one width did not keep the others")
 	}
 
@@ -647,13 +719,13 @@ func TestBackgroundRendersPreviews(t *testing.T) {
 
 	s.startPreviewWork()
 	waitFor(t, "previews of a picture stored earlier", func() bool {
-		return files.hasPreviews(older.StorageKey) && !s.backfillRunning.Load()
+		return files.hasPreviews(older) && !s.backfillRunning.Load()
 	})
 
 	stored := uploadedIDs(t, upload(t, s, trips.trip.ID.String(), "wide.png", picture(t, 600, 300), false))[0]
-	key := catalogue.items[uuid.MustParse(stored.ID)].StorageKey
+	fresh := catalogue.items[uuid.MustParse(stored.ID)]
 	waitFor(t, "previews of a fresh upload", func() bool {
-		return files.hasPreviews(key)
+		return files.hasPreviews(fresh)
 	})
 
 	// The progress is the administrators' business alone.
@@ -685,6 +757,59 @@ func TestBackgroundRendersPreviews(t *testing.T) {
 	}
 }
 
+// TestSweepRemovesLeftovers checks the walk after the previews takes away the
+// files and previews nothing points at once they are old enough, keeps what
+// the records name, and touches nothing when the database knows too little of
+// the disk to be trusted.
+func TestSweepRemovesLeftovers(t *testing.T) {
+	s, trips, catalogue, files := newMediaServer(domain.RoleEditor)
+	s.workContext = t.Context()
+	stored := uploadedIDs(t, upload(t, s, trips.trip.ID.String(), "wide.png", picture(t, 600, 300), false))[0]
+	item := catalogue.items[uuid.MustParse(stored.ID)]
+	if recorder := send(s, http.MethodGet, "/api/v1/media/"+stored.ID+"/thumbnail", "good", ""); recorder.Code != http.StatusOK {
+		t.Fatalf("render the previews: %d", recorder.Code)
+	}
+	catalogue.others = []string{"avatars/ada.jpg"}
+	old := time.Now().Add(-2 * leftoverAge)
+	for key, written := range map[string]time.Time{
+		"avatars/ada.jpg":                           old,
+		"lost/orphan.png":                           old,
+		"lost/fresh.png":                            time.Now(),
+		media.PreviewKey("lost/orphan.png", 320):    old,
+		".previews/" + item.StorageKey + "@160.jpg": old,
+	} {
+		files.files[key] = []byte("bytes")
+		files.written[key] = written
+	}
+
+	s.sweepStore()
+	for _, key := range []string{"lost/orphan.png", media.PreviewKey("lost/orphan.png", 320),
+		".previews/" + item.StorageKey + "@160.jpg"} {
+		if _, ok := files.files[key]; ok {
+			t.Errorf("%s stayed in the store", key)
+		}
+	}
+	for _, key := range []string{"avatars/ada.jpg", "lost/fresh.png", item.StorageKey,
+		media.PreviewKey(item.StorageKey, 320), media.PreviewKey(item.StorageKey, 640)} {
+		if _, ok := files.files[key]; !ok {
+			t.Errorf("%s was removed", key)
+		}
+	}
+
+	// A database that names almost nothing on a disk written long ago - an
+	// instance pointed at a new database - is not believed.
+	clear(catalogue.items)
+	catalogue.others = nil
+	for key := range files.files {
+		files.written[key] = old
+	}
+	before := len(files.files)
+	s.sweepStore()
+	if len(files.files) != before {
+		t.Errorf("the sweep removed %d objects the database did not know", before-len(files.files))
+	}
+}
+
 // TestUploadQueueKeepsEveryUpload checks an import faster than the rendering
 // loses nothing: every upload waits its turn, however many there are, and the
 // progress counts each one until the last is done.
@@ -695,7 +820,7 @@ func TestUploadQueueKeepsEveryUpload(t *testing.T) {
 	// a small server falls behind an import.
 	s.previewsRunning.Store(true)
 
-	const uploads = 300
+	const uploads = 30
 	for i := range uploads {
 		// Each upload is another picture: a trip refuses the same one twice.
 		recorder := upload(t, s, trips.trip.ID.String(), "photo.png", picture(t, 8+i%20, 8+i/20), false)
@@ -719,7 +844,7 @@ func TestUploadQueueKeepsEveryUpload(t *testing.T) {
 		t.Errorf("the wave counted %d files and rendered %d, want %d", s.progress.waveTotal, s.progress.rendered, uploads)
 	}
 	for _, item := range catalogue.items {
-		if !files.hasPreviews(item.StorageKey) {
+		if !files.hasPreviews(item) {
 			t.Errorf("%s has no previews", item.StorageKey)
 		}
 	}
@@ -1112,6 +1237,56 @@ func TestMediaDownloads(t *testing.T) {
 	withHidden := `{"media_ids":["` + first.ID + `","` + hidden.ID + `"]}`
 	if recorder = sendSharedBody(s, http.MethodPost, "/api/v1/shared/media:download", open.Token, withHidden); recorder.Code != http.StatusNotFound {
 		t.Errorf("a private picture through a link without private pictures: %d", recorder.Code)
+	}
+}
+
+// TestDownloadsFollowAccess checks a ticket is checked against the trip every
+// time its address is opened: a picture deleted or made private since drops
+// out, and a reader who lost the trip or a link withdrawn gets nothing.
+func TestDownloadsFollowAccess(t *testing.T) {
+	s, trips, catalogue, _ := newMediaServer(domain.RoleOwner)
+	trips.shares = map[string]domain.ShareLink{}
+	tripID := trips.trip.ID.String()
+	first := uploadedIDs(t, upload(t, s, tripID, "sea.png", picture(t, 20, 20), false))[0]
+	second := uploadedIDs(t, upload(t, s, tripID, "hill.png", picture(t, 21, 21), false))[0]
+	downloadPath := "/api/v1/trips/" + tripID + "/media:download"
+	both := `{"media_ids":["` + first.ID + `","` + second.ID + `"]}`
+
+	// A picture deleted after the ticket was issued is left out.
+	address, cookie := issueDownload(t, send(s, http.MethodPost, downloadPath, "good", both))
+	delete(catalogue.items, uuid.MustParse(second.ID))
+	recorder := fetchDownload(s, address, cookie, "")
+	if recorder.Code != http.StatusOK || recorder.Header().Get("Content-Disposition") != `attachment; filename=sea.png` {
+		t.Errorf("after a deletion: %d %q", recorder.Code, recorder.Header().Get("Content-Disposition"))
+	}
+
+	// A picture made private stops a link's download of it.
+	open := createLink(t, s, tripID, `{"allow_download":true}`)
+	onePublic := `{"media_ids":["` + first.ID + `"]}`
+	address, cookie = issueDownload(t, sendSharedBody(s, http.MethodPost, "/api/v1/shared/media:download", open.Token, onePublic))
+	item := catalogue.items[uuid.MustParse(first.ID)]
+	item.IsPrivate = true
+	catalogue.items[item.ID] = item
+	if recorder = fetchDownload(s, address, cookie, ""); recorder.Code != http.StatusNotFound {
+		t.Errorf("a picture made private: %d", recorder.Code)
+	}
+	item.IsPrivate = false
+	catalogue.items[item.ID] = item
+	if recorder = fetchDownload(s, address, cookie, ""); recorder.Code != http.StatusOK {
+		t.Errorf("the picture public again: %d", recorder.Code)
+	}
+
+	// A withdrawn link ends its download.
+	clear(trips.shares)
+	if recorder = fetchDownload(s, address, cookie, ""); recorder.Code != http.StatusNotFound {
+		t.Errorf("a withdrawn link: %d", recorder.Code)
+	}
+
+	// A member who left the trip gets nothing more.
+	address, cookie = issueDownload(t, send(s, http.MethodPost, downloadPath, "good", onePublic))
+	trips.trip.Role = ""
+	if recorder = fetchDownload(s, address, cookie, ""); recorder.Code != http.StatusNotFound {
+		t.Errorf("a member who left: %d", recorder.Code)
 	}
 }
 

@@ -131,7 +131,7 @@ func TestPreviewsRenderEveryWidth(t *testing.T) {
 		t.Fatalf("encode jpeg: %v", err)
 	}
 
-	previews, err := Previews(encoded.Bytes())
+	previews, err := Previews(encoded.Bytes(), Sizes)
 	if err != nil {
 		t.Fatalf("render previews: %v", err)
 	}
@@ -157,28 +157,134 @@ func TestPreviewsRenderEveryWidth(t *testing.T) {
 		}
 	}
 
-	if _, err := Previews([]byte("not a picture")); err != ErrNoThumbnail {
+	if _, err := Previews([]byte("not a picture"), Sizes); err != ErrNoThumbnail {
 		t.Errorf("a file that is not a picture gave %v, want ErrNoThumbnail", err)
 	}
 }
 
-// TestCropCutsTheFrame checks that a cover's frame is cut out at the share of
-// the preview it names, and that rubbish is refused rather than passed on.
-func TestCropCutsTheFrame(t *testing.T) {
-	cropped, err := Crop(jpegBytes(t, 400, 200), 0.25, 0.5, 0.5, 0.5)
-	if err != nil {
-		t.Fatalf("crop: %v", err)
+// TestPreviewWidthsStopAtThePicture checks no preview is rendered wider than
+// its picture: the first width that reaches the picture's own is the last one
+// rendered, and it answers for every wider width.
+func TestPreviewWidthsStopAtThePicture(t *testing.T) {
+	for _, tc := range []struct {
+		picture int
+		want    []int
+	}{
+		{0, Sizes},
+		{4000, Sizes},
+		{1920, Sizes},
+		{1024, []int{320, 640, 1280}},
+		{640, []int{320, 640}},
+		{100, []int{320}},
+	} {
+		got := PreviewWidths(tc.picture)
+		if len(got) != len(tc.want) {
+			t.Errorf("PreviewWidths(%d) = %v, want %v", tc.picture, got, tc.want)
+			continue
+		}
+		for index := range got {
+			if got[index] != tc.want[index] {
+				t.Errorf("PreviewWidths(%d) = %v, want %v", tc.picture, got, tc.want)
+				break
+			}
+		}
 	}
-	width, height, err := Dimensions(cropped)
-	if err != nil {
-		t.Fatalf("read cropped size: %v", err)
+	for _, tc := range []struct{ requested, picture, want int }{
+		{1920, 1024, 1280},
+		{1280, 1024, 1280},
+		{640, 1024, 640},
+		{1920, 0, 1920},
+		{1920, 100, 320},
+	} {
+		if got := ServedWidth(tc.requested, tc.picture); got != tc.want {
+			t.Errorf("ServedWidth(%d, %d) = %d, want %d", tc.requested, tc.picture, got, tc.want)
+		}
 	}
-	if width != 200 || height != 100 {
-		t.Errorf("frame is %dx%d, want 200x100", width, height)
+}
+
+// TestDeleteWithPreviewsLeavesNoCopy checks removing a file takes every
+// preview of it along, whichever renderer made it and at whichever width,
+// those no longer offered included.
+func TestDeleteWithPreviewsLeavesNoCopy(t *testing.T) {
+	store, err := NewLocalStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	ctx := context.Background()
+	keys := []string{"trip/photo.jpg", ".previews/trip/photo.jpg@160.jpg", ".previews/trip/photo.jpg@1920.jpg",
+		PreviewKey("trip/photo.jpg", 320), versionedPreviewKey("trip/photo.jpg", 160, RendererVersion)}
+	for _, key := range keys {
+		if _, err := store.Put(ctx, key, strings.NewReader("bytes")); err != nil {
+			t.Fatalf("store %s: %v", key, err)
+		}
+	}
+	if err := DeleteWithPreviews(ctx, store, "trip/photo.jpg"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	var left []string
+	_ = store.Walk(ctx, func(object StoredObject) error {
+		left = append(left, object.Key)
+		return nil
+	})
+	if len(left) != 0 {
+		t.Errorf("the store still holds %v", left)
+	}
+}
+
+// TestFindLeftoversNamesWhatNothingPointsAt checks a walk over the store
+// finds the files and previews no record accounts for, and leaves alone what
+// was written too recently to judge.
+func TestFindLeftoversNamesWhatNothingPointsAt(t *testing.T) {
+	store, err := NewLocalStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	ctx := context.Background()
+	keys := []string{
+		"trip/kept.jpg", PreviewKey("trip/kept.jpg", 320), PreviewKey("trip/kept.jpg", 640),
+		// The picture is 600 wide: its 640 preview answers for 1280.
+		PreviewKey("trip/kept.jpg", 1280),
+		".previews/trip/kept.jpg@320.jpg",
+		"trip/orphan.jpg", PreviewKey("trip/orphan.jpg", 320),
+		"avatars/ada.jpg",
+	}
+	for _, key := range keys {
+		if _, err := store.Put(ctx, key, strings.NewReader("bytes")); err != nil {
+			t.Fatalf("store %s: %v", key, err)
+		}
 	}
 
-	if _, err := Crop([]byte("not a picture"), 0, 0, 1, 1); err != ErrNoThumbnail {
-		t.Errorf("a file that is not a picture gave %v, want ErrNoThumbnail", err)
+	found, err := FindLeftovers(ctx, store, map[string]int{"/trip/kept.jpg": 600}, []string{"avatars/ada.jpg"},
+		time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if strings.Join(found.Originals, ",") != "trip/orphan.jpg" {
+		t.Errorf("originals left over: %v", found.Originals)
+	}
+	wantPreviews := map[string]bool{
+		PreviewKey("trip/kept.jpg", 1280): true, ".previews/trip/kept.jpg@320.jpg": true,
+		PreviewKey("trip/orphan.jpg", 320): true,
+	}
+	if len(found.Previews) != len(wantPreviews) {
+		t.Errorf("previews left over: %v", found.Previews)
+	}
+	for _, key := range found.Previews {
+		if !wantPreviews[key] {
+			t.Errorf("%s is not a leftover", key)
+		}
+	}
+	if found.Files != 3 {
+		t.Errorf("counted %d files, want 3", found.Files)
+	}
+
+	// What was written after the moment given is too recent to judge.
+	recent, err := FindLeftovers(ctx, store, nil, nil, time.Now().Add(-time.Minute))
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if len(recent.Originals) != 0 || len(recent.Previews) != 0 || recent.Files != 3 {
+		t.Errorf("recent objects were judged: %+v", recent)
 	}
 }
 
@@ -194,6 +300,13 @@ func TestHasSizeAcceptsOfferedWidthsOnly(t *testing.T) {
 		if HasSize(size) {
 			t.Errorf("%d is not offered but was accepted", size)
 		}
+		if _, ok := OfferedSize(size); ok {
+			t.Errorf("%d was never offered but is served", size)
+		}
+	}
+	// A width an older build offered is served at the next one offered now.
+	if size, ok := OfferedSize(160); !ok || size != 320 {
+		t.Errorf("OfferedSize(160) = %d, %v, want 320", size, ok)
 	}
 }
 

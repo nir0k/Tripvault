@@ -65,3 +65,32 @@ func TestShareLinkNormalize(t *testing.T) {
 		t.Errorf("an end date in the past: %v", err)
 	}
 }
+
+// TestForShareLink checks the travellers' own details are emptied in the copy
+// a link reads, and that the content it was made from keeps them.
+func TestForShareLink(t *testing.T) {
+	payer := uuid.New()
+	content := DocumentContent{
+		Stays:     []Stay{{BookingRef: "S-1", Contacts: "+354 555 0101", Name: "Guesthouse"}},
+		Transfers: []Transfer{{BookingRef: "T-1", Name: "FI 204"}},
+		Items: []Item{{BookingRef: "I-1", Name: "Lagoon", PaidBy: &payer, CostSplit: SplitEveryone,
+			CostShares: []CostShare{{UserID: payer}}}},
+	}
+
+	shared := content.ForShareLink()
+	stay, transfer, item := shared.Stays[0], shared.Transfers[0], shared.Items[0]
+	if stay.BookingRef != "" || stay.Contacts != "" || stay.Name != "Guesthouse" {
+		t.Errorf("the stay a link reads: %+v", stay)
+	}
+	if transfer.BookingRef != "" || transfer.Name != "FI 204" {
+		t.Errorf("the transfer a link reads: %+v", transfer)
+	}
+	if item.BookingRef != "" || item.PaidBy != nil || item.CostSplit != SplitNone || item.CostShares != nil ||
+		item.Name != "Lagoon" {
+		t.Errorf("the place a link reads: %+v", item)
+	}
+	if content.Stays[0].BookingRef != "S-1" || content.Transfers[0].BookingRef != "T-1" ||
+		content.Items[0].PaidBy == nil {
+		t.Error("the content the copy was made from lost its details")
+	}
+}

@@ -24,7 +24,7 @@ const busy = ref(false)
 const intro = ref('')
 
 /** TripPrefill is what a new plan starts with when it is made from something else, such as an idea. */
-export interface TripPrefill {
+interface TripPrefill {
   title: string
   currency: string
   budget: string

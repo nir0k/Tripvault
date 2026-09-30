@@ -371,7 +371,7 @@ export interface LegPartChange {
 }
 
 /** LegTicketChange is one ticket of a journey with changes as it is saved. */
-export interface LegTicketChange {
+interface LegTicketChange {
   name: string
   planned_cost_amount: string | null
   actual_cost_amount?: string | null
@@ -387,7 +387,7 @@ export interface LegParts {
 }
 
 /** setLegSegments replaces the parts and tickets of a leg. */
-export async function setLegSegments(legId: string, parts: LegParts): Promise<TripDocument> {
+async function setLegSegments(legId: string, parts: LegParts): Promise<TripDocument> {
   return (await http.put<TripDocument>(path`/legs/${legId}/segments`, parts)).data
 }
 
@@ -397,7 +397,7 @@ export async function legAlternatives(legId: string): Promise<RouteOption[]> {
 }
 
 /** pinLegRoute keeps a route chosen among a leg's alternatives. */
-export async function pinLegRoute(legId: string, route: RouteOption): Promise<TripDocument> {
+async function pinLegRoute(legId: string, route: RouteOption): Promise<TripDocument> {
   return (await http.post<TripDocument>(path`/legs/${legId}:route`, route)).data
 }
 

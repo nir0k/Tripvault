@@ -1,5 +1,5 @@
 import { ApiError, http } from './client'
-import type { Archive, BackupConfig, BackupRun, ListResponse, PageResponse, RestoreRun } from './types'
+import type { Archive, BackupCheck, BackupConfig, BackupRun, ListResponse, PageResponse, RestoreRun } from './types'
 
 /**
  * BackupConfigInput is a configuration as the form sends it.
@@ -31,6 +31,22 @@ export async function createBackupConfig(input: BackupConfigInput): Promise<Back
 /** updateBackupConfig replaces a configuration's settings. */
 export async function updateBackupConfig(id: string, input: BackupConfigInput): Promise<BackupConfig> {
   return (await http.put<BackupConfig>(`/api/v1/admin/backup-configs/${encodeURIComponent(id)}`, input)).data
+}
+
+/**
+ * checkBackupConfig tries the destination the form describes without saving
+ * anything or taking a backup.
+ *
+ * Arguments:
+ *   - id: the configuration being edited, whose stored credentials stand in for
+ *     those the form leaves empty, or null for a new one.
+ *   - input: the form as it is now.
+ */
+export async function checkBackupConfig(id: string | null, input: BackupConfigInput): Promise<BackupCheck> {
+  const path = id
+    ? `/api/v1/admin/backup-configs/${encodeURIComponent(id)}/check`
+    : '/api/v1/admin/backup-configs/check'
+  return (await http.post<BackupCheck>(path, input)).data
 }
 
 /** deleteBackupConfig withdraws a configuration, leaving its archives alone. */

@@ -191,9 +191,11 @@ paths:
       description: |
         Exchanges an email and password for a session. An unknown address, a
         deactivated account and a wrong password all answer
-        `401 invalid_credentials`. Repeated attempts at one address, or many
-        wrong passwords from one client, answer `429 too_many_attempts` with
-        `Retry-After`.
+        `401 invalid_credentials`. Repeated attempts at one address from one
+        client, many at it from clients it was not signed in to from, or many
+        wrong passwords from one client answer `429 too_many_attempts` with
+        `Retry-After`. While the server is checking as many passwords as it
+        allows at once, a sign-in answers `503 busy` with `Retry-After`.
       operationId: login
       security: []
       requestBody:
@@ -215,12 +217,19 @@ paths:
           $ref: "#/components/responses/Error"
         "429":
           $ref: "#/components/responses/TooManyAttempts"
+        "503":
+          $ref: "#/components/responses/Busy"
 
   /api/v1/auth/refresh:
     post:
       tags: [Authentication]
       summary: Refresh a session
-      description: Exchanges a refresh token for a new token pair on the same session.
+      description: |
+        Exchanges a refresh token for a new token pair on the same session. A
+        token can be exchanged once. Presenting one again after its session
+        exchanged it ends that session, since somebody else holds a copy of it;
+        within 30 seconds of the exchange it is only refused, as two tabs of one
+        browser may refresh at the same moment. Either way it answers `401`.
       operationId: refresh
       security: []
       requestBody:
@@ -309,12 +318,22 @@ paths:
         owns, with their documents, costs and photographs, its memberships of
         other people's trips and its sessions. The photographs it uploaded into
         somebody else's trip stay there; only the record of who added them is
-        forgotten. There is no undo. The last active administrator is refused,
-        because the service must keep one.
+        forgotten. There is no undo, so the request carries the account's
+        password; a wrong one answers `422` on `current_password`, and too many
+        wrong ones `429`. The last active administrator is refused, because the
+        service must keep one.
       operationId: deleteMe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteMeRequest"
       responses:
         "204":
           description: The account is gone.
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -325,6 +344,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "429":
+          $ref: "#/components/responses/TooManyAttempts"
+        "503":
+          $ref: "#/components/responses/Busy"
 
   /api/v1/me/avatar:
     put:
@@ -428,7 +453,9 @@ paths:
       description: |
         Requires the current password. Ends every other session of the account;
         the session making the change stays signed in. Clears the temporary
-        password flag.
+        password flag. Ten wrong current passwords in fifteen minutes - counted
+        together with those typed to delete the account - answer `429` until the
+        window ends.
       operationId: changePassword
       requestBody:
         required: true
@@ -445,6 +472,10 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "422":
           $ref: "#/components/responses/ValidationFailed"
+        "429":
+          $ref: "#/components/responses/TooManyAttempts"
+        "503":
+          $ref: "#/components/responses/Busy"
 
   /api/v1/me/sessions:
     get:
@@ -492,8 +523,12 @@ paths:
       tags: [Trips]
       summary: Find people to add to a trip
       description: |
-        Matches active accounts by name or email, leaving out the reader. A
-        query shorter than two characters returns nothing. At most ten results.
+        Matches active accounts by a part of their name or by their whole email
+        address, leaving out the reader; a part of an address matches nobody. A
+        query shorter than three characters returns nothing. At most ten
+        results. An address is returned whole only when the query is that
+        address; otherwise it is masked to its first two characters and its
+        domain, as in `an***@example.com`.
       operationId: searchUsers
       parameters:
         - name: q
@@ -1441,7 +1476,10 @@ paths:
       description: |
         The trip's one document, its plan or its report as `kind` in
         `/api/v1/shared` says, in the same form the application reads it and for
-        reading only. A trip without its document answers `404`.
+        reading only, less what is the travellers' own: the files attached to
+        places, the booking references of stays, transfers and places, the
+        contacts of stays, and who pays and shares a place's cost. The PDFs a
+        link reads leave out the same. A trip without its document answers `404`.
       operationId: getSharedDocument
       security: []
       parameters:
@@ -1573,7 +1611,9 @@ paths:
         is is decided from its own bytes, never from the declared type: only
         JPEG, PNG and WebP are stored. A file above the configured size answers
         `413`, and a trip that has used up its allowance answers `409` with
-        `media_quota`.
+        `media_quota`. One request carries at most 50 files - a 51st answers
+        `413` with `too_many_files` - and its whole body at most what 50 files
+        of the configured size add up to.
 
         A trip holds a picture once. A `source_checksum` part before a file
         names the SHA-256, in hex, of the original the browser shrank it from;
@@ -3986,6 +4026,41 @@ paths:
         "503":
           $ref: "#/components/responses/BackupsUnavailable"
 
+  /api/v1/admin/backup-configs/check:
+    post:
+      tags: [Backups]
+      summary: Check a new configuration's destination
+      description: |
+        Tries the destination the form describes without saving anything and
+        without taking a backup: reads the credentials, connects and signs in,
+        creates the directory, writes a small file and removes it, and lists
+        the archives already there. A failure is an answer naming the step
+        that failed, not an error status. A host key an SFTP server presents
+        to a configuration that pins none is handed back rather than recorded,
+        for the form to fill in.
+      operationId: checkBackupConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BackupConfigInput"
+      responses:
+        "200":
+          description: What the check found, whether it passed or not.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupCheck"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/BackupsUnavailable"
+
   /api/v1/admin/backup-configs/{configID}:
     parameters:
       - $ref: "#/components/parameters/ConfigID"
@@ -4070,6 +4145,41 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/BackupsUnavailable"
+
+  /api/v1/admin/backup-configs/{configID}/check:
+    parameters:
+      - $ref: "#/components/parameters/ConfigID"
+    post:
+      tags: [Backups]
+      summary: Check an edited configuration's destination
+      description: |
+        The check above for a configuration being edited: credentials the body
+        does not repeat are the stored ones, as saving it would keep them.
+        Nothing stored changes.
+      operationId: checkStoredBackupConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BackupConfigInput"
+      responses:
+        "200":
+          description: What the check found, whether it passed or not.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupCheck"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
         "503":
           $ref: "#/components/responses/BackupsUnavailable"
 
@@ -4408,10 +4518,13 @@ components:
       name: size
       in: query
       required: false
-      description: The width of the preview; one of the offered sizes.
+      description: |
+        The width of the preview; one of the offered sizes. A picture narrower
+        than the width asked for is answered with its widest preview, which is
+        the picture at its own size.
       schema:
         type: integer
-        enum: [160, 320, 640, 1280, 1920]
+        enum: [320, 640, 1280, 1920]
         default: 320
     TripID:
       name: tripID
@@ -4665,6 +4778,16 @@ components:
             $ref: "#/components/schemas/Error"
     TooManyAttempts:
       description: "`too_many_attempts`: wait `Retry-After` seconds."
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Busy:
+      description: "`busy`: the server is checking as many passwords as it allows at once; repeat after `Retry-After` seconds."
       headers:
         Retry-After:
           schema:
@@ -5096,6 +5219,14 @@ components:
         default_currency:
           type: string
 
+    DeleteMeRequest:
+      type: object
+      required: [current_password]
+      additionalProperties: false
+      properties:
+        current_password:
+          type: string
+          format: password
     ChangePasswordRequest:
       type: object
       required: [current_password, new_password]
@@ -5391,6 +5522,30 @@ components:
           oneOf:
             - $ref: "#/components/schemas/BackupProgress"
             - type: "null"
+
+    BackupCheck:
+      type: object
+      description: What a check of a destination found.
+      required: [ok, archives]
+      properties:
+        ok:
+          type: boolean
+        step:
+          type: string
+          description: The step that failed; absent when the check passed.
+          enum: [credentials, connect, sign_in, directory, write, delete, list]
+        message:
+          type: string
+          description: Why that step failed, as the server or the filesystem put it.
+        host_key:
+          type: string
+          description: |
+            The key an SFTP server presented to a configuration that pins none,
+            in authorized_keys form. Saving the configuration with it pins it.
+          examples: ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI..."]
+        archives:
+          type: integer
+          description: How many archives the destination holds already.
 
     Archive:
       type: object
@@ -6364,7 +6519,8 @@ components:
             is a favourite anywhere in the report.
         status:
           type: string
-          enum: [ready, processing, failed]
+          description: Always `ready`; every file is ready the moment it is stored.
+          enum: [ready]
         created_at:
           type: string
           format: date-time

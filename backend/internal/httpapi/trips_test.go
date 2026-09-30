@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -444,6 +445,48 @@ func TestTagChanges(t *testing.T) {
 	for _, body := range []string{`{"name":""}`, `{"name":null}`, `{"color":""}`, `{"color":"magenta"}`} {
 		if _, _, err := tagChanges(decode(body)); err == nil {
 			t.Errorf("%s accepted", body)
+		}
+	}
+}
+
+// TestSearchUsersMasksAddresses checks the people search answers nothing to a
+// short text, and shows an address whole only to somebody who typed all of it.
+func TestSearchUsersMasksAddresses(t *testing.T) {
+	s := newTestServer(domain.User{ID: uuid.New(), IsActive: true})
+	search := func(query string) []tripUserResponse {
+		t.Helper()
+		recorder := send(s, http.MethodGet, "/api/v1/users/search?q="+url.QueryEscape(query), "good", "")
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("search %q: %d %s", query, recorder.Code, recorder.Body.String())
+		}
+		var body listResponse[tripUserResponse]
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			t.Fatalf("response %q is not a list of people: %v", recorder.Body.String(), err)
+		}
+		return body.Items
+	}
+
+	if found := search("an"); len(found) != 0 {
+		t.Errorf("two letters found %+v", found)
+	}
+	if found := search("Ann"); len(found) != 1 || found[0].Email != "an***@example.com" {
+		t.Errorf("a search by name shows %+v", found)
+	}
+	if found := search("ANN.LEE@example.com"); len(found) != 1 || found[0].Email != searchedUser.Email {
+		t.Errorf("a search by the whole address shows %+v", found)
+	}
+}
+
+// TestMaskEmail checks what of an address is kept.
+func TestMaskEmail(t *testing.T) {
+	for email, want := range map[string]string{
+		"ann.lee@example.com": "an***@example.com",
+		"ab@example.com":      "a***@example.com",
+		"a@example.com":       "***@example.com",
+		"not-an-address":      "***",
+	} {
+		if got := maskEmail(email); got != want {
+			t.Errorf("maskEmail(%q) = %q, want %q", email, got, want)
 		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -784,6 +785,35 @@ type DocumentContent struct {
 	// Translations are the report's words in its further languages, the trip's
 	// own title and summary aside; a plan has none.
 	Translations []Translation
+}
+
+// ForShareLink - returns the content as a read-only link shows it: without
+// the booking references and contacts of the stays, transfers and places, and
+// without who pays a place's cost and who shares it. Those are the travellers'
+// own business, like the files attached to places, which a link never reads
+// either; the costs themselves stay. The content it is called on is left as it
+// was.
+//
+// Returns:
+//   - a copy with those fields emptied.
+func (c DocumentContent) ForShareLink() DocumentContent {
+	c.Stays = slices.Clone(c.Stays)
+	for index := range c.Stays {
+		c.Stays[index].BookingRef = ""
+		c.Stays[index].Contacts = ""
+	}
+	c.Transfers = slices.Clone(c.Transfers)
+	for index := range c.Transfers {
+		c.Transfers[index].BookingRef = ""
+	}
+	c.Items = slices.Clone(c.Items)
+	for index := range c.Items {
+		c.Items[index].BookingRef = ""
+		c.Items[index].PaidBy = nil
+		c.Items[index].CostSplit = SplitNone
+		c.Items[index].CostShares = nil
+	}
+	return c
 }
 
 // checkLength refuses text longer than a limit, counted in characters.

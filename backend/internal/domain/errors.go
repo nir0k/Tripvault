@@ -22,6 +22,13 @@ var (
 	// ErrTokenInvalid reports a token that is malformed, expired, revoked or
 	// signed with the wrong key.
 	ErrTokenInvalid = errors.New("token is invalid")
+	// ErrTokenReused reports a refresh token presented again after its session
+	// had exchanged it, which ends that session. It is an ErrTokenInvalid to
+	// everybody who does not look closer.
+	ErrTokenReused = fmt.Errorf("%w: a replaced refresh token was presented again", ErrTokenInvalid)
+	// ErrBusy reports that the server is doing as much password hashing as it
+	// allows at once and the request should be repeated shortly.
+	ErrBusy = errors.New("the server is busy")
 	// ErrLastAdmin reports a change that would leave the service without an
 	// active administrator, and therefore with nobody able to manage accounts.
 	ErrLastAdmin = errors.New("the service must keep at least one active administrator")

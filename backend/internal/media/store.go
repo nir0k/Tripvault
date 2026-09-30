@@ -10,9 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -30,6 +32,22 @@ type Store interface {
 	Open(ctx context.Context, key string) (io.ReadCloser, error)
 	// Delete removes an object; removing one that is not there is not an error.
 	Delete(ctx context.Context, key string) error
+}
+
+// StoredObject is one object a store holds, as a walk over it finds it.
+type StoredObject struct {
+	// Key is the object's storage key, slash-separated.
+	Key string
+	// Modified is when the object was last written.
+	Modified time.Time
+}
+
+// Walker is a store that can list what it holds, which is how objects nothing
+// points at any more are found.
+type Walker interface {
+	// Walk calls visit for every object in the store; an error from visit
+	// stops the walk and is returned.
+	Walk(ctx context.Context, visit func(StoredObject) error) error
 }
 
 // LocalStore keeps files on a filesystem path, which in a container is a
@@ -359,6 +377,53 @@ func (s *localRestoreStage) Close(_ context.Context) {
 	if !s.activated {
 		_ = os.RemoveAll(s.incoming.root)
 	}
+}
+
+// Walk - calls visit for every file of the live generation of the store.
+//
+// Only the generation readers are served from is walked: a restore's incoming
+// tree and the previous one belong to the restore.
+//
+// Arguments:
+//   - ctx: context of the walk; its end stops the walk.
+//   - visit: called with every regular file; an error from it stops the walk.
+//
+// Returns:
+//   - the first error of the walk or of visit.
+func (s *LocalStore) Walk(ctx context.Context, visit func(StoredObject) error) error {
+	// The root is the link to the live generation, which a walk does not
+	// follow on its own.
+	root, err := filepath.EvalSymlinks(s.root)
+	if err != nil {
+		return fmt.Errorf("open media generation: %w", err)
+	}
+	return filepath.WalkDir(root, func(current string, entry fs.DirEntry, err error) error {
+		if errors.Is(err, fs.ErrNotExist) {
+			// Removed since its directory was read, with a trip or a file.
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !entry.Type().IsRegular() {
+			return nil
+		}
+		info, err := entry.Info()
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(root, current)
+		if err != nil {
+			return err
+		}
+		return visit(StoredObject{Key: filepath.ToSlash(relative), Modified: info.ModTime()})
+	})
 }
 
 // resolve turns a storage key into a path below the root, refusing anything

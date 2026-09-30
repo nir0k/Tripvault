@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -119,11 +120,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.internalError(w, r, "login", err)
+		s.writeDomainError(w, r, "login", err)
 		return
 	}
 
-	s.signIns.succeeded(email)
+	s.signIns.succeeded(client, email)
 	writeJSON(w, s.logger, http.StatusOK, newSessionResponse(session))
 }
 
@@ -139,6 +140,12 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	session, err := s.auth.Refresh(r.Context(), body.RefreshToken)
+	if errors.Is(err, domain.ErrTokenReused) {
+		// Two parties held one session, and one of them is not its owner.
+		s.logger.Warn("ended a session whose replaced refresh token was presented again",
+			slog.String("request_id", RequestIDFrom(r.Context())),
+			slog.String("client", clientAddress(r)))
+	}
 	if errors.Is(err, domain.ErrTokenInvalid) {
 		s.writeError(w, r, http.StatusUnauthorized, "invalid_token",
 			"The refresh token is invalid, expired or has already been used")

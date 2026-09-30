@@ -1153,6 +1153,10 @@ func (s *Server) createPlace(w http.ResponseWriter, r *http.Request, document do
 		s.writeDomainError(w, r, "validate place", err)
 		return
 	}
+	if err := s.checkCover(r.Context(), document.TripID, place.CoverMediaID); err != nil {
+		s.writeDomainError(w, r, "check place cover", err)
+		return
+	}
 	if body.touchesSplit() {
 		if err := s.checkCostSplit(r, document, place, domain.Item{}); err != nil {
 			s.writeDomainError(w, r, "check cost split", err)

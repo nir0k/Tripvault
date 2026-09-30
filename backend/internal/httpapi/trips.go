@@ -690,11 +690,14 @@ func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
 }
 
 // minUserSearchLength keeps the people search from listing everybody on a
-// single typed letter.
-const minUserSearchLength = 2
+// letter or two typed.
+const minUserSearchLength = 3
 
-// handleSearchUsers finds active accounts by name or email so an owner can add
-// them to a trip. It shows only what identifies a person.
+// handleSearchUsers finds active accounts by a part of their name or by their
+// whole email so an owner can add them to a trip. It shows only what identifies
+// a person, and an address only masked unless the whole of it was typed:
+// somebody found by name is told apart from a namesake, but the search does not
+// hand out the addresses of the accounts it finds.
 func (s *Server) handleSearchUsers(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	if len([]rune(query)) < minUserSearchLength {
@@ -712,7 +715,23 @@ func (s *Server) handleSearchUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]tripUserResponse, 0, len(users))
 	for _, user := range users {
+		if !strings.EqualFold(user.Email, query) {
+			user.Email = maskEmail(user.Email)
+		}
 		items = append(items, newTripUserResponse(user))
 	}
 	writeJSON(w, s.logger, http.StatusOK, listResponse[tripUserResponse]{Items: items})
+}
+
+// maskEmail hides most of the local part of an address, keeping its first two
+// characters - one of a short one - and the domain: "ann.lee@example.com"
+// becomes "an***@example.com".
+func maskEmail(email string) string {
+	local, domainPart, found := strings.Cut(email, "@")
+	if !found {
+		return "***"
+	}
+	runes := []rune(local)
+	keep := min(2, max(len(runes)-1, 0))
+	return string(runes[:keep]) + "***@" + domainPart
 }
