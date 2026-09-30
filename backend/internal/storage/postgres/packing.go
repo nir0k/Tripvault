@@ -61,7 +61,12 @@ func scanPackingItem(row pgx.Row) (domain.PackingItem, error) {
 //   - the categories in their order and the items ordered within their category.
 //   - an error if a query fails.
 func (r *PackingRepository) List(ctx context.Context, tripID uuid.UUID) (domain.PackingList, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+packingCategoryColumns+` FROM packing_categories c
+	return r.listIn(ctx, r.pool, tripID)
+}
+
+// listIn reads a trip's whole list through q, the pool or a transaction.
+func (r *PackingRepository) listIn(ctx context.Context, q querier, tripID uuid.UUID) (domain.PackingList, error) {
+	rows, err := q.Query(ctx, `SELECT `+packingCategoryColumns+` FROM packing_categories c
 		WHERE c.trip_id = $1 ORDER BY c.position, c.id`, tripID)
 	if err != nil {
 		return domain.PackingList{}, fmt.Errorf("list packing categories: %w", err)
@@ -72,7 +77,7 @@ func (r *PackingRepository) List(ctx context.Context, tripID uuid.UUID) (domain.
 	if err != nil {
 		return domain.PackingList{}, fmt.Errorf("read packing categories: %w", err)
 	}
-	rows, err = r.pool.Query(ctx, `SELECT `+packingItemColumns+` FROM packing_items i
+	rows, err = q.Query(ctx, `SELECT `+packingItemColumns+` FROM packing_items i
 		WHERE i.trip_id = $1 ORDER BY i.position, i.created_at, i.id`, tripID)
 	if err != nil {
 		return domain.PackingList{}, fmt.Errorf("list packing items: %w", err)
@@ -179,6 +184,49 @@ func (r *PackingRepository) CreateCategory(ctx context.Context, category domain.
 			category.ID, category.TripID, category.Name, category.Color, category.Icon, count)
 		if err != nil {
 			return fmt.Errorf("create packing category: %w", err)
+		}
+		return nil
+	})
+}
+
+// AddSections - adds categories with their items to a trip's list at once,
+// filling a category the list has under the same name and leaving out the
+// things it holds already (domain.PackingList.Merge).
+//
+// Arguments:
+//   - ctx: context bounding the transaction.
+//   - tripID: the trip.
+//   - sections: the validated sections, with the identifiers new rows take.
+//
+// Returns:
+//   - domain.ErrNotFound when the trip does not exist.
+func (r *PackingRepository) AddSections(ctx context.Context, tripID uuid.UUID,
+	sections []domain.PackingSection) error {
+	return pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+		if _, err := lockTrip(ctx, tx, tripID); err != nil {
+			return err
+		}
+		// The list is read inside the transaction, after the lock, so the
+		// positions worked out from it stay free until it commits.
+		list, err := r.listIn(ctx, tx, tripID)
+		if err != nil {
+			return err
+		}
+		categories, items := list.Merge(sections)
+		for _, category := range categories {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO packing_categories (id, trip_id, name, color, icon, position) VALUES ($1, $2, $3, $4, $5, $6)`,
+				category.ID, tripID, category.Name, category.Color, category.Icon, category.Position); err != nil {
+				return fmt.Errorf("create packing category: %w", err)
+			}
+		}
+		for _, item := range items {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO packing_items (id, trip_id, category_id, name, quantity, note, position)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+				item.ID, tripID, item.CategoryID, item.Name, item.Quantity, item.Note, item.Position); err != nil {
+				return fmt.Errorf("create packing item: %w", err)
+			}
 		}
 		return nil
 	})

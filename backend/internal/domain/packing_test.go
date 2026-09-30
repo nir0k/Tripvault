@@ -76,3 +76,62 @@ func TestPackingListInCategory(t *testing.T) {
 		t.Errorf("packed %d", list.PackedCount())
 	}
 }
+
+// TestPackingListMerge checks a section fills a category of the same name in
+// any case, leaves out the things it holds already, and makes a new category
+// at the end of the list in the colour of its place.
+func TestPackingListMerge(t *testing.T) {
+	trip := uuid.New()
+	documents := PackingCategory{ID: uuid.New(), TripID: trip, Name: "Документы", Color: "teal", Position: 0}
+	list := PackingList{
+		Categories: []PackingCategory{documents},
+		Items: []PackingItem{
+			{ID: uuid.New(), CategoryID: &documents.ID, Name: "Паспорт", Position: 0},
+			{ID: uuid.New(), CategoryID: &documents.ID, Name: "Visa", Position: 4},
+		},
+	}
+	sections, err := ValidatePackingSections([]PackingSection{
+		{
+			Category: PackingCategory{ID: uuid.New(), TripID: trip, Name: " документы "},
+			Items:    []PackingItem{{ID: uuid.New(), Name: "паспорт"}, {ID: uuid.New(), Name: "Билеты"}},
+		},
+		{
+			Category: PackingCategory{ID: uuid.New(), TripID: trip, Name: "Аптечка", Icon: "first_aid"},
+			Items:    []PackingItem{{ID: uuid.New(), Name: "Пластыри"}, {ID: uuid.New(), Name: "пластыри"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	categories, items := list.Merge(sections)
+	if len(categories) != 1 || categories[0].Name != "Аптечка" || categories[0].Position != 1 ||
+		categories[0].Color != TagColors[1] || categories[0].Icon != "first_aid" {
+		t.Fatalf("new categories %+v", categories)
+	}
+	if len(items) != 2 {
+		t.Fatalf("new items %+v", items)
+	}
+	if items[0].Name != "Билеты" || *items[0].CategoryID != documents.ID || items[0].Position != 5 || items[0].Quantity != 1 {
+		t.Errorf("a thing of an existing category %+v", items[0])
+	}
+	if items[1].Name != "Пластыри" || *items[1].CategoryID != categories[0].ID || items[1].Position != 0 {
+		t.Errorf("a thing of a new category %+v", items[1])
+	}
+}
+
+// TestValidatePackingSections checks the number of categories and the things
+// in them are bounded.
+func TestValidatePackingSections(t *testing.T) {
+	if code := validationCode(t, sectionsErr(ValidatePackingSections(nil))); code != "categories:out_of_range" {
+		t.Errorf("no categories: %s", code)
+	}
+	crowded := PackingSection{Category: PackingCategory{Name: "Gear"}, Items: make([]PackingItem, MaxPackingSectionItems+1)}
+	if code := validationCode(t, sectionsErr(ValidatePackingSections([]PackingSection{crowded}))); code != "items:out_of_range" {
+		t.Errorf("too many things: %s", code)
+	}
+}
+
+// sectionsErr drops the sections of a result, keeping its error.
+func sectionsErr(_ []PackingSection, err error) error {
+	return err
+}

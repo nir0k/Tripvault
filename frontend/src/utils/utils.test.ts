@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError } from '@/api/client'
-import type { CostCategory, Idea, Media, PackingItem, TripDocument } from '@/api/types'
+import type { CostCategory, Idea, Media, PackingItem, PackingList, TripDocument } from '@/api/types'
 import { amountCents, centsToAmount, equalShares, evaluateFormula, invalidAmount, resolveAmount } from '@/utils/amount'
 import { categoryRows } from '@/utils/budget'
+import en from '@/i18n/en.json'
+import ru from '@/i18n/ru.json'
 import { errorMessage } from '@/utils/errors'
-import { packingText, parseQuickItem } from '@/utils/packing'
+import { PACKING_TEMPLATES, packingText, parseQuickItem, templateAdded, templateSections } from '@/utils/packing'
 import { addDays, describeUserAgent, formatClock, formatDayDate, formatDistance, formatDateRange, formatElapsed, formatFileSize, formatMoney, formatSpeed, formatTimeOfDay, fromMetres, normalizeAmount, parseTimeOfDay, splitDuration, toMetres } from '@/utils/format'
 import { markdownExcerpt, renderMarkdown } from '@/utils/markdown'
 import { justifyRows, justifyStrip, previewSize, tileRatio } from '@/utils/justify'
@@ -789,5 +791,50 @@ describe('packingText', () => {
       { title: 'Clothes', items: [item('Shoes')] },
     ], { u1: 'Ada' }, 'Lisbon — Packing list')
     expect(text).toBe('Lisbon — Packing list\n\nDocuments\n- Passports ×3\n- Tickets — printed (Ada)\n\nClothes\n- Shoes')
+  })
+})
+
+describe('packing templates', () => {
+  const hiking = PACKING_TEMPLATES.find((template) => template.key === 'hiking')!
+  const sections = templateSections(hiking, (key) => key.split('.').pop()!)
+
+  it('writes a template in the reader\'s words, a pair of categories in one colour', () => {
+    expect(sections.map((section) => [section.name, section.icon, section.color])).toEqual([
+      ['hikingGear', 'gear', 'green'],
+      ['hikingClothes', 'clothes', 'green'],
+    ])
+    expect(sections[1]?.items).toContainEqual({ name: 'hikingSocks', quantity: 3, note: 'hikingSocks' })
+    expect(sections[0]?.items).toContainEqual({ name: 'backpack' })
+  })
+
+  it('says a template is added once the list holds all of it, in any case', () => {
+    const list: PackingList = { categories: [], items: [], packed: 0, total: 0 }
+    expect(templateAdded(sections, list, 'en')).toBe(false)
+    sections.forEach((section, index) => {
+      list.categories.push({ id: `c${index}`, name: section.name.toUpperCase(), color: 'green', icon: 'gear', position: index })
+      for (const item of section.items) {
+        list.items.push({ id: item.name, category_id: `c${index}`, name: ` ${item.name} `, quantity: 1, note: '', packed: false, bringer_id: null, position: 0 })
+      }
+    })
+    expect(templateAdded(sections, list, 'en')).toBe(true)
+    list.items.pop()
+    expect(templateAdded(sections, list, 'en')).toBe(false)
+  })
+
+  it('has every name in the dictionaries', () => {
+    for (const locale of [en, ru]) {
+      for (const template of PACKING_TEMPLATES) {
+        expect(locale.packing.templates).toHaveProperty(template.key)
+        for (const category of template.categories) {
+          expect(locale.packing.templateCategories).toHaveProperty(category.key)
+          for (const item of category.items) {
+            expect(locale.packing.templateItems).toHaveProperty(item.key)
+            if (item.note) {
+              expect(locale.packing.templateNotes).toHaveProperty(item.key)
+            }
+          }
+        }
+      }
+    }
   })
 })

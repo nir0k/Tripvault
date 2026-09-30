@@ -56,6 +56,14 @@ func (f *fakePacking) CreateCategory(_ context.Context, category domain.PackingC
 	return nil
 }
 
+// AddSections merges the sections into the list as the repository does.
+func (f *fakePacking) AddSections(_ context.Context, _ uuid.UUID, sections []domain.PackingSection) error {
+	categories, items := f.list.Merge(sections)
+	f.list.Categories = append(f.list.Categories, categories...)
+	f.list.Items = append(f.list.Items, items...)
+	return nil
+}
+
 // UpdateCategory replaces a category.
 func (f *fakePacking) UpdateCategory(_ context.Context, category domain.PackingCategory) error {
 	for index := range f.list.Categories {
@@ -188,6 +196,36 @@ func TestPackingListOverHTTP(t *testing.T) {
 
 	if recorder := send(s, http.MethodPost, base+":reset", "good", ""); recorder.Code != http.StatusOK || !packing.reset {
 		t.Errorf("reset: %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// TestPackingAddOverHTTP checks a template's categories come in with their
+// things, adding it again brings nothing new, and a template without a
+// category or with a nameless thing is refused.
+func TestPackingAddOverHTTP(t *testing.T) {
+	s, trips, packing := newPackingServer(domain.RoleEditor)
+	path := "/api/v1/trips/" + trips.trip.ID.String() + "/packing:add"
+	body := `{"categories":[
+		{"name":"Hiking gear","color":"green","icon":"gear","items":[{"name":"Backpack"},{"name":"Poles","quantity":2}]},
+		{"name":"Hiking clothes","color":"green","icon":"clothes","items":[{"name":"Socks","quantity":3}]}]}`
+	for range 2 {
+		recorder := send(s, http.MethodPost, path, "good", body)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("add a template: %d %s", recorder.Code, recorder.Body.String())
+		}
+		list := decodePacking(t, recorder.Body.Bytes())
+		if len(list.Categories) != 2 || list.Total != 3 || list.Categories[1].Icon != "clothes" ||
+			list.Categories[1].Color != "green" || list.Items[1].Quantity != 2 || list.Items[1].Position != 1 {
+			t.Fatalf("list %+v", list)
+		}
+	}
+	for _, bad := range []string{`{"categories":[]}`, `{"categories":[{"name":"Gear","items":[{"name":" "}]}]}`} {
+		if recorder := send(s, http.MethodPost, path, "good", bad); recorder.Code != http.StatusUnprocessableEntity {
+			t.Errorf("%s: %d %s", bad, recorder.Code, recorder.Body.String())
+		}
+	}
+	if len(packing.list.Items) != 3 {
+		t.Errorf("a refused template changed the list: %+v", packing.list.Items)
 	}
 }
 

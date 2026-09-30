@@ -5,17 +5,18 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import * as packingApi from '@/api/packing'
 import { listMembers } from '@/api/trips'
-import { TAG_COLORS, type PackingCategory, type PackingIcon, type PackingItem, type PackingList, type TripMember } from '@/api/types'
+import { TAG_COLORS, type PackingCategory, type PackingItem, type PackingList, type TripMember } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import { PACKING_ICONS } from '@/components/icons'
 import PackingCategoryCard from '@/components/packing/PackingCategoryCard.vue'
 import PackingCategoryStyleDialog, { type PackingCategoryStyle } from '@/components/packing/PackingCategoryStyleDialog.vue'
 import PackingItemDialog from '@/components/packing/PackingItemDialog.vue'
+import PackingTemplateDialog from '@/components/packing/PackingTemplateDialog.vue'
 import { useTripStore } from '@/stores/trip'
 import { errorMessage } from '@/utils/errors'
 import { copyText } from '@/utils/clipboard'
-import { SUGGESTED_CATEGORIES, SUGGESTED_ICONS, packingText, type PackingSection } from '@/utils/packing'
+import { packingText, type PackingSection } from '@/utils/packing'
 
 // What to take on the trip: categories the trip names itself, each in its own
 // colour and with its icon, and a list of things ticked as they go into the
@@ -39,6 +40,7 @@ const exporting = ref(false)
 const confirmDialog = useTemplateRef<InstanceType<typeof ConfirmDialog>>('confirmDialog')
 const itemDialog = useTemplateRef<InstanceType<typeof PackingItemDialog>>('itemDialog')
 const styleDialog = useTemplateRef<InstanceType<typeof PackingCategoryStyleDialog>>('styleDialog')
+const templateDialog = useTemplateRef<InstanceType<typeof PackingTemplateDialog>>('templateDialog')
 
 const trip = computed(() => store.trip)
 // tripId is what the API is asked with; null reads through the link.
@@ -66,15 +68,6 @@ const uncategorised = computed(() => itemsOf(null))
 
 const bringers = computed(() => Object.fromEntries(members.value.map((member) => [member.user.id, member.user.display_name])))
 const progress = computed(() => (list.value && list.value.total > 0 ? Math.round((list.value.packed / list.value.total) * 100) : 0))
-// The suggestions not taken yet, so a second click does not make a second
-// "Documents"; each comes with its own icon.
-const suggestions = computed(() => {
-  const taken = new Set((list.value?.categories ?? []).map((category) => category.name.toLocaleLowerCase(locale.value)))
-  return SUGGESTED_CATEGORIES
-    .map((key) => ({ name: t(`packing.suggested.${key}`), icon: SUGGESTED_ICONS[key] }))
-    .filter((suggestion) => !taken.has(suggestion.name.toLocaleLowerCase(locale.value)))
-})
-
 // load reads the list and, for a member, who may bring something.
 async function load(): Promise<void> {
   if (!trip.value || trip.value.kind !== 'plan') {
@@ -134,20 +127,25 @@ async function chooseNewStyle(): Promise<void> {
   }
 }
 
-// addCategory adds a category by the name typed, in the style chosen for it,
-// or a suggestion with its own icon.
-function addCategory(name = newCategory.value, icon?: PackingIcon): void {
+// addCategory adds a category by the name typed, in the style chosen for it.
+function addCategory(): void {
   const id = tripId.value
-  const trimmed = name.trim()
-  if (!id || trimmed === '') {
+  const name = newCategory.value.trim()
+  if (!id || name === '') {
     return
   }
-  const style = icon ? { icon } : { ...nextStyle.value }
-  if (!icon) {
-    newCategory.value = ''
-    newStyle.value = null
+  const style = { ...nextStyle.value }
+  newCategory.value = ''
+  newStyle.value = null
+  void apply(() => packingApi.createCategory(id, { name, ...style }))
+}
+
+// addTemplate adds the categories of a template with their things.
+function addTemplate(sections: packingApi.PackingAddCategory[]): void {
+  const id = tripId.value
+  if (id) {
+    void apply(() => packingApi.addToPacking(id, sections))
   }
-  void apply(() => packingApi.createCategory(id, { name: trimmed, ...style }))
 }
 
 // restyle changes a category's colour or icon through the window.
@@ -309,20 +307,9 @@ async function exportPdf(): Promise<void> {
 
       <div v-if="list.categories.length === 0 && list.items.length === 0" class="rounded-box border border-dashed border-base-300 p-4 text-sm">
         <p class="text-base-content/70">{{ canEdit ? t('packing.emptyEditor') : t('packing.empty') }}</p>
-      </div>
-
-      <div v-if="canEdit && suggestions.length > 0 && list.categories.length < 3" class="flex flex-wrap items-center gap-2">
-        <span class="text-sm text-base-content/70">{{ t('packing.suggestions') }}</span>
-        <button
-          v-for="suggestion in suggestions"
-          :key="suggestion.name"
-          type="button"
-          class="btn btn-xs btn-outline"
-          :disabled="busy"
-          @click="addCategory(suggestion.name, suggestion.icon)"
-        >
-          <AppIcon :name="PACKING_ICONS[suggestion.icon]" class="size-3.5!" />
-          {{ suggestion.name }}
+        <button v-if="canEdit" type="button" class="btn btn-sm mt-3" :disabled="busy" @click="templateDialog?.open()">
+          <AppIcon name="packLuggage" />
+          {{ t('packing.fromTemplate') }}
         </button>
       </div>
 
@@ -408,6 +395,10 @@ async function exportPdf(): Promise<void> {
           <AppIcon name="plus" />
           {{ t('packing.addCategory') }}
         </button>
+        <button type="button" class="btn btn-sm btn-ghost" :disabled="busy" @click="templateDialog?.open()">
+          <AppIcon name="packLuggage" />
+          {{ t('packing.fromTemplate') }}
+        </button>
       </form>
     </template>
 
@@ -415,6 +406,7 @@ async function exportPdf(): Promise<void> {
 
     <PackingItemDialog ref="itemDialog" :categories="list?.categories ?? []" :members="members" @save="saveItem" />
     <PackingCategoryStyleDialog ref="styleDialog" />
+    <PackingTemplateDialog ref="templateDialog" :list="list" :busy="busy" @add="addTemplate" />
     <ConfirmDialog ref="confirmDialog" />
   </div>
 </template>

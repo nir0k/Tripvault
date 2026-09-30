@@ -39,6 +39,23 @@ export async function createCategory(tripId: string, fields: PackingCategoryFiel
   return (await http.post<PackingList>(tripPath(tripId, '/categories'), fields)).data
 }
 
+/** PackingAddCategory is a category added with its things at once, as a template adds it. */
+export interface PackingAddCategory {
+  name: string
+  color?: TagColor
+  icon?: PackingIcon
+  items: { name: string; quantity?: number; note?: string }[]
+}
+
+/**
+ * addToPacking adds categories with their things in one go. A category the
+ * list has under the same name is filled rather than repeated, and a thing it
+ * holds already is left out.
+ */
+export async function addToPacking(tripId: string, categories: PackingAddCategory[]): Promise<PackingList> {
+  return (await http.post<PackingList>(tripPath(tripId, ':add'), { categories })).data
+}
+
 /** updateCategory renames a category or changes its colour or icon. */
 export async function updateCategory(categoryId: string, fields: PackingCategoryFields): Promise<PackingList> {
   return (await http.patch<PackingList>(`/api/v1/packing-categories/${encodeURIComponent(categoryId)}`, fields)).data

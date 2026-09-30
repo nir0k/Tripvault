@@ -524,6 +524,7 @@ func (s *Server) routes() http.Handler {
 				member.Get("/trips/{tripID}/packing", s.handleGetPacking)
 				member.Get("/trips/{tripID}/packing/pdf", s.handlePackingPDF)
 				member.Post("/trips/{tripID}/packing:reset", s.handleResetPacking)
+				member.Post("/trips/{tripID}/packing:add", s.handleAddPacking)
 				member.Post("/trips/{tripID}/packing/categories", s.handleCreatePackingCategory)
 				member.Post("/trips/{tripID}/packing/categories:reorder", s.handleReorderPackingCategories)
 				member.Post("/trips/{tripID}/packing/items", s.handleCreatePackingItem)

@@ -23,6 +23,7 @@ type PackingStore interface {
 	Category(ctx context.Context, id uuid.UUID) (domain.PackingCategory, error)
 	Item(ctx context.Context, id uuid.UUID) (domain.PackingItem, error)
 	CreateCategory(ctx context.Context, category domain.PackingCategory) error
+	AddSections(ctx context.Context, tripID uuid.UUID, sections []domain.PackingSection) error
 	UpdateCategory(ctx context.Context, category domain.PackingCategory) error
 	DeleteCategory(ctx context.Context, category domain.PackingCategory) error
 	ReorderCategories(ctx context.Context, tripID uuid.UUID, order []uuid.UUID) error
@@ -200,6 +201,62 @@ func (s *Server) handleCreatePackingCategory(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	s.writePackingList(w, r, http.StatusCreated, trip.ID, true)
+}
+
+// packingAddRequest is the body that adds categories with their things at
+// once, as a template of the interface does.
+type packingAddRequest struct {
+	Categories []packingSectionRequest `json:"categories"`
+}
+
+// packingSectionRequest is one category of an addition with its things.
+type packingSectionRequest struct {
+	packingCategoryRequest
+	Items []packingSectionItemRequest `json:"items"`
+}
+
+// packingSectionItemRequest is one thing of an addition; nobody brings it and
+// it is not packed yet.
+type packingSectionItemRequest struct {
+	Name     string `json:"name"`
+	Quantity int    `json:"quantity"`
+	Note     string `json:"note"`
+}
+
+// handleAddPacking adds categories with their things in one transaction. A
+// category the list has under the same name is filled rather than repeated,
+// and a thing it holds already is left out.
+func (s *Server) handleAddPacking(w http.ResponseWriter, r *http.Request) {
+	trip, ok := s.packingTripFor(w, r, domain.ActionEdit)
+	if !ok {
+		return
+	}
+	var body packingAddRequest
+	if !s.decodeJSON(w, r, &body) {
+		return
+	}
+	sections := make([]domain.PackingSection, 0, len(body.Categories))
+	for _, wire := range body.Categories {
+		section := domain.PackingSection{Category: domain.PackingCategory{
+			ID: uuid.Must(uuid.NewV7()), TripID: trip.ID, Name: wire.Name, Color: wire.Color, Icon: wire.Icon,
+		}}
+		for _, item := range wire.Items {
+			section.Items = append(section.Items, domain.PackingItem{
+				ID: uuid.Must(uuid.NewV7()), TripID: trip.ID, Name: item.Name, Quantity: item.Quantity, Note: item.Note,
+			})
+		}
+		sections = append(sections, section)
+	}
+	sections, err := domain.ValidatePackingSections(sections)
+	if err != nil {
+		s.writeDomainError(w, r, "validate packing categories", err)
+		return
+	}
+	if err := s.packing.AddSections(r.Context(), trip.ID, sections); err != nil {
+		s.writeDomainError(w, r, "add packing categories", err)
+		return
+	}
+	s.writePackingList(w, r, http.StatusOK, trip.ID, true)
 }
 
 // reorderRequest names every element of a list in its new order.
