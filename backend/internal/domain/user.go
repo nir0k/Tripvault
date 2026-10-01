@@ -38,12 +38,19 @@ type User struct {
 	// MustChangePassword is set when an administrator chose the password - on
 	// creation or on a reset - and cleared when the owner picks their own.
 	MustChangePassword bool
-	Locale             string
-	Theme              Theme
-	Units              Units
-	DateFormat         DateFormat
-	TimeFormat         TimeFormat
-	DefaultCurrency    string
+	// EmailNotifications controls ordinary event mail. Security messages and
+	// invitations are always sent when mail is enabled.
+	EmailNotifications bool
+	// EmailUnverifiedSince is when a self-registered account first registered,
+	// nil once its address is confirmed and for every other account. Such an
+	// account is inactive, and it is deleted after UnverifiedAccountLifetime.
+	EmailUnverifiedSince *time.Time
+	Locale               string
+	Theme                Theme
+	Units                Units
+	DateFormat           DateFormat
+	TimeFormat           TimeFormat
+	DefaultCurrency      string
 	// AvatarKey is where the account's picture lives in the media store, empty
 	// when it wears none; AvatarUpdatedAt is when it last changed, which is what
 	// makes a browser fetch the new one.
@@ -315,13 +322,14 @@ func ValidateCurrency(currency string) error {
 
 // Profile is the part of an account its owner may change.
 type Profile struct {
-	DisplayName     string
-	Locale          string
-	Theme           Theme
-	Units           Units
-	DateFormat      DateFormat
-	TimeFormat      TimeFormat
-	DefaultCurrency string
+	DisplayName        string
+	Locale             string
+	Theme              Theme
+	Units              Units
+	DateFormat         DateFormat
+	TimeFormat         TimeFormat
+	DefaultCurrency    string
+	EmailNotifications bool
 }
 
 // Validate - checks a profile against the account rules.

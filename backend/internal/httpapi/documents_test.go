@@ -30,8 +30,9 @@ type fakeDocuments struct {
 	transfer *domain.Transfer
 	track    *domain.Track
 	// trackFile is the file the stored track was imported from.
-	trackFile []byte
-	changed   int
+	trackFile  []byte
+	trackQuota int64
+	changed    int
 	// created is the last place stored by CreatePlace.
 	created domain.Item
 	// copied is the report the last CreateReport was asked to write.
@@ -166,9 +167,12 @@ func (f *fakeDocuments) tracks() []domain.Track {
 
 // CreateReport records the report and lets the fake trips read it back as a
 // trip of its own.
-func (f *fakeDocuments) CreateReport(_ context.Context, report domain.Trip, planID uuid.UUID) error {
+func (f *fakeDocuments) CreateReport(_ context.Context, report domain.Trip, planID uuid.UUID, quota int64) error {
 	if planID != f.document.ID {
 		return domain.ErrNotFound
+	}
+	if quota > 0 && f.track != nil && f.track.FileSize > quota {
+		return domain.ErrMediaQuota
 	}
 	f.changed++
 	f.copied = &report
@@ -400,8 +404,14 @@ func (f *fakeDocuments) SaveTranslations(_ context.Context, _ uuid.UUID, _ strin
 	return nil
 }
 
-// SaveTrack keeps the recorded line and its file, as the repository does.
-func (f *fakeDocuments) SaveTrack(_ context.Context, track domain.Track, file []byte) (domain.Track, error) {
+// SaveTrack keeps the recorded line and its file, applying the trip allowance
+// the handler read from instance settings.
+func (f *fakeDocuments) SaveTrack(_ context.Context, track domain.Track, file []byte, quota int64) (domain.Track, error) {
+	f.trackQuota = quota
+	if quota > 0 && int64(len(file)) > quota {
+		return domain.Track{}, domain.ErrMediaQuota
+	}
+	track.FileSize = int64(len(file))
 	f.track, f.trackFile = &track, file
 	return track, nil
 }

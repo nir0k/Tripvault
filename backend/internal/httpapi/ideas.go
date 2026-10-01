@@ -362,6 +362,12 @@ func (s *Server) handleAddIdeaPhoto(w http.ResponseWriter, r *http.Request) {
 
 	photo := domain.IdeaPhoto{ID: uuid.Must(uuid.NewV7()), IdeaID: ideaID, Width: width, Height: height}
 	photo.Key, photo.ThumbKey = ideaPhotoKey(ideaID, photo.ID, ""), ideaPhotoKey(ideaID, photo.ID, "-preview")
+	release, err := s.reserveStorage(r.Context(), int64(len(picture)+len(preview)))
+	if err != nil {
+		s.writeStorageError(w, r, "reserve idea photo storage", err)
+		return
+	}
+	defer release()
 	for key, bytesOf := range map[string][]byte{photo.Key: picture, photo.ThumbKey: preview} {
 		if _, err := s.mediaFiles.Put(r.Context(), key, bytes.NewReader(bytesOf)); err != nil {
 			s.deleteAvatarBytes(r, photo.Key)

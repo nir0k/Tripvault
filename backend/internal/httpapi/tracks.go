@@ -56,6 +56,25 @@ func (s *Server) handleImportItemTrack(w http.ResponseWriter, r *http.Request) {
 		s.writeTrackError(w, r, err)
 		return
 	}
+	tripQuota, err := s.tripQuota(r.Context())
+	if err != nil {
+		s.internalError(w, r, "read trip storage quota", err)
+		return
+	}
+	var previousBytes int64
+	if s.storage != nil {
+		previousBytes, err = s.storage.TrackBytes(r.Context(), item.ID)
+		if err != nil {
+			s.internalError(w, r, "measure replaced track", err)
+			return
+		}
+	}
+	release, err := s.reserveStorage(r.Context(), int64(len(data))-previousBytes)
+	if err != nil {
+		s.writeStorageError(w, r, "reserve track storage", err)
+		return
+	}
+	defer release()
 	saved, err := s.documents.SaveTrack(r.Context(), domain.Track{
 		ID:           uuid.Must(uuid.NewV7()),
 		DocumentID:   document.ID,
@@ -71,8 +90,12 @@ func (s *Server) handleImportItemTrack(w http.ResponseWriter, r *http.Request) {
 		StartedAt:    parsed.StartedAt,
 		EndedAt:      parsed.EndedAt,
 		ClimbVersion: track.ClimbVersion,
-	}, data)
+	}, data, tripQuota)
 	if err != nil {
+		if errors.Is(err, domain.ErrMediaQuota) {
+			s.writeError(w, r, http.StatusConflict, "media_quota", "The trip has no space left for more files")
+			return
+		}
 		s.writeDomainError(w, r, "save track", err)
 		return
 	}

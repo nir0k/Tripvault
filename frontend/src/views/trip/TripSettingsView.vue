@@ -3,10 +3,12 @@ import { computed, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  addMember, deleteTrip, listMembers, removeMember, searchUsers, updateMember, updateTrip,
+  addMember, deleteTrip, inviteTripMember, listMembers, listTripInvitations, removeMember,
+  revokeTripInvitation, searchUsers, updateMember, updateTrip,
 } from '@/api/trips'
+import { getClientConfig } from '@/api/config'
 import { ApiError } from '@/api/client'
-import type { CoverCrop, MemberRole, RemovedDay, TripMember, TripUser } from '@/api/types'
+import type { CoverCrop, MemberRole, RemovedDay, TripInvitation, TripMember, TripUser } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import CoverCropDialog from '@/components/media/CoverCropDialog.vue'
@@ -57,6 +59,10 @@ const membersError = ref('')
 const newMember = ref<TripUser | null>(null)
 const newRole = ref<MemberRole>('viewer')
 const memberPicker = useTemplateRef<InstanceType<typeof UserPicker>>('memberPicker')
+const invitations = ref<TripInvitation[]>([])
+const invitationEmail = ref('')
+const mailEnabled = ref(false)
+const inviting = ref(false)
 
 const memberIds = computed(() => members.value.map((member) => member.user.id))
 
@@ -177,6 +183,41 @@ async function loadMembers(): Promise<void> {
   membersError.value = ''
   try {
     members.value = await listMembers(trip.value.id)
+    if (isOwner.value) {
+      invitations.value = await listTripInvitations(trip.value.id)
+    }
+  } catch (err) {
+    membersError.value = errorMessage(err, t, te)
+  }
+}
+
+// invite emails access to an address that may not have an account yet.
+async function invite(): Promise<void> {
+  if (!trip.value || !invitationEmail.value.trim()) {
+    return
+  }
+  inviting.value = true
+  membersError.value = ''
+  try {
+    await inviteTripMember(trip.value.id, invitationEmail.value.trim(), newRole.value, locale.value)
+    invitationEmail.value = ''
+    invitations.value = await listTripInvitations(trip.value.id)
+  } catch (err) {
+    membersError.value = errorMessage(err, t, te)
+  } finally {
+    inviting.value = false
+  }
+}
+
+// revokeInvite withdraws an invitation that has not been accepted.
+async function revokeInvite(invitation: TripInvitation): Promise<void> {
+  if (!trip.value) {
+    return
+  }
+  membersError.value = ''
+  try {
+    await revokeTripInvitation(trip.value.id, invitation.id)
+    invitations.value = await listTripInvitations(trip.value.id)
   } catch (err) {
     membersError.value = errorMessage(err, t, te)
   }
@@ -257,7 +298,11 @@ async function destroy(): Promise<void> {
 
 watch(() => trip.value?.id, () => {
   fillForm()
-  void loadMembers()
+  void getClientConfig().then((config) => {
+    mailEnabled.value = config.mail_enabled
+  }).catch(() => {
+    mailEnabled.value = false
+  }).finally(() => void loadMembers())
 }, { immediate: true })
 </script>
 
@@ -420,6 +465,32 @@ watch(() => trip.value?.id, () => {
             {{ t('members.add') }}
           </button>
         </form>
+
+        <div v-if="isOwner && mailEnabled" class="divider">{{ t('members.orInvite') }}</div>
+        <form v-if="isOwner && mailEnabled" class="flex flex-col gap-2 sm:flex-row" @submit.prevent="invite">
+          <input v-model="invitationEmail" type="email" required class="input flex-1" :placeholder="t('members.inviteEmail')" />
+          <select v-model="newRole" class="select w-full sm:w-36" :aria-label="t('members.role')">
+            <option value="editor">{{ t('trips.roles.editor') }}</option>
+            <option value="viewer">{{ t('trips.roles.viewer') }}</option>
+          </select>
+          <button type="submit" class="btn btn-primary" :disabled="inviting">
+            <span v-if="inviting" class="loading loading-spinner loading-sm"></span>
+            {{ t('members.invite') }}
+          </button>
+        </form>
+
+        <ul v-if="isOwner && invitations.length" class="divide-y divide-base-300 border-t border-base-300">
+          <li v-for="invitation in invitations" :key="invitation.id" class="flex flex-wrap items-center gap-3 py-3">
+            <div class="min-w-0 flex-1">
+              <p class="truncate">{{ invitation.email }}</p>
+              <p class="text-xs text-base-content/60">{{ t(`trips.roles.${invitation.role}`) }}</p>
+            </div>
+            <span class="badge badge-outline">{{ t(`mail.status.${invitation.status}`) }}</span>
+            <button v-if="invitation.status === 'pending'" type="button" class="btn btn-ghost btn-sm" @click="revokeInvite(invitation)">
+              {{ t('members.revokeInvitation') }}
+            </button>
+          </li>
+        </ul>
       </div>
     </div>
 

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/nir0k/tripvault/backend/internal/backup"
 	"github.com/nir0k/tripvault/backend/internal/domain"
 	"github.com/nir0k/tripvault/backend/internal/httpapi/docs"
+	"github.com/nir0k/tripvault/backend/internal/mailer"
 	"github.com/nir0k/tripvault/backend/internal/media"
 	"github.com/nir0k/tripvault/backend/internal/routing"
 	"github.com/nir0k/tripvault/backend/internal/staticmap"
@@ -40,6 +42,7 @@ type Options struct {
 // AuthService is the authentication behaviour the handlers depend on.
 type AuthService interface {
 	Login(ctx context.Context, email, password, userAgent string) (auth.Session, error)
+	Credentials(ctx context.Context, email, password string) (domain.User, error)
 	Refresh(ctx context.Context, refreshToken string) (auth.Session, error)
 	Logout(ctx context.Context, refreshToken string) error
 	Authenticate(ctx context.Context, token string) (domain.User, uuid.UUID, error)
@@ -60,6 +63,43 @@ type UserStore interface {
 	ResetPassword(ctx context.Context, id uuid.UUID, hash string) error
 	Stats(ctx context.Context) (domain.UserStats, error)
 	Search(ctx context.Context, query string, exclude uuid.UUID) ([]domain.TripUser, error)
+}
+
+// MailStore is the administrator policy and persistent delivery queue.
+type MailStore interface {
+	MailSettings(ctx context.Context) (domain.MailSettings, error)
+	SetMailEnabled(ctx context.Context, enabled bool) (domain.MailSettings, error)
+	SetSelfRegistration(ctx context.Context, enabled bool) (domain.MailSettings, error)
+	EnqueueMail(ctx context.Context, message domain.MailMessage) error
+	MailStats(ctx context.Context) (domain.MailStats, error)
+}
+
+// InvitationStore keeps password recovery and account or trip invitations.
+type InvitationStore interface {
+	PasswordResetUser(ctx context.Context, email string) (domain.User, error)
+	CreatePasswordReset(ctx context.Context, userID uuid.UUID, tokenHash []byte, expiresAt time.Time, message domain.MailMessage) error
+	PasswordResetValid(ctx context.Context, tokenHash []byte, now time.Time) error
+	ResetPassword(ctx context.Context, tokenHash []byte, passwordHash string, now time.Time) (domain.User, error)
+	CreateUserInvitation(ctx context.Context, invitation domain.UserInvitation, tokenHash []byte, message domain.MailMessage) error
+	UserInvitations(ctx context.Context) ([]domain.UserInvitation, error)
+	RevokeUserInvitation(ctx context.Context, id uuid.UUID, now time.Time) error
+	UserInvitationByToken(ctx context.Context, tokenHash []byte) (domain.UserInvitation, error)
+	AcceptUserInvitation(ctx context.Context, tokenHash []byte, passwordHash, locale string, now time.Time) (domain.User, error)
+	CreateTripInvitation(ctx context.Context, invitation domain.TripInvitation, tokenHash []byte, message domain.MailMessage) error
+	TripInvitations(ctx context.Context, tripID uuid.UUID) ([]domain.TripInvitation, error)
+	TripInvitationByToken(ctx context.Context, tokenHash []byte) (domain.TripInvitation, error)
+	RevokeTripInvitation(ctx context.Context, tripID, id uuid.UUID, now time.Time) error
+	AcceptTripInvitation(ctx context.Context, tokenHash []byte, user domain.User, now time.Time) (uuid.UUID, error)
+	RegisterTripInvitation(ctx context.Context, tokenHash []byte, user domain.User, now time.Time) (domain.User, uuid.UUID, error)
+}
+
+// RegistrationStore keeps self-registered accounts and the confirmations of their addresses.
+type RegistrationStore interface {
+	RegisterAccount(ctx context.Context, user domain.User, verification domain.EmailVerification, message domain.MailMessage, now time.Time, cooldown time.Duration) error
+	VerificationWait(ctx context.Context, userID uuid.UUID, now time.Time, cooldown time.Duration) (time.Duration, error)
+	ResendVerification(ctx context.Context, verification domain.EmailVerification, message domain.MailMessage, now time.Time, cooldown time.Duration) (time.Duration, error)
+	ConfirmEmailByToken(ctx context.Context, tokenHash []byte, now time.Time) (domain.User, error)
+	ConfirmEmailByCode(ctx context.Context, email string, codeHash []byte, now time.Time) (domain.User, error)
 }
 
 // TripStore is the trip persistence the trip, member and administration
@@ -90,7 +130,7 @@ type DocumentStore interface {
 	Item(ctx context.Context, id uuid.UUID) (domain.Item, error)
 	Stay(ctx context.Context, id uuid.UUID) (domain.Stay, error)
 	Content(ctx context.Context, id uuid.UUID) (domain.DocumentContent, error)
-	CreateReport(ctx context.Context, report domain.Trip, planID uuid.UUID) error
+	CreateReport(ctx context.Context, report domain.Trip, planID uuid.UUID, quota int64) error
 	UpdateDocument(ctx context.Context, id uuid.UUID, intro, summary string) error
 	AddDay(ctx context.Context, day domain.Day, position *int) error
 	DuplicateDay(ctx context.Context, sourceID uuid.UUID) (uuid.UUID, error)
@@ -113,7 +153,7 @@ type DocumentStore interface {
 	CreateExpense(ctx context.Context, expense domain.Expense) error
 	UpdateExpense(ctx context.Context, expense domain.Expense) error
 	DeleteExpense(ctx context.Context, id uuid.UUID) error
-	SaveTrack(ctx context.Context, track domain.Track, file []byte) (domain.Track, error)
+	SaveTrack(ctx context.Context, track domain.Track, file []byte, quota int64) (domain.Track, error)
 	Track(ctx context.Context, id uuid.UUID) (domain.Track, error)
 	TrackFile(ctx context.Context, id uuid.UUID) (domain.TrackFile, error)
 	StaleTracks(ctx context.Context, version int) ([]uuid.UUID, error)
@@ -185,6 +225,17 @@ type Probe interface {
 	SchemaVersion(ctx context.Context) (int64, error)
 }
 
+// StorageService measures instance user files, applies the operator's ceiling
+// and keeps the administrator-controlled trip allowance.
+type StorageService interface {
+	Usage(ctx context.Context) (domain.StorageUsage, error)
+	Settings(ctx context.Context) (domain.StorageSettings, error)
+	SetTripQuota(ctx context.Context, quota int64) (domain.StorageSettings, error)
+	TrackBytes(ctx context.Context, itemID uuid.UUID) (int64, error)
+	ObjectBytes(ctx context.Context, key string) (int64, error)
+	Reserve(ctx context.Context, growth int64) (func(), error)
+}
+
 // Dependencies bundles what the handlers read and write through, so adding one
 // does not change the signature of NewServer.
 type Dependencies struct {
@@ -206,6 +257,16 @@ type Dependencies struct {
 	// keeps; a quota of zero is unlimited.
 	MediaMaxBytes  int64
 	MediaTripQuota int64
+	// Storage applies the instance-wide allowance. MediaTripQuota remains the
+	// seed and test fallback for the administrator-controlled trip quota.
+	Storage        StorageService
+	Mail           MailStore
+	Invitations    InvitationStore
+	Registrations  RegistrationStore
+	MailSender     mailer.Sender
+	MailConfigured bool
+	MailPublicURL  string
+	WakeMail       func()
 	// TrackMaxBytes bounds an imported GPX or KML file.
 	TrackMaxBytes int64
 	// AttachmentMaxBytes bounds one file attached to a place.
@@ -269,6 +330,14 @@ type Server struct {
 	mediaFiles     media.Store
 	mediaMaxBytes  int64
 	mediaTripQuota int64
+	storage        StorageService
+	mail           MailStore
+	invitations    InvitationStore
+	registrations  RegistrationStore
+	mailSender     mailer.Sender
+	mailConfigured bool
+	mailPublicURL  string
+	wakeMail       func()
 	trackMaxBytes  int64
 	// attachmentMaxBytes bounds one file attached to a place.
 	attachmentMaxBytes int64
@@ -321,7 +390,15 @@ type Server struct {
 
 	// passwordChecks counts the times each signed-in account typed its current
 	// password, so a session cannot be used to guess it.
-	passwordChecks *attemptLimiter
+	passwordChecks           *attemptLimiter
+	passwordResetsPerAccount *attemptLimiter
+	passwordResetsPerClient  *attemptLimiter
+	// registrationsPerAccount and registrationsPerClient bound registrations,
+	// which send mail, like password recovery; verificationsPerClient bounds
+	// the confirmation codes one client may try across every address.
+	registrationsPerAccount *attemptLimiter
+	registrationsPerClient  *attemptLimiter
+	verificationsPerClient  *attemptLimiter
 
 	signIns *signInLimits
 	docs    *docs.Handler
@@ -359,6 +436,14 @@ func NewServer(opts Options, logger *slog.Logger, deps Dependencies) *Server {
 		mediaFiles:         deps.MediaFiles,
 		mediaMaxBytes:      deps.MediaMaxBytes,
 		mediaTripQuota:     deps.MediaTripQuota,
+		storage:            deps.Storage,
+		mail:               deps.Mail,
+		invitations:        deps.Invitations,
+		registrations:      deps.Registrations,
+		mailSender:         deps.MailSender,
+		mailConfigured:     deps.MailConfigured,
+		mailPublicURL:      strings.TrimRight(deps.MailPublicURL, "/"),
+		wakeMail:           deps.WakeMail,
 		trackMaxBytes:      deps.TrackMaxBytes,
 		attachmentMaxBytes: deps.AttachmentMaxBytes,
 		previewWorkers:     previewWorkers,
@@ -388,7 +473,12 @@ func NewServer(opts Options, logger *slog.Logger, deps Dependencies) *Server {
 		workContext:    workContext,
 		restoreJobs:    make(map[uuid.UUID]*restoreJob),
 
-		passwordChecks: newAttemptLimiter(passwordChecksPerAccount, attemptWindow),
+		passwordChecks:           newAttemptLimiter(passwordChecksPerAccount, attemptWindow),
+		passwordResetsPerAccount: newAttemptLimiter(passwordResetsPerAccount, attemptWindow),
+		passwordResetsPerClient:  newAttemptLimiter(passwordResetsPerClient, attemptWindow),
+		registrationsPerAccount:  newAttemptLimiter(registrationsPerAccount, attemptWindow),
+		registrationsPerClient:   newAttemptLimiter(registrationsPerClient, attemptWindow),
+		verificationsPerClient:   newAttemptLimiter(verificationsPerClient, attemptWindow),
 
 		signIns: newSignInLimits(),
 		now:     time.Now,
@@ -447,6 +537,15 @@ func (s *Server) routes() http.Handler {
 		v1.Post("/auth/login", s.handleLogin)
 		v1.Post("/auth/refresh", s.handleRefresh)
 		v1.Post("/auth/logout", s.handleLogout)
+		v1.Post("/auth/register", s.handleRegister)
+		v1.Post("/auth/verify-email", s.handleVerifyEmail)
+		v1.Post("/auth/verify-email/resend", s.handleResendVerification)
+		v1.Post("/auth/password-reset/request", s.handleRequestPasswordReset)
+		v1.Post("/auth/password-reset/complete", s.handleCompletePasswordReset)
+		v1.Post("/invitations/user/preview", s.handlePreviewUserInvitation)
+		v1.Post("/invitations/user/accept", s.handleAcceptUserInvitation)
+		v1.Post("/invitations/trip/preview", s.handlePreviewTripInvitation)
+		v1.Post("/invitations/trip/register", s.handleRegisterTripInvitation)
 
 		// Reading by a share link needs no account: the token in X-Share-Token
 		// is the whole credential, and it grants reading and nothing else.
@@ -485,6 +584,7 @@ func (s *Server) routes() http.Handler {
 				member.Delete("/me/sessions/{sessionID}", s.handleRevokeSession)
 
 				member.Get("/users/search", s.handleSearchUsers)
+				member.Post("/invitations/trip/accept", s.handleAcceptTripInvitation)
 				member.Get("/geo/search", s.handleGeoSearch)
 				member.Get("/geo/reverse", s.handleGeoReverse)
 				member.Get("/geo/parse-link", s.handleParseLink)
@@ -515,6 +615,9 @@ func (s *Server) routes() http.Handler {
 				member.Post("/trips/{tripID}/members", s.handleAddMember)
 				member.Patch("/trips/{tripID}/members/{userID}", s.handleUpdateMember)
 				member.Delete("/trips/{tripID}/members/{userID}", s.handleRemoveMember)
+				member.Get("/trips/{tripID}/invitations", s.handleListTripInvitations)
+				member.Post("/trips/{tripID}/invitations", s.handleCreateTripInvitation)
+				member.Delete("/trips/{tripID}/invitations/{invitationID}", s.handleRevokeTripInvitation)
 				member.Get("/trips/{tripID}/share-links", s.handleListShareLinks)
 				member.Post("/trips/{tripID}/share-links", s.handleCreateShareLink)
 				member.Delete("/share-links/{linkID}", s.handleRevokeShareLink)
@@ -594,7 +697,14 @@ func (s *Server) routes() http.Handler {
 					admin.Post("/admin/users", s.handleCreateUser)
 					admin.Patch("/admin/users/{userID}", s.handleUpdateUser)
 					admin.Post("/admin/users/{userID}/reset-password", s.handleResetPassword)
+					admin.Get("/admin/user-invitations", s.handleListUserInvitations)
+					admin.Post("/admin/user-invitations", s.handleCreateUserInvitation)
+					admin.Delete("/admin/user-invitations/{invitationID}", s.handleRevokeUserInvitation)
 					admin.Get("/admin/status", s.handleStatus)
+					admin.Patch("/admin/storage", s.handleUpdateStorage)
+					admin.Patch("/admin/mail", s.handleUpdateMail)
+					admin.Post("/admin/mail/test", s.handleTestMail)
+					admin.Patch("/admin/registration", s.handleUpdateRegistration)
 					admin.Get("/admin/previews", s.handlePreviewStatus)
 
 					// Backups copy the whole service, so they are the

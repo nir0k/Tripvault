@@ -19,12 +19,18 @@ type userResponse struct {
 	IsAdmin            bool   `json:"is_admin"`
 	IsActive           bool   `json:"is_active"`
 	MustChangePassword bool   `json:"must_change_password"`
-	Locale             string `json:"locale"`
-	Theme              string `json:"theme"`
-	Units              string `json:"units"`
-	DateFormat         string `json:"date_format"`
-	TimeFormat         string `json:"time_format"`
-	DefaultCurrency    string `json:"default_currency"`
+	EmailNotifications bool   `json:"email_notifications"`
+	// EmailVerified is false for a self-registered account still waiting for
+	// its address to be confirmed, and DeleteAfter is when it will be deleted
+	// unless it is confirmed first.
+	EmailVerified   bool       `json:"email_verified"`
+	DeleteAfter     *time.Time `json:"delete_after"`
+	Locale          string     `json:"locale"`
+	Theme           string     `json:"theme"`
+	Units           string     `json:"units"`
+	DateFormat      string     `json:"date_format"`
+	TimeFormat      string     `json:"time_format"`
+	DefaultCurrency string     `json:"default_currency"`
 	// HasAvatar says whether the account wears a picture, and AvatarUpdatedAt
 	// when it last changed: the bytes are fetched separately, and this is what
 	// tells a client to fetch them again.
@@ -36,13 +42,21 @@ type userResponse struct {
 
 // newUserResponse maps an account onto its public representation.
 func newUserResponse(user domain.User) userResponse {
+	var deleteAfter *time.Time
+	if user.EmailUnverifiedSince != nil {
+		at := user.EmailUnverifiedSince.Add(domain.UnverifiedAccountLifetime)
+		deleteAfter = &at
+	}
 	return userResponse{
+		EmailVerified:      user.EmailUnverifiedSince == nil,
+		DeleteAfter:        deleteAfter,
 		ID:                 user.ID.String(),
 		Email:              user.Email,
 		DisplayName:        user.DisplayName,
 		IsAdmin:            user.IsAdmin,
 		IsActive:           user.IsActive,
 		MustChangePassword: user.MustChangePassword,
+		EmailNotifications: user.EmailNotifications,
 		Locale:             user.Locale,
 		Theme:              string(user.Theme),
 		Units:              string(user.Units.OrDefault()),
@@ -114,6 +128,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	session, err := s.auth.Login(r.Context(), email, body.Password, r.UserAgent())
+	if errors.Is(err, domain.ErrEmailNotVerified) {
+		s.writeEmailNotVerified(w, r, session.User)
+		return
+	}
 	if errors.Is(err, domain.ErrInvalidCredentials) {
 		s.signIns.failed(client)
 		s.writeError(w, r, http.StatusUnauthorized, "invalid_credentials", "The email or password is incorrect")
@@ -126,6 +144,23 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	s.signIns.succeeded(client, email)
 	writeJSON(w, s.logger, http.StatusOK, newSessionResponse(session))
+}
+
+// writeEmailNotVerified answers a right password of an account waiting for its
+// address to be confirmed: no session, and when another message may be sent.
+func (s *Server) writeEmailNotVerified(w http.ResponseWriter, r *http.Request, user domain.User) {
+	wait := time.Duration(0)
+	if s.registrations != nil {
+		var err error
+		wait, err = s.registrations.VerificationWait(r.Context(), user.ID, s.now(), verificationResendCooldown)
+		if err != nil {
+			s.internalError(w, r, "read confirmation time", err)
+			return
+		}
+	}
+	s.writeErrorDetails(w, r, http.StatusForbidden, "email_not_verified",
+		"Confirm your email address before signing in",
+		map[string]any{"resend_available_in": resendWaitSeconds(wait)})
 }
 
 // handleRefresh exchanges a refresh token for a new token pair.

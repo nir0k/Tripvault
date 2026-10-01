@@ -104,16 +104,34 @@ export async function resetPacking(tripId: string): Promise<PackingList> {
 }
 
 /**
- * downloadPackingPDF saves the list as a checklist to print, every box empty.
- * A read-only link has no account for the server to read the language from, so
- * it travels with the request.
+ * fetchPackingPDF reads the list as a checklist to print, every box empty. A
+ * compact one is fitted on one page when it can be. A read-only link has no
+ * account for the server to read the language from, so it travels with the
+ * request.
  */
-export async function downloadPackingPDF(tripId: string | null, language: string): Promise<void> {
+async function fetchPackingPDF(tripId: string | null, language: string, compact: boolean): Promise<{ body: Blob; name: string }> {
   const url = tripId === null ? '/api/v1/shared/packing/pdf' : tripPath(tripId, '/pdf')
-  const response = await http.get<Blob>(url, {
-    params: tripId === null ? { lang: language } : {},
-    responseType: 'blob',
-    timeout: PDF_TIMEOUT_MS,
-  })
-  saveBlob(response.data, filenameFrom(response.headers['content-disposition'], 'packing.pdf'))
+  const params: Record<string, string> = tripId === null ? { lang: language } : {}
+  if (compact) {
+    params.compact = 'true'
+  }
+  const response = await http.get<Blob>(url, { params, responseType: 'blob', timeout: PDF_TIMEOUT_MS })
+  return { body: response.data, name: filenameFrom(response.headers['content-disposition'], 'packing.pdf') }
+}
+
+/** downloadPackingPDF saves the list as a checklist to print, full-size or compact. */
+export async function downloadPackingPDF(tripId: string | null, language: string, compact: boolean): Promise<void> {
+  const { body, name } = await fetchPackingPDF(tripId, language, compact)
+  saveBlob(body, name)
+}
+
+/**
+ * downloadPackingImage saves the compact checklist as a JPEG, to send or keep
+ * on a phone. The picture is drawn in the browser from the same PDF, so the two
+ * never differ.
+ */
+export async function downloadPackingImage(tripId: string | null, language: string): Promise<void> {
+  const { body, name } = await fetchPackingPDF(tripId, language, true)
+  const { pdfToJpeg } = await import('@/utils/pdfImage')
+  saveBlob(await pdfToJpeg(body), name.replace(/\.pdf$/i, '') + '.jpg')
 }

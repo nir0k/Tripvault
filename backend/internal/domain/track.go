@@ -31,6 +31,8 @@ type Track struct {
 	OriginalName string
 	// Format is the kind of file it was: "gpx" or "kml".
 	Format string
+	// FileSize is the uploaded source size charged to the instance allowance.
+	FileSize int64
 	// Geometry is the line in the encoded polyline format legs use.
 	Geometry string
 	// DistanceM is how far the day went, over every point of the file.

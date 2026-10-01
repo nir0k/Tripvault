@@ -81,15 +81,16 @@ func Seed(ctx context.Context, users UserStore, opts Options, logger *slog.Logge
 	}
 
 	user, err := users.Create(ctx, domain.User{
-		ID:              uuid.Must(uuid.NewV7()),
-		Email:           email,
-		DisplayName:     name,
-		PasswordHash:    hash,
-		IsAdmin:         true,
-		IsActive:        true,
-		Theme:           domain.ThemeAuto,
-		Units:           domain.UnitsKilometres,
-		DefaultCurrency: domain.DefaultCurrency,
+		ID:                 uuid.Must(uuid.NewV7()),
+		Email:              email,
+		DisplayName:        name,
+		PasswordHash:       hash,
+		IsAdmin:            true,
+		IsActive:           true,
+		EmailNotifications: true,
+		Theme:              domain.ThemeAuto,
+		Units:              domain.UnitsKilometres,
+		DefaultCurrency:    domain.DefaultCurrency,
 	})
 	if errors.Is(err, domain.ErrAlreadyExists) {
 		// Another replica seeded first; the instance has its administrator.

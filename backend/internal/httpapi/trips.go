@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/nir0k/tripvault/backend/internal/domain"
+	"github.com/nir0k/tripvault/backend/internal/mailer"
 	"github.com/nir0k/tripvault/backend/internal/media"
 )
 
@@ -637,6 +638,9 @@ func (s *Server) handleAddMember(w http.ResponseWriter, r *http.Request) {
 		s.writeDomainError(w, r, "add member", err)
 		return
 	}
+	if user, err := s.users.GetByID(r.Context(), userID); err == nil {
+		s.queueNotificationMail(r, user, mailer.TripMemberAdded(user.Locale, trip.Title))
+	}
 	writeJSON(w, s.logger, http.StatusCreated, newMemberResponse(member))
 }
 
@@ -669,6 +673,9 @@ func (s *Server) handleUpdateMember(w http.ResponseWriter, r *http.Request) {
 		s.writeDomainError(w, r, "update member", err)
 		return
 	}
+	if user, err := s.users.GetByID(r.Context(), userID); err == nil {
+		s.queueNotificationMail(r, user, mailer.TripMemberRoleChanged(user.Locale, trip.Title, role))
+	}
 	writeJSON(w, s.logger, http.StatusOK, newMemberResponse(member))
 }
 
@@ -682,9 +689,13 @@ func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	user, userErr := s.users.GetByID(r.Context(), userID)
 	if err := s.trips.RemoveMember(r.Context(), trip.ID, userID); err != nil {
 		s.writeDomainError(w, r, "remove member", err)
 		return
+	}
+	if userErr == nil {
+		s.queueNotificationMail(r, user, mailer.TripMemberRemoved(user.Locale, trip.Title))
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

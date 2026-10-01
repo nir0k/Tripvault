@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nir0k/tripvault/backend/internal/domain"
+	"github.com/nir0k/tripvault/backend/internal/mailer"
 )
 
 // handleGetMe returns the signed-in account.
@@ -18,13 +19,14 @@ func (s *Server) handleGetMe(w http.ResponseWriter, r *http.Request) {
 // the theme switch and the language picker can each change their own setting
 // without sending - and overwriting - the other.
 type updateMeRequest struct {
-	DisplayName     *string `json:"display_name"`
-	Locale          *string `json:"locale"`
-	Theme           *string `json:"theme"`
-	Units           *string `json:"units"`
-	DateFormat      *string `json:"date_format"`
-	TimeFormat      *string `json:"time_format"`
-	DefaultCurrency *string `json:"default_currency"`
+	DisplayName        *string `json:"display_name"`
+	Locale             *string `json:"locale"`
+	Theme              *string `json:"theme"`
+	Units              *string `json:"units"`
+	DateFormat         *string `json:"date_format"`
+	TimeFormat         *string `json:"time_format"`
+	DefaultCurrency    *string `json:"default_currency"`
+	EmailNotifications *bool   `json:"email_notifications"`
 }
 
 // handleUpdateMe changes the signed-in account's own settings. They live on the
@@ -38,13 +40,14 @@ func (s *Server) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	profile := domain.Profile{
-		DisplayName:     user.DisplayName,
-		Locale:          user.Locale,
-		Theme:           user.Theme,
-		Units:           user.Units.OrDefault(),
-		DateFormat:      user.DateFormat.OrDefault(),
-		TimeFormat:      user.TimeFormat.OrDefault(),
-		DefaultCurrency: user.DefaultCurrency,
+		DisplayName:        user.DisplayName,
+		Locale:             user.Locale,
+		Theme:              user.Theme,
+		Units:              user.Units.OrDefault(),
+		DateFormat:         user.DateFormat.OrDefault(),
+		TimeFormat:         user.TimeFormat.OrDefault(),
+		DefaultCurrency:    user.DefaultCurrency,
+		EmailNotifications: user.EmailNotifications,
 	}
 	if body.DisplayName != nil {
 		profile.DisplayName = strings.TrimSpace(*body.DisplayName)
@@ -66,6 +69,9 @@ func (s *Server) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.DefaultCurrency != nil {
 		profile.DefaultCurrency = strings.ToUpper(strings.TrimSpace(*body.DefaultCurrency))
+	}
+	if body.EmailNotifications != nil {
+		profile.EmailNotifications = *body.EmailNotifications
 	}
 	if err := profile.Validate(); err != nil {
 		s.writeDomainError(w, r, "validate profile", err)
@@ -111,6 +117,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		s.writeDomainError(w, r, "change password", err)
 		return
 	}
+	s.queueSecurityMail(r, p.user, mailer.PasswordChangedFromProfile(p.user.Locale))
 	w.WriteHeader(http.StatusNoContent)
 }
 

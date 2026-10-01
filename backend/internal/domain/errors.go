@@ -19,6 +19,10 @@ var (
 	// distinguish an unknown account, a deactivated one and a wrong password, so
 	// the endpoint cannot be used to learn which addresses are registered.
 	ErrInvalidCredentials = errors.New("invalid credentials")
+	// ErrEmailNotVerified reports a right password for an account that
+	// registered itself and has not confirmed its address yet. It is returned
+	// only after the password matched, so it reveals nothing to a guesser.
+	ErrEmailNotVerified = errors.New("email address is not verified")
 	// ErrTokenInvalid reports a token that is malformed, expired, revoked or
 	// signed with the wrong key.
 	ErrTokenInvalid = errors.New("token is invalid")

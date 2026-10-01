@@ -71,6 +71,17 @@ services:
       # it like everything else. The limits are the production defaults.
       TRIPVAULT_MEDIA_MAX_SIZE_MB: ${TRIPVAULT_MEDIA_MAX_SIZE_MB:-25}
       TRIPVAULT_MEDIA_TRIP_QUOTA_MB: ${TRIPVAULT_MEDIA_TRIP_QUOTA_MB:-2048}
+      TRIPVAULT_STORAGE_QUOTA_MB: ${TRIPVAULT_STORAGE_QUOTA_MB:-0}
+      # Empty mail settings keep delivery unavailable on the disposable stand;
+      # point them at a local SMTP catcher to exercise the complete workflow.
+      TRIPVAULT_MAIL_HOST: ${TRIPVAULT_MAIL_HOST:-}
+      TRIPVAULT_MAIL_PORT: ${TRIPVAULT_MAIL_PORT:-587}
+      TRIPVAULT_MAIL_USERNAME: ${TRIPVAULT_MAIL_USERNAME:-}
+      TRIPVAULT_MAIL_PASSWORD: ${TRIPVAULT_MAIL_PASSWORD:-}
+      TRIPVAULT_MAIL_TLS: ${TRIPVAULT_MAIL_TLS:-starttls}
+      TRIPVAULT_MAIL_FROM_ADDRESS: ${TRIPVAULT_MAIL_FROM_ADDRESS:-}
+      TRIPVAULT_MAIL_FROM_NAME: ${TRIPVAULT_MAIL_FROM_NAME:-Tripvault}
+      TRIPVAULT_MAIL_PUBLIC_URL: ${TRIPVAULT_MAIL_PUBLIC_URL:-}
       # The tiles the browser draws maps with. The stand uses the same default
       # as a real deployment, and the same variable changes it: a network that
       # blocks one tile server needs another, not a patched compose file.

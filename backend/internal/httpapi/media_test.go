@@ -459,6 +459,20 @@ func TestUploadRefusesWhatItCannotServe(t *testing.T) {
 	}
 }
 
+// TestInstanceStorageQuota checks the operator's shared allowance refuses an
+// otherwise valid upload with its own stable API error.
+func TestInstanceStorageQuota(t *testing.T) {
+	s, trips, _, _ := newMediaServer(domain.RoleEditor)
+	s.storage = &fakeStorage{
+		usage:      domain.StorageUsage{TripQuotaBytes: 2 * 1024 * 1024},
+		reserveErr: domain.ErrStorageQuota,
+	}
+	recorder := upload(t, s, trips.trip.ID.String(), "sea.png", picture(t, 20, 20), false)
+	if recorder.Code != http.StatusInsufficientStorage || errorCode(t, recorder) != "storage_quota" {
+		t.Fatalf("an upload beyond the instance allowance: %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 // TestUploadBoundsTheWholeRequest checks an upload carries a bounded number of
 // files, and that parts which are not files cannot outgrow what its files may
 // add up to.

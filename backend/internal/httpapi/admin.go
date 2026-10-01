@@ -10,6 +10,7 @@ import (
 
 	"github.com/nir0k/tripvault/backend/internal/auth"
 	"github.com/nir0k/tripvault/backend/internal/domain"
+	"github.com/nir0k/tripvault/backend/internal/mailer"
 	"github.com/nir0k/tripvault/backend/internal/routing"
 	"github.com/nir0k/tripvault/backend/internal/telemetry"
 )
@@ -83,6 +84,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		IsAdmin:            body.IsAdmin,
 		IsActive:           true,
 		MustChangePassword: true,
+		EmailNotifications: true,
 		Theme:              domain.ThemeAuto,
 		Units:              domain.UnitsKilometres,
 		DefaultCurrency:    domain.DefaultCurrency,
@@ -114,6 +116,11 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if !s.decodeJSON(w, r, &body) {
 		return
 	}
+	previous, err := s.users.GetByID(r.Context(), userID)
+	if err != nil {
+		s.writeDomainError(w, r, "read changed user", err)
+		return
+	}
 
 	changes := domain.UserChanges{IsAdmin: body.IsAdmin, IsActive: body.IsActive}
 	if body.DisplayName != nil {
@@ -131,11 +138,22 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.notifyAccountAdministration(r, previous, updated)
 	s.audit(r.Context(), "changed an account", updated.ID)
 	writeJSON(w, s.logger, http.StatusOK, adminUserResponse{
 		userResponse: newUserResponse(updated),
 		IsSelf:       updated.ID == principalFrom(r.Context()).user.ID,
 	})
+}
+
+// notifyAccountAdministration reports changes to account access even when the
+// recipient disabled ordinary event notifications.
+func (s *Server) notifyAccountAdministration(r *http.Request, previous, updated domain.User) {
+	content := mailer.AccountAccessChanged(updated.Locale, previous.IsActive, updated.IsActive, previous.IsAdmin, updated.IsAdmin)
+	if content.Subject == "" {
+		return
+	}
+	s.queueSecurityMail(r, updated, content)
 }
 
 // resetPasswordRequest is the body of the password reset.
@@ -167,6 +185,9 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 		s.writeDomainError(w, r, "reset password", err)
 		return
 	}
+	if user, err := s.users.GetByID(r.Context(), userID); err == nil {
+		s.queueSecurityMail(r, user, mailer.PasswordResetByAdministrator(user.Locale))
+	}
 
 	s.audit(r.Context(), "reset a password", userID)
 	w.WriteHeader(http.StatusNoContent)
@@ -179,6 +200,8 @@ type statusResponse struct {
 	Users         statusUsersResponse   `json:"users"`
 	Routing       statusRoutingResponse `json:"routing"`
 	Geocoding     statusRoutingResponse `json:"geocoding"`
+	Storage       storageResponse       `json:"storage"`
+	Mail          mailStatusResponse    `json:"mail"`
 }
 
 // statusRoutingResponse describes an external provider and its cache.
@@ -214,7 +237,19 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "count users", err)
 		return
 	}
+	storage := domain.StorageUsage{TripQuotaBytes: s.mediaTripQuota}
+	if s.storage != nil {
+		if storage, err = s.storage.Usage(r.Context()); err != nil {
+			s.internalError(w, r, "measure storage", err)
+			return
+		}
+	}
 	var routingStats, geocodeStats routing.UsageStats
+	mailStatus, err := s.mailStatus(r)
+	if err != nil {
+		s.internalError(w, r, "read mail status", err)
+		return
+	}
 	if s.routingStats != nil {
 		if routingStats, err = s.routingStats.Stats(r.Context(), s.now()); err != nil {
 			s.internalError(w, r, "read routing stats", err)
@@ -231,6 +266,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Version:       telemetry.Build().Version,
 		SchemaVersion: version,
 		Users:         statusUsersResponse{Total: stats.Total, Active: stats.Active, Admins: stats.Admins},
+		Storage:       newStorageResponse(storage),
+		Mail:          mailStatus,
 		Routing: statusRoutingResponse{
 			Provider:      s.routingProvider,
 			Configured:    s.routing != nil && s.routing.Enabled(),

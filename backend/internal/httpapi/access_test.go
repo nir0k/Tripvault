@@ -22,9 +22,22 @@ type fakeAuth struct {
 	user domain.User
 }
 
-// Login is not used by these tests.
-func (f *fakeAuth) Login(context.Context, string, string, string) (auth.Session, error) {
+// Login opens no session; it reports only an unconfirmed account given its
+// right password, which is all the registration tests need of it.
+func (f *fakeAuth) Login(ctx context.Context, email, password, _ string) (auth.Session, error) {
+	user, err := f.Credentials(ctx, email, password)
+	if err == nil && user.EmailUnverifiedSince != nil {
+		return auth.Session{User: user}, domain.ErrEmailNotVerified
+	}
 	return auth.Session{}, domain.ErrInvalidCredentials
+}
+
+// Credentials accepts the account's own address with fakePassword.
+func (f *fakeAuth) Credentials(_ context.Context, email, password string) (domain.User, error) {
+	if email != f.user.Email || password != fakePassword {
+		return domain.User{}, domain.ErrInvalidCredentials
+	}
+	return f.user, nil
 }
 
 // Refresh is not used by these tests.
@@ -131,7 +144,7 @@ func (fakeUsers) Update(context.Context, uuid.UUID, domain.UserChanges) (domain.
 // UpdateProfile echoes the profile back.
 func (fakeUsers) UpdateProfile(_ context.Context, id uuid.UUID, p domain.Profile) (domain.User, error) {
 	return domain.User{ID: id, DisplayName: p.DisplayName, Locale: p.Locale, Theme: p.Theme,
-		DefaultCurrency: p.DefaultCurrency}, nil
+		DefaultCurrency: p.DefaultCurrency, EmailNotifications: p.EmailNotifications}, nil
 }
 
 // ResetPassword is not used by these tests.
@@ -257,8 +270,9 @@ func TestErrorMapping(t *testing.T) {
 		t.Error("an API response carries no security headers")
 	}
 
-	recorder = send(s, http.MethodPatch, "/api/v1/me", "good", `{"default_currency":"isk","locale":"ru"}`)
-	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"default_currency":"ISK"`) {
+	recorder = send(s, http.MethodPatch, "/api/v1/me", "good", `{"default_currency":"isk","locale":"ru","email_notifications":true}`)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"default_currency":"ISK"`) ||
+		!strings.Contains(recorder.Body.String(), `"email_notifications":true`) {
 		t.Errorf("profile update: %d %s", recorder.Code, recorder.Body.String())
 	}
 }

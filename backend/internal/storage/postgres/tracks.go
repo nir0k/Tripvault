@@ -23,14 +23,14 @@ import (
 // report with a dozen long recordings reads no faster or slower for them.
 
 var trackColumns = `t.id, t.document_id, t.item_id, t.original_name, t.format, t.geometry, t.distance_m,
-	t.point_count, t.ascent_m, t.descent_m, t.grades, t.speed_kmh, t.started_at, t.ended_at, t.created_at`
+	t.point_count, t.ascent_m, t.descent_m, t.grades, t.speed_kmh, t.started_at, t.ended_at, t.file_size, t.created_at`
 
 // scanTrack reads one row in the order of trackColumns.
 func scanTrack(row pgx.Row) (domain.Track, error) {
 	var t domain.Track
 	err := row.Scan(&t.ID, &t.DocumentID, &t.ItemID, &t.OriginalName, &t.Format, &t.Geometry,
 		&t.DistanceM, &t.PointCount, &t.AscentM, &t.DescentM, &t.Grades, &t.SpeedKmh, &t.StartedAt, &t.EndedAt,
-		&t.CreatedAt)
+		&t.FileSize, &t.CreatedAt)
 	return t, err
 }
 
@@ -44,37 +44,57 @@ func scanTrack(row pgx.Row) (domain.Track, error) {
 //   - ctx: context bounding the transaction.
 //   - track: the parsed track with its ID, document and place set.
 //   - file: the uploaded file, stored compressed for downloading.
+//   - quota: the most file data its trip may keep; zero means no limit.
 //
 // Returns:
 //   - the track as stored.
 //   - domain.ErrNotFound when the place is not part of the document.
-func (r *DocumentRepository) SaveTrack(ctx context.Context, track domain.Track, file []byte) (domain.Track, error) {
+//   - domain.ErrMediaQuota when the replacement does not fit the trip.
+func (r *DocumentRepository) SaveTrack(ctx context.Context, track domain.Track, file []byte,
+	quota int64) (domain.Track, error) {
 	compressed, err := compress(file)
 	if err != nil {
 		return domain.Track{}, err
 	}
+	track.FileSize = int64(len(file))
 	var saved domain.Track
 	err = pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
 		document, _, err := lockDocument(ctx, tx, track.DocumentID)
 		if err != nil {
 			return err
 		}
+		if quota > 0 {
+			used, err := tripUsedBytes(ctx, tx, document.TripID)
+			if err != nil {
+				return err
+			}
+			var previous int64
+			if err := tx.QueryRow(ctx,
+				`SELECT coalesce((SELECT file_size FROM tracks WHERE item_id = $1), 0)`, track.ItemID).
+				Scan(&previous); err != nil {
+				return fmt.Errorf("measure replaced track: %w", err)
+			}
+			if used-previous+track.FileSize > quota {
+				return domain.ErrMediaQuota
+			}
+		}
 		saved, err = oneRow(scanTrack, tx.QueryRow(ctx,
 			`INSERT INTO tracks AS t (id, document_id, item_id, original_name, format, geometry, distance_m,
 			                          point_count, ascent_m, descent_m, file_gz, started_at, ended_at, climb_version,
-			                          grades, speed_kmh)
-			 SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+			                          grades, speed_kmh, file_size)
+			 SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
 			 WHERE EXISTS (SELECT 1 FROM items WHERE id = $3 AND document_id = $2 AND kind <> 'stay_anchor')
 			 ON CONFLICT (item_id) DO UPDATE
 			   SET original_name = excluded.original_name, format = excluded.format, geometry = excluded.geometry,
 			       distance_m = excluded.distance_m, point_count = excluded.point_count,
 			       ascent_m = excluded.ascent_m, descent_m = excluded.descent_m, file_gz = excluded.file_gz,
 			       started_at = excluded.started_at, ended_at = excluded.ended_at,
-			       climb_version = excluded.climb_version, grades = excluded.grades, created_at = now()
+			       climb_version = excluded.climb_version, grades = excluded.grades,
+			       file_size = excluded.file_size, created_at = now()
 			 RETURNING `+trackColumns,
 			track.ID, track.DocumentID, track.ItemID, track.OriginalName, track.Format, track.Geometry,
 			track.DistanceM, track.PointCount, track.AscentM, track.DescentM, compressed,
-			track.StartedAt, track.EndedAt, track.ClimbVersion, track.Grades, track.SpeedKmh), "save track")
+			track.StartedAt, track.EndedAt, track.ClimbVersion, track.Grades, track.SpeedKmh, track.FileSize), "save track")
 		if err != nil {
 			return err
 		}

@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math/big"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -217,4 +219,67 @@ func NewShareToken() (string, []byte, error) {
 //   - the hash used to find the link.
 func HashShareToken(token string) []byte {
 	return hashToken(token)
+}
+
+// NewActionToken - generates an opaque credential for a one-time account action.
+//
+// Returns:
+//   - the plaintext token sent to the account's email address.
+//   - its hash, the only form kept in the action's credential record.
+//   - an error if the system random source is unavailable.
+func NewActionToken() (string, []byte, error) {
+	return newOpaqueToken(domain.ShareTokenBytes)
+}
+
+// HashActionToken - derives the database lookup hash of a one-time action token.
+//
+// Arguments:
+//   - token: the plaintext credential supplied by the browser.
+//
+// Returns:
+//   - the lookup hash.
+func HashActionToken(token string) []byte {
+	return hashToken(token)
+}
+
+// VerificationCodeLength is how many digits the code in a confirmation message has.
+const VerificationCodeLength = 6
+
+// NewVerificationCode - generates the short code a person types to confirm their address.
+//
+// Arguments:
+//   - email: the normalised address the code confirms; it salts the digest.
+//
+// Returns:
+//   - the code as digits.
+//   - its digest for HashVerificationCode comparisons.
+//   - an error if the system random source fails.
+func NewVerificationCode(email string) (string, []byte, error) {
+	limit := big.NewInt(1)
+	for range VerificationCodeLength {
+		limit.Mul(limit, big.NewInt(10))
+	}
+	n, err := rand.Int(rand.Reader, limit)
+	if err != nil {
+		return "", nil, fmt.Errorf("generate verification code: %w", err)
+	}
+	code := fmt.Sprintf("%0*d", VerificationCodeLength, n)
+	return code, HashVerificationCode(email, code), nil
+}
+
+// HashVerificationCode - derives the stored digest of a confirmation code.
+//
+// The address is part of the digest, so equal codes of two accounts differ in
+// the database. A code has few possibilities, which is why its wrong guesses
+// are counted rather than relying on the digest.
+//
+// Arguments:
+//   - email: the normalised address the code confirms.
+//   - code: the code as typed; spaces are ignored.
+//
+// Returns:
+//   - the digest.
+func HashVerificationCode(email, code string) []byte {
+	code = strings.Join(strings.Fields(code), "")
+	return hashToken(strings.ToLower(email) + "\x00" + code)
 }

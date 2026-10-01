@@ -137,11 +137,48 @@ func (s *Service) CheckPassword(ctx context.Context, user domain.User, password 
 	return nil
 }
 
+// Credentials - checks an email and password without opening a session.
+//
+// An unknown address is checked against a dummy hash, so it costs the same
+// Argon2id work as a wrong password and is answered with the same error.
+//
+// Arguments:
+//   - ctx: context bounding the operation.
+//   - email: the address to check.
+//   - password: the plaintext password.
+//
+// Returns:
+//   - the account the pair opens, whether or not it is active.
+//   - domain.ErrInvalidCredentials when the address is unknown or the password wrong.
+//   - domain.ErrBusy when the server has no room to check the password now.
+func (s *Service) Credentials(ctx context.Context, email, password string) (domain.User, error) {
+	user, err := s.users.GetByEmail(ctx, email)
+	if errors.Is(err, domain.ErrNotFound) {
+		if _, err := s.verifyPassword(ctx, dummyPasswordHash(), password); errors.Is(err, domain.ErrBusy) {
+			return domain.User{}, err
+		}
+		return domain.User{}, domain.ErrInvalidCredentials
+	}
+	if err != nil {
+		return domain.User{}, err
+	}
+	ok, err := s.verifyPassword(ctx, user.PasswordHash, password)
+	if err != nil {
+		return domain.User{}, err
+	}
+	if !ok {
+		return domain.User{}, domain.ErrInvalidCredentials
+	}
+	return user, nil
+}
+
 // Login - exchanges an email and password for a new session.
 //
 // An unknown address, a deactivated account and a wrong password produce the
 // same error after the same Argon2id work, so neither the response nor its
-// timing reveals which addresses are registered or active.
+// timing reveals which addresses are registered or active. A self-registered
+// account whose address is not confirmed is told so, but only once its
+// password matched.
 //
 // Arguments:
 //   - ctx: context bounding the operation.
@@ -152,24 +189,21 @@ func (s *Service) CheckPassword(ctx context.Context, user domain.User, password 
 // Returns:
 //   - the new session.
 //   - domain.ErrInvalidCredentials when the pair does not open an active account.
+//   - domain.ErrEmailNotVerified when it opens a self-registered account that is
+//     waiting for its address to be confirmed; the session then carries only
+//     that account.
 //   - domain.ErrBusy when the server has no room to check the password now.
 func (s *Service) Login(ctx context.Context, email, password, userAgent string) (Session, error) {
-	user, err := s.users.GetByEmail(ctx, email)
-	if errors.Is(err, domain.ErrNotFound) {
-		if _, err := s.verifyPassword(ctx, dummyPasswordHash(), password); errors.Is(err, domain.ErrBusy) {
-			return Session{}, err
-		}
-		return Session{}, domain.ErrInvalidCredentials
-	}
+	user, err := s.Credentials(ctx, email, password)
 	if err != nil {
 		return Session{}, err
 	}
-
-	ok, err := s.verifyPassword(ctx, user.PasswordHash, password)
-	if err != nil {
-		return Session{}, err
+	if !user.IsActive && user.EmailUnverifiedSince != nil {
+		// The account comes back without a session, so the caller can tell
+		// its owner when another confirmation message may be sent.
+		return Session{User: user}, domain.ErrEmailNotVerified
 	}
-	if !ok || !user.IsActive {
+	if !user.IsActive {
 		return Session{}, domain.ErrInvalidCredentials
 	}
 

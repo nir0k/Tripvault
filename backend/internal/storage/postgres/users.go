@@ -32,14 +32,14 @@ func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
 
 // userColumns is the shared select list, kept in step with scanUser.
 const userColumns = `u.id, u.email, u.display_name, u.password_hash, u.is_admin, u.is_active,
-	u.must_change_password, coalesce(u.locale, ''), u.theme, u.units, u.date_format, u.time_format,
+	u.must_change_password, u.email_notifications, u.email_unverified_since, coalesce(u.locale, ''), u.theme, u.units, u.date_format, u.time_format,
 	u.default_currency, u.avatar_key, u.avatar_updated_at, u.last_login_at, u.created_at, u.updated_at`
 
 // scanUser reads one row in the order of userColumns.
 func scanUser(row pgx.Row) (domain.User, error) {
 	var u domain.User
 	err := row.Scan(&u.ID, &u.Email, &u.DisplayName, &u.PasswordHash, &u.IsAdmin, &u.IsActive,
-		&u.MustChangePassword, &u.Locale, &u.Theme, &u.Units, &u.DateFormat, &u.TimeFormat,
+		&u.MustChangePassword, &u.EmailNotifications, &u.EmailUnverifiedSince, &u.Locale, &u.Theme, &u.Units, &u.DateFormat, &u.TimeFormat,
 		&u.DefaultCurrency, &u.AvatarKey, &u.AvatarUpdatedAt, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
 	return u, err
 }
@@ -96,11 +96,11 @@ func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (domain.User
 func (r *UserRepository) Create(ctx context.Context, user domain.User) (domain.User, error) {
 	row := r.pool.QueryRow(ctx,
 		`INSERT INTO users AS u (id, email, display_name, password_hash, is_admin, is_active,
-		                         must_change_password, locale, theme, units, default_currency)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, nullif($8, ''), $9, $10, $11)
+		                         must_change_password, email_notifications, locale, theme, units, default_currency)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, nullif($9, ''), $10, $11, $12)
 		 RETURNING `+userColumns,
 		user.ID, user.Email, user.DisplayName, user.PasswordHash, user.IsAdmin, user.IsActive,
-		user.MustChangePassword, user.Locale, user.Theme, user.Units, user.DefaultCurrency)
+		user.MustChangePassword, user.EmailNotifications, user.Locale, user.Theme, user.Units, user.DefaultCurrency)
 
 	created, err := scanUser(row)
 	if isUniqueViolation(err) {
@@ -205,11 +205,12 @@ func (r *UserRepository) UpdateProfile(ctx context.Context, id uuid.UUID, profil
 	return oneUser(r.pool.QueryRow(ctx,
 		`UPDATE users AS u
 		 SET display_name = $2, locale = nullif($3, ''), theme = $4, units = $5,
-		     date_format = $6, time_format = $7, default_currency = $8, updated_at = now()
+		     date_format = $6, time_format = $7, default_currency = $8,
+		     email_notifications = $9, updated_at = now()
 		 WHERE u.id = $1
 		 RETURNING `+userColumns,
 		id, profile.DisplayName, profile.Locale, profile.Theme, profile.Units,
-		profile.DateFormat, profile.TimeFormat, profile.DefaultCurrency), "update profile")
+		profile.DateFormat, profile.TimeFormat, profile.DefaultCurrency, profile.EmailNotifications), "update profile")
 }
 
 // SetAvatar - stores where an account's picture lives and when it was put there.
@@ -427,6 +428,9 @@ func (r *UserRepository) Update(ctx context.Context, id uuid.UUID, changes domai
 			 SET display_name = coalesce($2, u.display_name),
 			     is_admin     = coalesce($3, u.is_admin),
 			     is_active    = coalesce($4, u.is_active),
+			     -- An administrator who activates a self-registered account
+			     -- vouches for its address, so it is no longer waiting for one.
+			     email_unverified_since = CASE WHEN $4::boolean THEN NULL ELSE u.email_unverified_since END,
 			     updated_at   = now()
 			 WHERE u.id = $1
 			 RETURNING `+userColumns,

@@ -462,14 +462,19 @@ func writeDay(doc *document, text labels, report Report, day domain.Day, index i
 
 // writeDayStory writes the day's map in a card beside the card of its story,
 // and under them the moment the day is remembered by. A story too long to sit
-// beside the map goes under it across the page; a day without a map gives its
-// story the whole width.
+// beside the map goes under it across the page, and the moment of the day
+// takes the place beside the map instead; with neither beside it, the map
+// spans the page. A day without a map gives its story the whole width.
 func writeDayStory(doc *document, text labels, report Report, day domain.Day, summary domain.DaySummary,
 	places, index int) error {
 	pdf := doc.pdf
 	m, mapped := report.Maps[day.ID]
+	wide := mapped && wideDayMap(doc, day)
 	column := (contentWidth - journalGap) / 2
-	inner := column - 2*journalPadding
+	if wide {
+		column = contentWidth
+	}
+	inner := journalMapInner(wide)
 	facts := []string{}
 	if places > 0 {
 		facts = append(facts, text.count(places, text.placeWord))
@@ -481,7 +486,10 @@ func writeDayStory(doc *document, text labels, report Report, day domain.Day, su
 	var mapBottom float64
 	top := pdf.GetY()
 	story := day.NotesMD
-	beside := mapped && markdownHeight(doc, story, inner) < mapHeightAt(m, inner)+40
+	beside := mapped && !wide && storyBeside(doc, story)
+	// momentBeside puts the moment of the day in the place beside the map
+	// that the story, written under it, left empty.
+	momentBeside := mapped && !wide && !beside && day.Highlight != ""
 	if mapped {
 		height := journalPadding + 7 + mapHeightAt(m, inner) + 5 + journalPadding
 		if len(facts) > 0 {
@@ -500,13 +508,17 @@ func writeDayStory(doc *document, text labels, report Report, day domain.Day, su
 			doc.label(strings.Join(facts, dot), marginLeft+journalPadding, bottom+1, 7, inkColor)
 		}
 		mapBottom = top + height
+		if momentBeside {
+			pdf.SetY(top)
+			doc.callout(text.highlight, day.Highlight, marginLeft+column+journalGap, column)
+		}
 		if !beside {
 			pdf.SetXY(marginLeft, mapBottom+journalGap)
 		}
 	}
 
 	storyLeft, storyWidth := marginLeft, contentWidth
-	if mapped && beside {
+	if beside {
 		storyLeft, storyWidth = marginLeft+column+journalGap, column
 		pdf.SetY(top)
 	}
@@ -522,10 +534,10 @@ func writeDayStory(doc *document, text labels, report Report, day domain.Day, su
 		doc.label(strings.Join(facts, dot), marginLeft, pdf.GetY(), 7.5, mutedColor)
 		pdf.SetY(pdf.GetY() + 6)
 	}
-	if day.Highlight != "" {
+	if day.Highlight != "" && !momentBeside {
 		doc.callout(text.highlight, day.Highlight, storyLeft, storyWidth)
 	}
-	if mapped && beside && pdf.GetY() < mapBottom+journalGap {
+	if beside && pdf.GetY() < mapBottom+journalGap {
 		pdf.SetXY(marginLeft, mapBottom+journalGap)
 	}
 	pdf.SetX(marginLeft)

@@ -31,12 +31,14 @@ import (
 	"github.com/nir0k/tripvault/backend/internal/domain"
 	"github.com/nir0k/tripvault/backend/internal/geocoding"
 	"github.com/nir0k/tripvault/backend/internal/httpapi"
+	"github.com/nir0k/tripvault/backend/internal/mailer"
 	"github.com/nir0k/tripvault/backend/internal/media"
 	"github.com/nir0k/tripvault/backend/internal/routing"
 	"github.com/nir0k/tripvault/backend/internal/secrets"
 	"github.com/nir0k/tripvault/backend/internal/staticmap"
 	"github.com/nir0k/tripvault/backend/internal/storage/migrations"
 	"github.com/nir0k/tripvault/backend/internal/storage/postgres"
+	"github.com/nir0k/tripvault/backend/internal/storagequota"
 	"github.com/nir0k/tripvault/backend/internal/telemetry"
 )
 
@@ -215,6 +217,22 @@ func serve() error {
 	if err != nil {
 		return fmt.Errorf("open media store: %w", err)
 	}
+	storageRepository := postgres.NewStorageRepository(pool, cfg.Media.TripQuotaBytes())
+	if _, err := storageRepository.Settings(ctx); err != nil {
+		return fmt.Errorf("prepare storage settings: %w", err)
+	}
+	storageQuota := storagequota.New(storageRepository, mediaFiles, mediaFiles, cfg.Storage.QuotaBytes())
+	mailRepository := postgres.NewMailRepository(pool)
+	invitations := postgres.NewInvitationRepository(pool)
+	var mailSender mailer.Sender
+	if cfg.Mail.Configured() {
+		mailSender = mailer.NewSMTPSender(mailer.SMTPConfig{
+			Host: cfg.Mail.Host, Port: cfg.Mail.Port, Username: cfg.Mail.Username, Password: cfg.Mail.Password,
+			TLS: cfg.Mail.TLS, FromAddress: cfg.Mail.FromAddress, FromName: cfg.Mail.FromName,
+		})
+	}
+	mailWorker := mailer.NewWorker(mailRepository, mailSender, logger)
+	go mailWorker.Run(ctx)
 	if err := media.StartRenderer(logger); err != nil {
 		return fmt.Errorf("start the preview renderer: %w", err)
 	}
@@ -258,7 +276,7 @@ func serve() error {
 	}
 
 	tiles := postgres.NewTileRepository(pool)
-	go sweep(ctx, sessions, routes, geocodes, tiles, logger)
+	go sweep(ctx, sessions, invitations, routes, geocodes, tiles, logger)
 
 	backups := postgres.NewBackupRepository(pool)
 	sealer, err := instanceSecrets(cfg, logger)
@@ -302,6 +320,14 @@ func serve() error {
 		MediaFiles:         mediaFiles,
 		MediaMaxBytes:      cfg.Media.MaxSizeBytes(),
 		MediaTripQuota:     cfg.Media.TripQuotaBytes(),
+		Storage:            storageQuota,
+		Mail:               mailRepository,
+		Invitations:        invitations,
+		Registrations:      invitations,
+		MailSender:         mailSender,
+		MailConfigured:     cfg.Mail.Configured(),
+		MailPublicURL:      cfg.Mail.PublicURL,
+		WakeMail:           mailWorker.Wake,
 		TrackMaxBytes:      cfg.Media.TrackMaxBytes(),
 		AttachmentMaxBytes: cfg.Media.AttachmentMaxBytes(),
 		Routing:            router,
@@ -356,9 +382,10 @@ func signingSecret(cfg *config.Config, logger *slog.Logger) (string, error) {
 }
 
 // sweep periodically deletes sessions that expired or were revoked more than
-// sessionRetention ago, and expired routes, geocodes and map tiles, until the
-// context ends.
-func sweep(ctx context.Context, sessions *postgres.SessionRepository, routes *postgres.RoutingRepository, geocodes *postgres.GeocodingRepository, tiles *postgres.TileRepository,
+// sessionRetention ago, self-registered accounts never confirmed within
+// domain.UnverifiedAccountLifetime, and expired routes, geocodes and map
+// tiles, until the context ends.
+func sweep(ctx context.Context, sessions *postgres.SessionRepository, registrations *postgres.InvitationRepository, routes *postgres.RoutingRepository, geocodes *postgres.GeocodingRepository, tiles *postgres.TileRepository,
 	logger *slog.Logger) {
 	ticker := time.NewTicker(sweepInterval)
 	defer ticker.Stop()
@@ -373,6 +400,12 @@ func sweep(ctx context.Context, sessions *postgres.SessionRepository, routes *po
 				logger.Warn("session sweep failed", slog.Any("error", err))
 			} else if removed > 0 {
 				logger.Debug("swept finished sessions", slog.Int64("removed", removed))
+			}
+
+			if purged, err := registrations.PurgeUnverified(ctx, now.Add(-domain.UnverifiedAccountLifetime)); err != nil {
+				logger.Warn("unconfirmed account purge failed", slog.Any("error", err))
+			} else if purged > 0 {
+				logger.Info("deleted unconfirmed self-registered accounts", slog.Int64("removed", purged))
 			}
 
 			if expired, err := routes.Purge(ctx, now); err != nil {

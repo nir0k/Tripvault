@@ -38,6 +38,23 @@ const (
 	// one clears the count. It stops a session, left open or stolen, being used
 	// to guess the password it was opened with.
 	passwordChecksPerAccount = 10
+	// passwordResetsPerAccount bounds recovery mail for one address across every
+	// client, which prevents distributed requests from flooding one mailbox.
+	passwordResetsPerAccount = 5
+	// passwordResetsPerClient bounds recovery requests from one client across
+	// every address, which prevents one machine from using the service to send
+	// mail to many accounts.
+	passwordResetsPerClient = 20
+	// registrationsPerAccount bounds registrations of one address, each of
+	// which may send a confirmation message, across every client.
+	registrationsPerAccount = 5
+	// registrationsPerClient bounds registrations from one client across every
+	// address, which prevents one machine from making accounts in bulk.
+	registrationsPerClient = 20
+	// verificationsPerClient bounds confirmation attempts from one client
+	// across every address. Each code also allows only a few wrong guesses;
+	// this stops one machine trying a guess at many addresses instead.
+	verificationsPerClient = 30
 )
 
 // attemptLimiter counts events per key over a fixed window.

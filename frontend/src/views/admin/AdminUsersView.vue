@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, useTemplateRef } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { createUser, listUsers, resetPassword, updateUser, type UserChanges } from '@/api/admin'
-import type { AdminUser } from '@/api/types'
+import {
+  createUser, getStatus, inviteUser, listUserInvitations, listUsers, resetPassword,
+  revokeUserInvitation, updateUser, type UserChanges,
+} from '@/api/admin'
+import type { AdminUser, UserInvitation } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import { errorMessage } from '@/utils/errors'
 import { formatDateTime } from '@/utils/format'
 import { generatePassword } from '@/utils/password'
 
-type DialogMode = 'create' | 'rename' | 'reset' | 'confirm'
+type DialogMode = 'create' | 'invite' | 'rename' | 'reset' | 'confirm'
 
 interface PendingChange {
   user: AdminUser
@@ -21,6 +24,8 @@ const { t, te, locale } = useI18n()
 const users = ref<AdminUser[]>([])
 const loadError = ref('')
 const notice = ref('')
+const invitations = ref<UserInvitation[]>([])
+const mailAvailable = ref(false)
 
 const dialog = useTemplateRef<HTMLDialogElement>('dialog')
 const mode = ref<DialogMode>('create')
@@ -34,6 +39,8 @@ const dialogTitle = computed(() => {
   switch (mode.value) {
     case 'create':
       return t('users.createTitle')
+    case 'invite':
+      return t('users.inviteTitle')
     case 'rename':
       return t('users.renameTitle', { name: target.value?.display_name ?? '' })
     case 'reset':
@@ -48,6 +55,9 @@ async function load(): Promise<void> {
   loadError.value = ''
   try {
     users.value = await listUsers()
+    const status = await getStatus()
+    mailAvailable.value = status.mail.configured && status.mail.enabled
+    invitations.value = await listUserInvitations()
   } catch (err) {
     loadError.value = errorMessage(err, t, te)
   }
@@ -91,6 +101,9 @@ async function submit(): Promise<void> {
         is_admin: form.isAdmin,
       })
       notice.value = t('users.created', { name: created.display_name, password: form.password })
+    } else if (mode.value === 'invite') {
+      await inviteUser(form.email.trim(), form.displayName, form.isAdmin, locale.value)
+      notice.value = t('users.invited', { email: form.email.trim() })
     } else if (mode.value === 'rename' && user) {
       await updateUser(user.id, { display_name: form.displayName })
     } else if (mode.value === 'reset' && user) {
@@ -105,6 +118,17 @@ async function submit(): Promise<void> {
     dialogError.value = errorMessage(err, t, te)
   } finally {
     busy.value = false
+  }
+}
+
+// revokeInvite withdraws an account invitation that has not been accepted.
+async function revokeInvite(invitation: UserInvitation): Promise<void> {
+  dialogError.value = ''
+  try {
+    await revokeUserInvitation(invitation.id)
+    await load()
+  } catch (err) {
+    loadError.value = errorMessage(err, t, te)
   }
 }
 
@@ -131,10 +155,16 @@ onMounted(load)
   <section class="space-y-6">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <h1 class="text-2xl font-bold">{{ t('users.title') }}</h1>
-      <button type="button" class="btn btn-primary" @click="open('create')">
-        <AppIcon name="plus" />
-        {{ t('users.create') }}
-      </button>
+      <div class="flex flex-wrap gap-2">
+        <button v-if="mailAvailable" type="button" class="btn btn-primary" @click="open('invite')">
+          <AppIcon name="plus" />
+          {{ t('users.invite') }}
+        </button>
+        <button type="button" class="btn" :class="mailAvailable ? 'btn-hover-outline' : 'btn-primary'" @click="open('create')">
+          <AppIcon name="plus" />
+          {{ t('users.createTemporary') }}
+        </button>
+      </div>
     </div>
 
     <p v-if="loadError" role="alert" class="text-error">{{ loadError }}</p>
@@ -150,7 +180,12 @@ onMounted(load)
             <span class="truncate">{{ user.display_name }}</span>
             <span v-if="user.is_self" class="badge badge-ghost badge-sm">{{ t('users.you') }}</span>
             <span v-if="user.is_admin" class="badge badge-primary badge-sm">{{ t('users.admin') }}</span>
-            <span v-if="!user.is_active" class="badge badge-error badge-sm">{{ t('users.inactive') }}</span>
+            <span
+              v-if="!user.email_verified"
+              class="badge badge-sm border-orange-500 bg-orange-500 text-orange-950"
+              :title="user.delete_after ? t('users.unverifiedHint', { time: formatDateTime(user.delete_after, locale) }) : undefined"
+            >{{ t('users.unverified') }}</span>
+            <span v-else-if="!user.is_active" class="badge badge-error badge-sm">{{ t('users.inactive') }}</span>
             <span v-if="user.must_change_password" class="badge badge-warning badge-sm">{{ t('users.temporaryPassword') }}</span>
           </p>
           <p class="truncate text-sm text-base-content/70">{{ user.email }}</p>
@@ -181,18 +216,34 @@ onMounted(load)
       </li>
     </ul>
 
+    <section v-if="invitations.length" class="space-y-3">
+      <h2 class="text-lg font-semibold">{{ t('users.invitations') }}</h2>
+      <ul class="divide-y divide-base-300 rounded-box border border-base-300">
+        <li v-for="invitation in invitations" :key="invitation.id" class="flex flex-wrap items-center gap-3 p-4">
+          <div class="min-w-0 flex-1">
+            <p class="truncate font-medium">{{ invitation.display_name }}</p>
+            <p class="truncate text-sm text-base-content/70">{{ invitation.email }}</p>
+          </div>
+          <span class="badge badge-outline">{{ t(`mail.status.${invitation.status}`) }}</span>
+          <button v-if="invitation.status === 'pending'" type="button" class="btn btn-ghost btn-sm" @click="revokeInvite(invitation)">
+            {{ t('users.revokeInvitation') }}
+          </button>
+        </li>
+      </ul>
+    </section>
+
     <dialog ref="dialog" class="modal modal-top sm:modal-middle">
       <form class="modal-box flex flex-col gap-3" @submit.prevent="submit">
         <h2 class="text-lg font-bold">{{ dialogTitle }}</h2>
 
-        <template v-if="mode === 'create'">
+        <template v-if="mode === 'create' || mode === 'invite'">
           <label class="floating-label">
             <span>{{ t('users.email') }}</span>
             <input v-model="form.email" type="email" required autocomplete="off" class="input w-full" :placeholder="t('users.email')" />
           </label>
         </template>
 
-        <label v-if="mode === 'create' || mode === 'rename'" class="floating-label">
+        <label v-if="mode === 'create' || mode === 'invite' || mode === 'rename'" class="floating-label">
           <span>{{ t('users.displayName') }}</span>
           <input v-model="form.displayName" type="text" required maxlength="120" class="input w-full" :placeholder="t('users.displayName')" />
         </label>
@@ -205,7 +256,7 @@ onMounted(load)
           <p class="text-sm text-base-content/70">{{ t('users.temporaryPasswordHint') }}</p>
         </template>
 
-        <label v-if="mode === 'create'" class="label cursor-pointer justify-start gap-3">
+        <label v-if="mode === 'create' || mode === 'invite'" class="label cursor-pointer justify-start gap-3">
           <input v-model="form.isAdmin" type="checkbox" class="checkbox" />
           <span>{{ t('users.makeAdmin') }}</span>
         </label>
@@ -218,7 +269,7 @@ onMounted(load)
           <button type="button" class="btn btn-ghost" @click="close">{{ t('common.cancel') }}</button>
           <button type="submit" class="btn btn-primary" :disabled="busy">
             <span v-if="busy" class="loading loading-spinner loading-sm"></span>
-            {{ mode === 'create' ? t('users.create') : t('common.confirm') }}
+            {{ mode === 'create' ? t('users.createTemporary') : mode === 'invite' ? t('users.invite') : t('common.confirm') }}
           </button>
         </div>
       </form>

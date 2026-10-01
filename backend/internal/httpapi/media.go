@@ -285,6 +285,11 @@ func (s *Server) handleUploadMedia(w http.ResponseWriter, r *http.Request) {
 		s.writeDomainError(w, r, "measure media", err)
 		return
 	}
+	tripQuota, err := s.tripQuota(r.Context())
+	if err != nil {
+		s.internalError(w, r, "read trip storage quota", err)
+		return
+	}
 
 	limitUpload(w, r, s.mediaMaxBytes*maxUploadFiles)
 	reader, err := r.MultipartReader()
@@ -342,7 +347,7 @@ func (s *Server) handleUploadMedia(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		item, err := s.storePart(r, trip.ID, part, private, source, used)
+		item, err := s.storePart(r, trip.ID, part, private, source, used, tripQuota)
 		source = nil
 		_ = part.Close()
 		if err != nil {
@@ -370,7 +375,7 @@ func (s *Server) handleUploadMedia(w http.ResponseWriter, r *http.Request) {
 // sum of the original the browser shrank the file from, or nil; a picture the
 // trip already holds under either sum is refused when it is catalogued.
 func (s *Server) storePart(r *http.Request, tripID uuid.UUID, part *multipart.Part, private bool,
-	source []byte, used int64) (domain.Media, error) {
+	source []byte, used, tripQuota int64) (domain.Media, error) {
 	// One byte over the limit is read on purpose, so a file exactly at the
 	// limit is accepted and the first byte above it is noticed.
 	data, err := io.ReadAll(io.LimitReader(part, s.mediaMaxBytes+1))
@@ -387,7 +392,7 @@ func (s *Server) storePart(r *http.Request, tripID uuid.UUID, part *multipart.Pa
 	if len(data) == 0 {
 		return domain.Media{}, domain.NewValidationError("file", "empty_file", "the file is empty")
 	}
-	if s.mediaTripQuota > 0 && used+int64(len(data)) > s.mediaTripQuota {
+	if tripQuota > 0 && used+int64(len(data)) > tripQuota {
 		return domain.Media{}, domain.ErrMediaQuota
 	}
 
@@ -435,11 +440,16 @@ func (s *Server) storePart(r *http.Request, tripID uuid.UUID, part *multipart.Pa
 	if err != nil {
 		return domain.Media{}, err
 	}
+	release, err := s.reserveStorage(r.Context(), int64(len(data)))
+	if err != nil {
+		return domain.Media{}, err
+	}
+	defer release()
 
 	if _, err := s.mediaFiles.Put(r.Context(), item.StorageKey, bytes.NewReader(data)); err != nil {
 		return domain.Media{}, fmt.Errorf("store upload: %w", err)
 	}
-	if err := s.media.Create(r.Context(), item, s.mediaTripQuota); err != nil {
+	if err := s.media.Create(r.Context(), item, tripQuota); err != nil {
 		// The catalogue is what makes a file reachable, so bytes without a row
 		// are rubbish and go at once.
 		_ = s.mediaFiles.Delete(r.Context(), item.StorageKey)
@@ -852,6 +862,9 @@ func (s *Server) writeMediaError(w http.ResponseWriter, r *http.Request, err err
 	case errors.Is(err, domain.ErrMediaQuota):
 		s.writeError(w, r, http.StatusConflict, "media_quota",
 			"The trip has no space left for more files")
+	case errors.Is(err, domain.ErrStorageQuota):
+		s.writeError(w, r, http.StatusInsufficientStorage, "storage_quota",
+			"The service has no space left for more files")
 	case errors.Is(err, domain.ErrMediaDuplicate):
 		s.writeError(w, r, http.StatusConflict, "duplicate_media",
 			"The trip already holds this picture")

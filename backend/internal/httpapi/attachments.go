@@ -92,6 +92,17 @@ func (s *Server) handleCreateAttachment(w http.ResponseWriter, r *http.Request) 
 	}
 	checksum := sha256.Sum256(data)
 	uploader := principalFrom(r.Context()).user.ID
+	tripQuota, err := s.tripQuota(r.Context())
+	if err != nil {
+		s.internalError(w, r, "read trip storage quota", err)
+		return
+	}
+	release, err := s.reserveStorage(r.Context(), int64(len(data)))
+	if err != nil {
+		s.writeStorageError(w, r, "reserve attachment storage", err)
+		return
+	}
+	defer release()
 	err = s.documents.CreateAttachment(r.Context(), domain.Attachment{
 		ID:           uuid.Must(uuid.NewV7()),
 		DocumentID:   document.ID,
@@ -102,13 +113,16 @@ func (s *Server) handleCreateAttachment(w http.ResponseWriter, r *http.Request) 
 		Size:         int64(len(data)),
 		Checksum:     checksum[:],
 		UploadedBy:   &uploader,
-	}, data, s.mediaTripQuota)
+	}, data, tripQuota)
 	switch {
 	case errors.Is(err, domain.ErrAttachmentDuplicate):
 		s.writeError(w, r, http.StatusConflict, "duplicate_attachment", "The place already carries this file")
 		return
 	case errors.Is(err, domain.ErrMediaQuota):
 		s.writeError(w, r, http.StatusConflict, "media_quota", "The trip has no space left for more files")
+		return
+	case errors.Is(err, domain.ErrStorageQuota):
+		s.writeStorageError(w, r, "store attachment", err)
 		return
 	case err != nil:
 		s.writeDomainError(w, r, "store attachment", err)

@@ -74,10 +74,14 @@ type clientConfigResponse struct {
 	// MapTileURL and MapAttribution configure the map's raster tiles.
 	MapTileURL     string `json:"map_tile_url"`
 	MapAttribution string `json:"map_attribution"`
+	// MailEnabled says public recovery and email invitations are available.
+	MailEnabled bool `json:"mail_enabled"`
+	// SelfRegistration says the sign-in page may offer to create an account.
+	SelfRegistration bool `json:"self_registration"`
 }
 
 // handleClientConfig reports the instance settings the client needs up front.
-func (s *Server) handleClientConfig(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleClientConfig(w http.ResponseWriter, r *http.Request) {
 	var capabilities routing.Capabilities
 	if s.routing != nil {
 		capabilities = s.routing.Capabilities()
@@ -91,5 +95,7 @@ func (s *Server) handleClientConfig(w http.ResponseWriter, _ *http.Request) {
 		GeocodingEnabled:    s.geocoder != nil && s.geocoder.Enabled(),
 		MapTileURL:          s.opts.MapTileURL,
 		MapAttribution:      s.opts.MapAttribution,
+		MailEnabled:         s.mailEnabled(r),
+		SelfRegistration:    s.registrationOpen(r),
 	})
 }

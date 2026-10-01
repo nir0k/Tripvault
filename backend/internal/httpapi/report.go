@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -108,7 +109,35 @@ func (s *Server) handleCreateReport(w http.ResponseWriter, r *http.Request) {
 		s.writeDomainError(w, r, "validate report", err)
 		return
 	}
-	if err := s.documents.CreateReport(r.Context(), report, *plan.PlanID); err != nil {
+	content, err := s.documents.Content(r.Context(), *plan.PlanID)
+	if err != nil {
+		s.writeDomainError(w, r, "measure report tracks", err)
+		return
+	}
+	var trackBytes int64
+	for _, recorded := range content.Tracks {
+		trackBytes += recorded.FileSize
+	}
+	tripQuota, err := s.tripQuota(r.Context())
+	if err != nil {
+		s.internalError(w, r, "read trip storage quota", err)
+		return
+	}
+	if tripQuota > 0 && trackBytes > tripQuota {
+		s.writeError(w, r, http.StatusConflict, "media_quota", "The report would exceed the allowance for one trip")
+		return
+	}
+	release, err := s.reserveStorage(r.Context(), trackBytes)
+	if err != nil {
+		s.writeStorageError(w, r, "reserve report storage", err)
+		return
+	}
+	defer release()
+	if err := s.documents.CreateReport(r.Context(), report, *plan.PlanID, tripQuota); err != nil {
+		if errors.Is(err, domain.ErrMediaQuota) {
+			s.writeError(w, r, http.StatusConflict, "media_quota", "The report would exceed the allowance for one trip")
+			return
+		}
 		s.writeDomainError(w, r, "create report", err)
 		return
 	}

@@ -12,6 +12,17 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  build: {
+    rolldownOptions: {
+      output: {
+        // nginx's types know .js but not .mjs, and a script served as
+        // application/octet-stream under nosniff never runs; pdf.js's worker is
+        // the one .mjs asset, so it is written as a .js file.
+        assetFileNames: (asset) =>
+          asset.names.some((name) => name.endsWith('.mjs')) ? 'assets/[name]-[hash].js' : 'assets/[name]-[hash][extname]',
+      },
+    },
+  },
   server: {
     proxy: {
       '/api': 'http://localhost:8080',

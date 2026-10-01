@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	stdmail "net/mail"
 	"net/url"
 	"slices"
 	"strings"
@@ -41,22 +43,23 @@ type Config struct {
 	Routing   Routing     `envPrefix:"ROUTING_"`
 	Map       Map         `envPrefix:"MAP_"`
 	Media     Media       `envPrefix:"MEDIA_"`
+	Storage   Storage     `envPrefix:"STORAGE_"`
 	Geocoding Geocoding   `envPrefix:"GEOCODING_"`
 	Backup    Backup      `envPrefix:"BACKUP_"`
 	Secrets   Secrets     `envPrefix:"SECRETS_"`
+	Mail      Mail        `envPrefix:"MAIL_"`
 
 	// LogLevel is the parsed form of Log.Level, filled in by Load.
 	LogLevel slog.Level `env:"-"`
 }
 
-// Media holds where uploaded files are kept and how much room they may take.
-// The path is a directory inside the container, backed by a volume in the
-// deployment; the limits are what keeps one trip from filling the disk.
+// Media holds where uploaded files are kept, the single-file limits and the
+// initial per-trip policy used before an administrator stores one.
 type Media struct {
 	Path string `env:"PATH" envDefault:"/app/media"`
 	// MaxSizeMB bounds one uploaded file.
 	MaxSizeMB int `env:"MAX_SIZE_MB" envDefault:"25"`
-	// TripQuotaMB bounds everything one trip keeps; zero means no limit.
+	// TripQuotaMB seeds the stored per-trip policy; zero means no limit.
 	TripQuotaMB int `env:"TRIP_QUOTA_MB" envDefault:"2048"`
 	// TrackMaxSizeMB bounds an imported GPX or KML file, which is text and far
 	// smaller than a photograph.
@@ -64,6 +67,23 @@ type Media struct {
 	// AttachmentMaxSizeMB bounds one file attached to a place, such as a
 	// ticket or a booking.
 	AttachmentMaxSizeMB int `env:"ATTACHMENT_MAX_SIZE_MB" envDefault:"10"`
+}
+
+// Storage holds the operator's ceiling for user files across the instance.
+// Database housekeeping, generated caches and backup archives are outside this
+// allowance and need capacity limits at the deployment layer.
+type Storage struct {
+	// QuotaMB bounds original media, attachments and track files together; zero
+	// leaves the instance unlimited by the application.
+	QuotaMB int64 `env:"QUOTA_MB" envDefault:"0"`
+}
+
+// QuotaBytes - returns the instance-wide user-file allowance in bytes.
+//
+// Returns:
+//   - the quota, or zero when the instance is not limited.
+func (s Storage) QuotaBytes() int64 {
+	return s.QuotaMB * 1024 * 1024
 }
 
 // MaxSizeBytes - returns the largest accepted upload in bytes.
@@ -74,10 +94,10 @@ func (m Media) MaxSizeBytes() int64 {
 	return int64(m.MaxSizeMB) * 1024 * 1024
 }
 
-// TripQuotaBytes - returns how much one trip may keep, in bytes.
+// TripQuotaBytes - returns the initial allowance for one trip, in bytes.
 //
 // Returns:
-//   - the quota, or zero when a trip is not limited.
+//   - the initial quota, or zero when a trip is not limited.
 func (m Media) TripQuotaBytes() int64 {
 	return int64(m.TripQuotaMB) * 1024 * 1024
 }
@@ -151,6 +171,27 @@ type Auth struct {
 	JWTSecret       string        `env:"JWT_SECRET"`
 	AccessTokenTTL  time.Duration `env:"ACCESS_TOKEN_TTL" envDefault:"15m"`
 	RefreshTokenTTL time.Duration `env:"REFRESH_TOKEN_TTL" envDefault:"720h"`
+}
+
+// Mail holds the operator-controlled SMTP connection and the public address
+// used in links. Administrators decide separately whether delivery is enabled.
+type Mail struct {
+	Host        string `env:"HOST"`
+	Port        int    `env:"PORT" envDefault:"587"`
+	Username    string `env:"USERNAME"`
+	Password    string `env:"PASSWORD"`
+	TLS         string `env:"TLS" envDefault:"starttls"`
+	FromAddress string `env:"FROM_ADDRESS"`
+	FromName    string `env:"FROM_NAME" envDefault:"Tripvault"`
+	PublicURL   string `env:"PUBLIC_URL"`
+}
+
+// Configured - reports whether the deployment supplies a complete SMTP target.
+//
+// Returns:
+//   - true when mail can be sent.
+func (m Mail) Configured() bool {
+	return strings.TrimSpace(m.Host) != "" && strings.TrimSpace(m.FromAddress) != "" && strings.TrimSpace(m.PublicURL) != ""
 }
 
 // Admin holds the credentials of the first administrator, created on the first
@@ -452,6 +493,24 @@ func isHTTPAddress(value string) bool {
 	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
 }
 
+// isPublicMailAddress checks an action-link base is an origin rather than an
+// address whose query or fragment could swallow the appended application path.
+func isPublicMailAddress(value string) bool {
+	parsed, err := url.Parse(value)
+	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" &&
+		(parsed.Path == "" || parsed.Path == "/") && parsed.RawQuery == "" && parsed.Fragment == "" && parsed.User == nil
+}
+
+// normalizeMailAddress checks that a configured sender is one mailbox rather
+// than a header fragment. The display name is configured separately.
+func normalizeMailAddress(value string) (string, error) {
+	parsed, err := stdmail.ParseAddress(strings.TrimSpace(value))
+	if err != nil || parsed.Address != strings.TrimSpace(value) {
+		return "", errors.New("must be one email address without a display name")
+	}
+	return parsed.Address, nil
+}
+
 // validate rejects configurations that would leave the service unsafe or
 // unusable, reporting every problem at once rather than one per restart.
 func (c *Config) validate() error {
@@ -490,6 +549,9 @@ func (c *Config) validate() error {
 	if c.Media.AttachmentMaxSizeMB < 1 {
 		errs = append(errs, errors.New("TRIPVAULT_MEDIA_ATTACHMENT_MAX_SIZE_MB: must be at least 1"))
 	}
+	if c.Storage.QuotaMB < 0 || c.Storage.QuotaMB > math.MaxInt64/(1024*1024) {
+		errs = append(errs, errors.New("TRIPVAULT_STORAGE_QUOTA_MB: must be a non-negative size that fits in bytes"))
+	}
 	if c.Database.MinConns < 0 || c.Database.MinConns > c.Database.MaxConns {
 		errs = append(errs, errors.New("TRIPVAULT_DB_MIN_CONNS: must be between 0 and TRIPVAULT_DB_MAX_CONNS"))
 	}
@@ -510,6 +572,39 @@ func (c *Config) validate() error {
 
 	if (c.Admin.Email == "") != (c.Admin.Password == "") {
 		errs = append(errs, errors.New("TRIPVAULT_ADMIN_EMAIL and TRIPVAULT_ADMIN_PASSWORD: set both or neither"))
+	}
+	mailFields := []string{strings.TrimSpace(c.Mail.Host), strings.TrimSpace(c.Mail.FromAddress), strings.TrimSpace(c.Mail.PublicURL)}
+	mailParts := 0
+	for _, value := range mailFields {
+		if value != "" {
+			mailParts++
+		}
+	}
+	if mailParts != 0 && mailParts != len(mailFields) {
+		errs = append(errs, errors.New("TRIPVAULT_MAIL_HOST, TRIPVAULT_MAIL_FROM_ADDRESS and TRIPVAULT_MAIL_PUBLIC_URL: set all or none"))
+	}
+	if c.Mail.Port < 1 || c.Mail.Port > 65535 {
+		errs = append(errs, errors.New("TRIPVAULT_MAIL_PORT: must be between 1 and 65535"))
+	}
+	if !slices.Contains([]string{"starttls", "tls", "none"}, c.Mail.TLS) {
+		errs = append(errs, errors.New("TRIPVAULT_MAIL_TLS: must be starttls, tls or none"))
+	}
+	if (strings.TrimSpace(c.Mail.Username) == "") != (c.Mail.Password == "") {
+		errs = append(errs, errors.New("TRIPVAULT_MAIL_USERNAME and TRIPVAULT_MAIL_PASSWORD: set both or neither"))
+	}
+	if !c.Mail.Configured() && (strings.TrimSpace(c.Mail.Username) != "" || c.Mail.Password != "") {
+		errs = append(errs, errors.New("TRIPVAULT_MAIL_USERNAME and TRIPVAULT_MAIL_PASSWORD: require a configured mail host, sender and public URL"))
+	}
+	if c.Mail.TLS == "none" && strings.TrimSpace(c.Mail.Username) != "" {
+		errs = append(errs, errors.New("TRIPVAULT_MAIL_TLS: SMTP authentication requires starttls or tls"))
+	}
+	if c.Mail.Configured() && !isPublicMailAddress(c.Mail.PublicURL) {
+		errs = append(errs, errors.New("TRIPVAULT_MAIL_PUBLIC_URL: must be an http or https origin without a path, query, credentials or fragment"))
+	}
+	if c.Mail.Configured() {
+		if _, err := normalizeMailAddress(c.Mail.FromAddress); err != nil {
+			errs = append(errs, fmt.Errorf("TRIPVAULT_MAIL_FROM_ADDRESS: %w", err))
+		}
 	}
 
 	errs = append(errs, c.validateRouting()...)

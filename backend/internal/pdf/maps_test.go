@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/jpeg"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -166,5 +167,51 @@ func TestRenderWithMaps(t *testing.T) {
 	}
 	if images := bytes.Count(pictured.Bytes(), []byte("/Subtype /Image")); images != 2 {
 		t.Errorf("the document holds %d pictures, want the two maps", images)
+	}
+}
+
+// TestDayMapSpansThePageWithNothingBesideIt checks a day's map is asked for
+// across the page only when neither a short story nor a moment of the day
+// would sit beside it, and that every such layout renders.
+func TestDayMapSpansThePageWithNothingBesideIt(t *testing.T) {
+	long := strings.Repeat("A long day on the road, with more to tell than fits beside a map. ", 40)
+	cases := []struct {
+		name, story, highlight string
+		wide                   bool
+	}{
+		{name: "nothing", wide: true},
+		{name: "long story alone", story: long, wide: true},
+		{name: "long story and a moment", story: long, highlight: "Seals on the shore"},
+		{name: "short story", story: "A short day."},
+		{name: "moment alone", highlight: "Seals on the shore"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			report := placedReport(t)
+			report.Photos, report.Cover, report.DayHeroes = nil, nil, nil
+			for index := range report.Content.Days {
+				report.Content.Days[index].NotesMD = tc.story
+				report.Content.Days[index].Highlight = tc.highlight
+			}
+			requests := ReportMapRequests(report.Content)
+			days := 0
+			for _, request := range requests {
+				if request.Key == uuid.Nil {
+					continue
+				}
+				days++
+				if wide := request.Width > journalDayWidthPx; wide != tc.wide || request.Height != journalDayHeightPx {
+					t.Errorf("day map is %dx%d, want wide=%v", request.Width, request.Height, tc.wide)
+				}
+			}
+			if days == 0 {
+				t.Fatal("no day map was asked for")
+			}
+			report.Maps = framed(t, requests, true)
+			var out bytes.Buffer
+			if err := Render(&out, report); err != nil {
+				t.Fatalf("Render() returned an unexpected error: %v", err)
+			}
+		})
 	}
 }

@@ -30,7 +30,26 @@ Everything is set in `.env` beside `docker-compose.yaml`. The compose file passe
 | `TRIPVAULT_ADMIN_EMAIL` | The first administrator, created only while the database has no accounts. Set both or neither. |
 | `TRIPVAULT_ADMIN_PASSWORD` | Their password, at least 8 characters. Remove it from `.env` after the first sign-in; later changes do nothing. |
 
-Further accounts are created by an administrator under Administration → Users, with a temporary password their owner replaces at the first sign-in.
+Further accounts are invited by email from Administration → Users when mail is configured and enabled. Creating an account with a temporary password remains available as a fallback; its owner replaces that password at the first sign-in.
+
+### Email
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRIPVAULT_MAIL_HOST` | | SMTP host. Leaving it empty leaves mail unconfigured. |
+| `TRIPVAULT_MAIL_PORT` | `587` | SMTP port. |
+| `TRIPVAULT_MAIL_USERNAME` | | SMTP username. Set it together with the password; authenticated delivery requires TLS. |
+| `TRIPVAULT_MAIL_PASSWORD` | | SMTP password. It is read from the environment and is never exposed in the interface or stored in the database. |
+| `TRIPVAULT_MAIL_TLS` | `starttls` | `starttls`, `tls` for implicit TLS, or `none` for an explicitly unsecured server without authentication. |
+| `TRIPVAULT_MAIL_FROM_ADDRESS` | | Envelope and message sender. Required with the host. |
+| `TRIPVAULT_MAIL_FROM_NAME` | `Tripvault` | Display name of the sender. |
+| `TRIPVAULT_MAIL_PUBLIC_URL` | | Public HTTPS origin used in recovery and invitation links, such as `https://trips.example.com`. Required with the host. |
+
+After the transport is configured, an administrator enables delivery and may send a test message from Administration → Service status. The switch is stored in the database. Disabling it keeps newly generated messages in the durable queue; they resume after delivery is enabled again. The test action bypasses that switch so configuration can be checked before enabling it.
+
+Password recovery, account invitations and trip invitations appear only while delivery is configured and enabled. Ordinary notifications can be disabled by each person in their profile; password and other security notifications cannot. Tripvault does not offer passwordless sign-in.
+
+An administrator may also allow self-registration under Administration → Status. It can be switched on only while SMTP is configured and delivery is enabled, and it closes by itself while delivery is off. A self-registered account stays inactive until its address is confirmed, either by the link in the confirmation message or by typing its six-digit code on the site; both work for one hour, and another message can be requested at most once in five minutes. An account still unconfirmed five days after its first registration is deleted.
 
 ### Routing and place search
 
@@ -73,9 +92,12 @@ Change `TRIPVAULT_MAP_ATTRIBUTION` along with the address.
 | Variable | Default | Description |
 |---|---|---|
 | `TRIPVAULT_MEDIA_MAX_SIZE_MB` | `25` | The largest photograph one upload may be. |
-| `TRIPVAULT_MEDIA_TRIP_QUOTA_MB` | `2048` | Everything one trip may keep, attachments included. `0` means no limit. |
+| `TRIPVAULT_MEDIA_TRIP_QUOTA_MB` | `2048` | The initial allowance for one trip on an instance without stored settings. Administrators change it later on the service status page. `0` means no per-trip limit. |
+| `TRIPVAULT_STORAGE_QUOTA_MB` | `0` | Original media, avatars, idea photos, attachments and imported track files across the instance. `0` means no application limit. |
 
-Photographs are accepted as JPEG, PNG or WebP, decided from their bytes. A GPX or KML track and an attachment of a place are limited to 10 MB each. Attachments are documents and pictures; archives, programs, scripts, video, sound and office documents with macros are refused.
+Photographs are accepted as JPEG, PNG or WebP, decided from their bytes. A GPX or KML track and an attachment of a place are limited to 10 MB each, and both count towards the trip allowance. Attachments are documents and pictures; archives, programs, scripts, video, sound and office documents with macros are refused.
+
+The instance quota counts the user files Tripvault controls. Generated trip previews, routing, geocoding and map caches, PostgreSQL indexes and WAL, temporary restore data and backup archives are outside it. It is an admission limit rather than a filesystem quota: put the database, media and backups on filesystems or volumes with enough separate capacity, and use host-level quotas when a hard physical boundary is required. Restoring a backup is allowed to exceed the configured application quota so recovery is never stopped halfway; further uploads are refused until usage falls below it or the operator raises the limit.
 
 ### Backups
 
@@ -198,12 +220,13 @@ server {
 
 - `GET /healthz` answers while the backend runs; `GET /readyz` also checks the database. Both containers have Docker health checks.
 - `GET /version` names the running version.
-- Administration → Service status shows the version, the schema version, the accounts, the routing and geocoding requests of the last 24 hours with their caches, and how the previews are getting on.
+- Administration → Service status shows the version, the schema version, the accounts, storage use, mail configuration and queue state, the routing and geocoding requests of the last 24 hours with their caches, and how the previews are getting on.
 
 ## Security notes
 
 - Only the frontend container publishes a port, and only on localhost by default. The database and the API are reachable from the other containers alone.
-- Nobody can sign up. Accounts are created by an administrator, passwords are hashed with argon2id, and a temporary password must be changed at the first sign-in.
+- Registration is closed unless an administrator allows self-registration, which needs working mail: such an account cannot sign in until its address is confirmed and is deleted after five days without confirmation. Registration answers known and unknown addresses alike. Otherwise accounts are created by an administrator, through a single-use administrator invitation, or while accepting a trip invitation. Passwords are hashed with argon2id, and an account created with a temporary password must change it at the first sign-in.
+- Password recovery, email confirmation and invitation credentials are random, expire, and are consumed once; their credential records store only hashes. A pending outbox message necessarily contains the link it must deliver, so Tripvault erases its recipient and bodies after delivery, permanent failure or expiry, and never sends an expired message. Browser addresses keep the credential in the URL fragment so it does not reach the server, proxy or request log; the interface removes it from the address immediately and sends it only in the API request body. Password recovery gives the same response for known and unknown addresses.
 - Sign-in attempts are limited per account and client, per account across clients it has not signed in from, and per client across accounts. Past a limit the answer is `429` with `Retry-After`.
 - A session is a short-lived access token and a rotating refresh token. A refresh token used twice ends its session. An administrator can deactivate an account, which ends its sessions at once, and everybody can end their own sessions from the profile.
 - Every file is served by the API after checking the reader's access to its trip, never from a static path, and a picture is revalidated before every use so it does not outlive that access.

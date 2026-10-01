@@ -196,6 +196,10 @@ paths:
         wrong passwords from one client answer `429 too_many_attempts` with
         `Retry-After`. While the server is checking as many passwords as it
         allows at once, a sign-in answers `503 busy` with `Retry-After`.
+        The right password of a self-registered account whose address is not
+        confirmed yet answers `403 email_not_verified` without a session; its
+        `details.resend_available_in` is how many seconds remain before
+        another confirmation message may be requested.
       operationId: login
       security: []
       requestBody:
@@ -214,6 +218,8 @@ paths:
         "400":
           $ref: "#/components/responses/InvalidRequest"
         "401":
+          $ref: "#/components/responses/Error"
+        "403":
           $ref: "#/components/responses/Error"
         "429":
           $ref: "#/components/responses/TooManyAttempts"
@@ -400,6 +406,8 @@ paths:
                 $ref: "#/components/schemas/Error"
         "422":
           $ref: "#/components/responses/ValidationFailed"
+        "507":
+          $ref: "#/components/responses/StorageQuota"
     delete:
       tags: [Profile]
       summary: Remove own picture
@@ -1150,6 +1158,8 @@ paths:
           $ref: "#/components/responses/Error"
         "422":
           $ref: "#/components/responses/ValidationFailed"
+        "507":
+          $ref: "#/components/responses/StorageQuota"
 
   /api/v1/ideas/{ideaID}/photos/{photoID}:
     get:
@@ -1543,6 +1553,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ShareToken"
         - $ref: "#/components/parameters/ReportPDFLanguage"
+        - $ref: "#/components/parameters/PackingPDFCompact"
       responses:
         "200":
           $ref: "#/components/responses/ReportPDF"
@@ -1611,7 +1622,8 @@ paths:
         is is decided from its own bytes, never from the declared type: only
         JPEG, PNG and WebP are stored. A file above the configured size answers
         `413`, and a trip that has used up its allowance answers `409` with
-        `media_quota`. One request carries at most 50 files - a 51st answers
+        `media_quota`. An instance that has used its operator allowance answers
+        `507` with `storage_quota`. One request carries at most 50 files - a 51st answers
         `413` with `too_many_files` - and its whole body at most what 50 files
         of the configured size add up to.
 
@@ -1668,6 +1680,8 @@ paths:
           $ref: "#/components/responses/Error"
         "415":
           $ref: "#/components/responses/Error"
+        "507":
+          $ref: "#/components/responses/StorageQuota"
 
   /api/v1/media/{mediaID}:
     get:
@@ -2082,6 +2096,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Error"
+        "507":
+          $ref: "#/components/responses/StorageQuota"
 
   /api/v1/trips/{tripID}/plan/pdf:
     get:
@@ -2142,10 +2158,13 @@ paths:
         one for each category in its colour and with its icon, each item with
         an empty box, how many, who brings it and its note. Every box is empty,
         whatever is packed already: the list is printed to pack from. It is
-        written in the reader's language. Every member may.
+        written in the reader's language. Every member may. The categories
+        are packed into the columns tallest first, so short ones fill the room
+        long ones leave, and each column keeps the list's order.
       operationId: getPackingPDF
       parameters:
         - $ref: "#/components/parameters/TripID"
+        - $ref: "#/components/parameters/PackingPDFCompact"
       responses:
         "200":
           $ref: "#/components/responses/ReportPDF"
@@ -3049,6 +3068,8 @@ paths:
         `actual_end_time` takes the recording's first and last moment in the
         trip's time zone. A position or a time already set is kept. A report
         copied from a plan starts with the plan's routes, files included.
+        The source file counts against the trip allowance (`409`,
+        `media_quota`) and the instance allowance (`507`, `storage_quota`).
       operationId: importItemTrack
       parameters:
         - $ref: "#/components/parameters/ItemID"
@@ -3080,6 +3101,8 @@ paths:
           $ref: "#/components/responses/Error"
         "422":
           $ref: "#/components/responses/ValidationFailed"
+        "507":
+          $ref: "#/components/responses/StorageQuota"
     patch:
       tags: [Documents]
       summary: Set the speed an activity's line is timed at
@@ -3214,6 +3237,8 @@ paths:
           $ref: "#/components/responses/Error"
         "422":
           $ref: "#/components/responses/ValidationFailed"
+        "507":
+          $ref: "#/components/responses/StorageQuota"
 
   /api/v1/attachments/{attachmentID}:
     patch:
@@ -3948,6 +3973,37 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /api/v1/admin/storage:
+    patch:
+      tags: [Administration]
+      summary: Change the per-trip storage allowance
+      description: >
+        Changes the policy applied to every trip. Zero leaves trips unlimited;
+        the operator's instance-wide limit still applies and cannot be changed
+        through the API.
+      operationId: updateStorage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StorageChangeRequest"
+      responses:
+        "200":
+          description: The current storage usage and policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageStatus"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
   /api/v1/admin/previews:
     get:
       tags: [Administration]
@@ -4406,6 +4462,471 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/v1/auth/register:
+    post:
+      tags: [Authentication]
+      summary: Register an account
+      description: |
+        Open only while an administrator allowed self-registration and mail is
+        configured and enabled; otherwise `403 registration_closed`. Creates an
+        inactive account and sends a message with a confirmation link and a
+        six-digit code, both lasting one hour. Every acceptable request answers
+        `202` alike, whether the address was free, still waiting for
+        confirmation (its name and password are replaced, and a message is sent
+        unless one was sent in the last five minutes) or already in use (nothing
+        is sent). An account not confirmed within five days of its first
+        registration is deleted.
+      operationId: register
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [display_name, email, password]
+              properties:
+                display_name: { type: string }
+                email: { type: string, format: email }
+                password: { type: string, format: password, minLength: 8 }
+                locale: { type: string, description: Language of the account and of its message; empty follows the browser. }
+      responses:
+        "202":
+          description: Accepted without disclosing whether the address already had an account.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VerificationSent" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "429": { $ref: "#/components/responses/TooManyAttempts" }
+
+  /api/v1/auth/verify-email:
+    post:
+      tags: [Authentication]
+      summary: Confirm a registered address
+      description: |
+        Confirms the address with the token of the link, or with the address
+        and the code of the message, and activates the account. It opens no
+        session. A wrong code answers `400 invalid_code`; five wrong codes end
+        the code of that message, while its link still works. A link that is
+        unknown, expired or replaced by a newer message answers `410
+        verification_closed`.
+      operationId: verifyEmail
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token: { type: string, description: The token from the link's fragment. }
+                email: { type: string, format: email }
+                code: { type: string, description: The six-digit code; spaces are ignored. }
+      responses:
+        "200":
+          description: Confirmed; the account may sign in.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [email]
+                properties:
+                  email: { type: string, format: email }
+        "400": { $ref: "#/components/responses/Error" }
+        "410": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/TooManyAttempts" }
+
+  /api/v1/auth/verify-email/resend:
+    post:
+      tags: [Authentication]
+      summary: Send another confirmation message
+      description: |
+        Takes the account's email and password, so it cannot tell anybody which
+        addresses wait for confirmation. Sends a new link and code, replacing
+        the previous ones, at most once in five minutes: sooner answers `429
+        resend_too_soon` with `Retry-After` and `details.retry_after`. A
+        confirmed account answers `409 already_verified`, and an instance whose
+        mail is disabled `503 mail_disabled`.
+      operationId: resendVerification
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "202":
+          description: A new message was queued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VerificationSent" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/TooManyAttempts" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /api/v1/auth/password-reset/request:
+    post:
+      tags: [Authentication]
+      summary: Request password recovery
+      description: Always answers alike for an unknown, inactive or valid account. When mail is enabled, a valid account receives a single-use link lasting 30 minutes.
+      operationId: requestPasswordReset
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "202": { description: The request was accepted without disclosing whether the account exists. }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "429": { $ref: "#/components/responses/TooManyAttempts" }
+
+  /api/v1/auth/password-reset/complete:
+    post:
+      tags: [Authentication]
+      summary: Complete password recovery
+      description: Consumes the one-time token, stores the new password and ends every existing session.
+      operationId: completePasswordReset
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token: { type: string }
+                password: { type: string, format: password, minLength: 8 }
+      responses:
+        "204": { description: Password changed. }
+        "410": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /api/v1/invitations/user/preview:
+    post:
+      tags: [Authentication]
+      summary: Preview an account invitation
+      operationId: previewUserInvitation
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvitationToken"
+      responses:
+        "200":
+          description: The account offered by the invitation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [email, display_name, is_admin, expires_at]
+                properties:
+                  email: { type: string, format: email }
+                  display_name: { type: string }
+                  is_admin: { type: boolean }
+                  expires_at: { type: string, format: date-time }
+        "410": { $ref: "#/components/responses/Error" }
+
+  /api/v1/invitations/user/accept:
+    post:
+      tags: [Authentication]
+      summary: Accept an account invitation
+      description: Creates the invited account on this otherwise closed instance. The token is consumed once.
+      operationId: acceptUserInvitation
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password, locale]
+              properties:
+                token: { type: string }
+                password: { type: string, format: password, minLength: 8 }
+                locale: { type: string, enum: [en, ru, ""] }
+      responses:
+        "201":
+          description: Account created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "409": { $ref: "#/components/responses/Error" }
+        "410": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /api/v1/invitations/trip/preview:
+    post:
+      tags: [Trips]
+      summary: Preview a trip invitation
+      operationId: previewTripInvitation
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InvitationToken" }
+      responses:
+        "200":
+          description: The trip access offered by the invitation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TripInvitationPreview" }
+        "410": { $ref: "#/components/responses/Error" }
+
+  /api/v1/invitations/trip/register:
+    post:
+      tags: [Trips]
+      summary: Register through a trip invitation
+      description: Creates an account on this closed instance and adds it to the trip in one transaction.
+      operationId: registerTripInvitation
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, display_name, password, locale]
+              properties:
+                token: { type: string }
+                display_name: { type: string, maxLength: 120 }
+                password: { type: string, format: password, minLength: 8 }
+                locale: { type: string, enum: [en, ru, ""] }
+      responses:
+        "201":
+          description: Account and membership created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user, trip_id]
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+                  trip_id: { type: string, format: uuid }
+        "409": { $ref: "#/components/responses/Error" }
+        "410": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /api/v1/invitations/trip/accept:
+    post:
+      tags: [Trips]
+      summary: Accept a trip invitation
+      description: Adds the signed-in account when its email matches the invitation.
+      operationId: acceptTripInvitation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InvitationToken" }
+      responses:
+        "200":
+          description: Invitation accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [trip_id]
+                properties:
+                  trip_id: { type: string, format: uuid }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Error" }
+        "410": { $ref: "#/components/responses/Error" }
+
+  /api/v1/admin/user-invitations:
+    get:
+      tags: [Administration]
+      summary: List account invitations
+      operationId: listUserInvitations
+      responses:
+        "200":
+          description: Invitations without their one-time tokens.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/UserInvitation" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [Administration]
+      summary: Invite an account by email
+      description: Requires configured and enabled mail. No password is chosen by the administrator.
+      operationId: createUserInvitation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, display_name, is_admin, locale]
+              properties:
+                email: { type: string, format: email }
+                display_name: { type: string, maxLength: 120 }
+                is_admin: { type: boolean }
+                locale: { type: string, enum: [en, ru, ""] }
+      responses:
+        "201":
+          description: Invitation queued for delivery.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserInvitation" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /api/v1/admin/user-invitations/{invitationID}:
+    delete:
+      tags: [Administration]
+      summary: Revoke an account invitation
+      operationId: revokeUserInvitation
+      parameters:
+        - $ref: "#/components/parameters/InvitationID"
+      responses:
+        "204": { description: Invitation revoked. }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/trips/{tripID}/invitations:
+    parameters:
+      - $ref: "#/components/parameters/TripID"
+    get:
+      tags: [Trips]
+      summary: List trip invitations
+      operationId: listTripInvitations
+      responses:
+        "200":
+          description: The owner's invitations without their tokens.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/TripInvitation" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Trips]
+      summary: Invite a trip member by email
+      operationId: createTripInvitation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role, locale]
+              properties:
+                email: { type: string, format: email }
+                role: { type: string, enum: [editor, viewer] }
+                locale: { type: string, enum: [en, ru, ""] }
+      responses:
+        "201":
+          description: Invitation queued for delivery.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TripInvitation" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /api/v1/trips/{tripID}/invitations/{invitationID}:
+    delete:
+      tags: [Trips]
+      summary: Revoke a trip invitation
+      operationId: revokeTripInvitation
+      parameters:
+        - $ref: "#/components/parameters/TripID"
+        - $ref: "#/components/parameters/InvitationID"
+      responses:
+        "204": { description: Invitation revoked. }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/admin/mail:
+    patch:
+      tags: [Administration]
+      summary: Enable or pause email delivery
+      description: SMTP credentials remain operator configuration. Enabling wakes the persistent queue.
+      operationId: updateMailSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: Stored mail state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailStatus" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /api/v1/admin/registration:
+    patch:
+      tags: [Administration]
+      summary: Open or close self-registration
+      description: |
+        Registration can be opened only while SMTP is configured (otherwise
+        `409 mail_not_configured`) and delivery is enabled (otherwise `409
+        mail_disabled`), because every account it makes is confirmed by email.
+        Disabling mail later closes registration without changing this switch.
+      operationId: updateRegistration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: Stored mail state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailStatus" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /api/v1/admin/mail/test:
+    post:
+      tags: [Administration]
+      summary: Send a test message
+      description: Tests SMTP immediately even while ordinary delivery is paused.
+      operationId: testMail
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "204": { description: The SMTP server accepted the message. }
+        "409": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+
 components:
   securitySchemes:
     bearer:
@@ -4414,8 +4935,27 @@ components:
       bearerFormat: JWT
 
   parameters:
+    PackingPDFCompact:
+      name: compact
+      in: query
+      required: false
+      description: |
+        `true` asks for the list on one page if it can be made to fit: a thin
+        band, and the categories tried in two and then three columns, at sizes
+        down to three quarters of the full one, split between columns only as
+        a last resort. A list that fits no way takes as few pages as it needs.
+      schema:
+        type: boolean
+        default: false
     UserID:
       name: userID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    InvitationID:
+      name: invitationID
       in: path
       required: true
       schema:
@@ -4725,6 +5265,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    StorageQuota:
+      description: "`storage_quota`: the instance has no allowance left for more user files."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     InvalidRequest:
       description: "`invalid_request`: the body is missing, too large or not the documented JSON."
       content:
@@ -4798,6 +5344,69 @@ components:
             $ref: "#/components/schemas/Error"
 
   schemas:
+    InvitationToken:
+      type: object
+      required: [token]
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+          description: One-time credential taken from the external link's fragment and sent only in the request body.
+
+    UserInvitation:
+      type: object
+      required: [id, email, display_name, is_admin, status, expires_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        display_name: { type: string }
+        is_admin: { type: boolean }
+        status: { type: string, enum: [pending, accepted, revoked, expired] }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    TripInvitation:
+      type: object
+      required: [id, email, role, status, expires_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        role: { type: string, enum: [editor, viewer] }
+        status: { type: string, enum: [pending, accepted, revoked, expired] }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    TripInvitationPreview:
+      type: object
+      required: [trip_id, trip_title, email, role, expires_at]
+      properties:
+        trip_id: { type: string, format: uuid }
+        trip_title: { type: string }
+        email: { type: string, format: email }
+        role: { type: string, enum: [editor, viewer] }
+        expires_at: { type: string, format: date-time }
+
+    MailStatus:
+      type: object
+      required: [configured, enabled, self_registration, queued, failed, last_success_at, last_error_at, last_error]
+      properties:
+        configured: { type: boolean, description: Whether the operator supplied a complete SMTP configuration. }
+        enabled: { type: boolean, description: The administrator-controlled delivery switch. }
+        self_registration: { type: boolean, description: The administrator's registration switch; registration is open only while mail is also configured and enabled. }
+        queued: { type: integer, format: int64 }
+        failed: { type: integer, format: int64 }
+        last_success_at: { type: [string, "null"], format: date-time }
+        last_error_at: { type: [string, "null"], format: date-time }
+        last_error: { type: string }
+
+    VerificationSent:
+      type: object
+      required: [resend_available_in]
+      properties:
+        resend_available_in:
+          type: integer
+          description: Seconds before another confirmation message may be requested.
+
     PackingList:
       type: object
       required: [categories, items, packed, total]
@@ -5055,7 +5664,7 @@ components:
     ClientConfig:
       type: object
       required: [version, locales, routing_enabled, routing_shortest, routing_alternatives, geocoding_enabled,
-                 map_tile_url, map_attribution]
+                 map_tile_url, map_attribution, mail_enabled, self_registration]
       properties:
         version:
           type: string
@@ -5083,6 +5692,12 @@ components:
         map_attribution:
           type: string
           description: Attribution the map must show; may contain HTML links.
+        mail_enabled:
+          type: boolean
+          description: Whether SMTP is configured and the administrator enabled recovery and invitation mail.
+        self_registration:
+          type: boolean
+          description: Whether people may register themselves; requires mail to be configured and enabled.
 
     LoginRequest:
       type: object
@@ -5126,7 +5741,8 @@ components:
 
     User:
       type: object
-      required: [id, email, display_name, is_admin, is_active, must_change_password, locale, theme,
+      required: [id, email, display_name, is_admin, is_active, must_change_password, email_notifications,
+                 email_verified, delete_after, locale, theme,
                  units, date_format, time_format, default_currency, has_avatar, avatar_updated_at,
                  last_login_at, created_at]
       properties:
@@ -5144,6 +5760,16 @@ components:
           type: boolean
         must_change_password:
           type: boolean
+        email_notifications:
+          type: boolean
+          description: Ordinary trip event mail; security messages and invitations ignore it.
+        email_verified:
+          type: boolean
+          description: False for a self-registered account whose address is not confirmed yet.
+        delete_after:
+          type: [string, "null"]
+          format: date-time
+          description: When an unconfirmed self-registered account is deleted; null for every other account.
         locale:
           type: string
           description: Interface language; empty follows the browser.
@@ -5218,6 +5844,8 @@ components:
           enum: [h24, h12]
         default_currency:
           type: string
+        email_notifications:
+          type: boolean
 
     DeleteMeRequest:
       type: object
@@ -5307,7 +5935,7 @@ components:
 
     Status:
       type: object
-      required: [version, schema_version, users, routing, geocoding]
+      required: [version, schema_version, users, routing, geocoding, storage, mail]
       properties:
         version:
           type: string
@@ -5328,6 +5956,45 @@ components:
           $ref: "#/components/schemas/ProviderStatus"
         geocoding:
           $ref: "#/components/schemas/ProviderStatus"
+        storage:
+          $ref: "#/components/schemas/StorageStatus"
+        mail:
+          $ref: "#/components/schemas/MailStatus"
+
+    StorageStatus:
+      type: object
+      required: [media_bytes, database_bytes, used_bytes, limit_bytes, trip_quota_bytes]
+      properties:
+        media_bytes:
+          type: integer
+          format: int64
+          description: Original media, avatars and idea pictures in the media store.
+        database_bytes:
+          type: integer
+          format: int64
+          description: Attachments and imported track source files in PostgreSQL.
+        used_bytes:
+          type: integer
+          format: int64
+        limit_bytes:
+          type: integer
+          format: int64
+          description: The read-only deployment limit; zero means unlimited.
+        trip_quota_bytes:
+          type: integer
+          format: int64
+          description: The administrator-controlled limit for one trip; zero means unlimited.
+
+    StorageChangeRequest:
+      type: object
+      required: [trip_quota_mb]
+      additionalProperties: false
+      properties:
+        trip_quota_mb:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The allowance for one trip in MiB; zero means unlimited.
 
     PreviewStatus:
       type: object

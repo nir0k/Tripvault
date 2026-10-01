@@ -41,15 +41,27 @@ import (
 //   - ctx: context bounding the transaction.
 //   - report: the validated report trip, with its ID, owner and source set.
 //   - planID: the plan document to copy.
+//   - quota: the most file data the new report may keep; zero means no limit.
 //
 // Returns:
 //   - domain.ErrNotFound when the plan does not exist.
+//   - domain.ErrMediaQuota when the plan's track files do not fit the report.
 //   - an error if a statement fails.
-func (r *DocumentRepository) CreateReport(ctx context.Context, report domain.Trip, planID uuid.UUID) error {
+func (r *DocumentRepository) CreateReport(ctx context.Context, report domain.Trip, planID uuid.UUID,
+	quota int64) error {
 	return pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
 		plan, err := readContent(ctx, tx, planID)
 		if err != nil {
 			return err
+		}
+		if quota > 0 {
+			var trackBytes int64
+			for _, recorded := range plan.Tracks {
+				trackBytes += recorded.FileSize
+			}
+			if trackBytes > quota {
+				return domain.ErrMediaQuota
+			}
 		}
 		if err := insertTrip(ctx, tx, report); err != nil {
 			return err
@@ -201,9 +213,9 @@ func copyTracks(ctx context.Context, tx pgx.Tx, reportID uuid.UUID, tracks []dom
 		}
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO tracks (id, document_id, item_id, original_name, format, geometry, distance_m, point_count,
-			                     ascent_m, descent_m, started_at, ended_at, file_gz, climb_version, grades)
+			                     ascent_m, descent_m, started_at, ended_at, file_gz, climb_version, grades, file_size)
 			 SELECT $1, $2, $3, original_name, format, geometry, distance_m, point_count,
-			        ascent_m, descent_m, started_at, ended_at, file_gz, climb_version, grades
+			        ascent_m, descent_m, started_at, ended_at, file_gz, climb_version, grades, file_size
 			 FROM tracks WHERE id = $4`,
 			uuid.Must(uuid.NewV7()), reportID, itemID, track.ID); err != nil {
 			return fmt.Errorf("copy track: %w", err)

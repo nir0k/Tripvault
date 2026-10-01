@@ -3,6 +3,7 @@ import { computed, ref, useTemplateRef, watch } from 'vue'
 import { VueDraggable } from 'vue-draggable-plus'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
+import { ApiError } from '@/api/client'
 import * as packingApi from '@/api/packing'
 import { listMembers } from '@/api/trips'
 import { TAG_COLORS, type PackingCategory, type PackingItem, type PackingList, type TripMember } from '@/api/types'
@@ -233,17 +234,28 @@ async function copyAll(): Promise<void> {
   }
 }
 
-// exportPdf saves the checklist to print, every box empty.
-async function exportPdf(): Promise<void> {
+// exportList saves the checklist to print, every box empty: a full-size PDF,
+// a compact one fitted on one page, or the compact one as a picture.
+async function exportList(format: 'pdf' | 'compact' | 'jpeg'): Promise<void> {
   if (exporting.value) {
     return
+  }
+  // The menu closes when it loses focus.
+  if (window.document.activeElement instanceof HTMLElement) {
+    window.document.activeElement.blur()
   }
   exporting.value = true
   error.value = ''
   try {
-    await packingApi.downloadPackingPDF(tripId.value, locale.value)
+    if (format === 'jpeg') {
+      await packingApi.downloadPackingImage(tripId.value, locale.value)
+    } else {
+      await packingApi.downloadPackingPDF(tripId.value, locale.value, format === 'compact')
+    }
   } catch (err) {
-    error.value = errorMessage(err, t, te)
+    // A failure that is not the server's is the picture failing to be drawn
+    // in this browser, which the PDF does not depend on.
+    error.value = format === 'jpeg' && !(err instanceof ApiError) ? t('packing.jpegFailed') : errorMessage(err, t, te)
   } finally {
     exporting.value = false
   }
@@ -283,12 +295,43 @@ async function exportPdf(): Promise<void> {
               <AppIcon :name="copiedAll ? 'check' : 'clipboardCopy'" />
             </button>
           </span>
-          <span class="tooltip tooltip-bottom" :data-tip="t('packing.pdf')">
-            <button type="button" class="btn btn-ghost btn-sm btn-square" :aria-label="t('packing.pdf')" :disabled="exporting" @click="exportPdf">
-              <span v-if="exporting" class="loading loading-spinner loading-xs"></span>
-              <AppIcon v-else name="filePdf" />
-            </button>
-          </span>
+          <div class="dropdown dropdown-end">
+            <span class="tooltip tooltip-bottom" :data-tip="t('packing.download')">
+              <div
+                tabindex="0"
+                role="button"
+                class="btn btn-ghost btn-sm btn-square"
+                :class="{ 'btn-disabled': exporting }"
+                :aria-label="t('packing.download')"
+              >
+                <span v-if="exporting" class="loading loading-spinner loading-xs"></span>
+                <AppIcon v-else name="filePdf" />
+              </div>
+            </span>
+            <ul tabindex="0" class="menu dropdown-content z-10 w-64 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg">
+              <li>
+                <button type="button" @click="exportList('pdf')"><AppIcon name="filePdf" />{{ t('packing.pdf') }}</button>
+              </li>
+              <li>
+                <button type="button" @click="exportList('compact')">
+                  <AppIcon name="filePdf" />
+                  <span class="flex flex-col items-start">
+                    {{ t('packing.pdfCompact') }}
+                    <span class="text-xs text-base-content/60">{{ t('packing.compactHint') }}</span>
+                  </span>
+                </button>
+              </li>
+              <li>
+                <button type="button" @click="exportList('jpeg')">
+                  <AppIcon name="image" />
+                  <span class="flex flex-col items-start">
+                    {{ t('packing.jpeg') }}
+                    <span class="text-xs text-base-content/60">{{ t('packing.compactHint') }}</span>
+                  </span>
+                </button>
+              </li>
+            </ul>
+          </div>
           <span v-if="canEdit && list.packed > 0" class="tooltip tooltip-bottom" :data-tip="t('packing.reset')">
             <button
               type="button"

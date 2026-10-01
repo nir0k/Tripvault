@@ -38,6 +38,8 @@ type Store interface {
 type StoredObject struct {
 	// Key is the object's storage key, slash-separated.
 	Key string
+	// Size is the number of bytes held by the object.
+	Size int64
 	// Modified is when the object was last written.
 	Modified time.Time
 }
@@ -422,7 +424,7 @@ func (s *LocalStore) Walk(ctx context.Context, visit func(StoredObject) error) e
 		if err != nil {
 			return err
 		}
-		return visit(StoredObject{Key: filepath.ToSlash(relative), Modified: info.ModTime()})
+		return visit(StoredObject{Key: filepath.ToSlash(relative), Size: info.Size(), Modified: info.ModTime()})
 	})
 }
 

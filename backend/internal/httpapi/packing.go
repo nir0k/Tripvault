@@ -559,7 +559,8 @@ func (s *Server) handleSharedPackingPDF(w http.ResponseWriter, r *http.Request) 
 	s.writePackingPDF(w, r, access.Trip, nil, r.URL.Query().Get("lang"))
 }
 
-// writePackingPDF renders a trip's list and sends it back.
+// writePackingPDF renders a trip's list and sends it back; ?compact=true asks
+// for it on one page if it can be made to fit.
 func (s *Server) writePackingPDF(w http.ResponseWriter, r *http.Request, trip domain.TripSummary,
 	bringers map[uuid.UUID]string, language string) {
 	list, err := s.packing.List(r.Context(), trip.ID)
@@ -570,6 +571,7 @@ func (s *Server) writePackingPDF(w http.ResponseWriter, r *http.Request, trip do
 	var document bytes.Buffer
 	if err := pdf.RenderPacking(&document, pdf.Packing{
 		Trip: trip.Trip, List: list, Bringers: bringers, Language: language,
+		Compact: r.URL.Query().Get("compact") == "true",
 	}); err != nil {
 		s.internalError(w, r, "render the packing list", err)
 		return

@@ -23,6 +23,19 @@ func TestLoadDevelopmentDefaults(t *testing.T) {
 	if cfg.HTTP.Addr != ":8080" || cfg.Log.Level != "info" || cfg.Admin.DisplayName != "Administrator" {
 		t.Errorf("unexpected defaults: %+v", cfg)
 	}
+	if cfg.Storage.QuotaBytes() != 0 || cfg.Media.TripQuotaBytes() != 2048*1024*1024 {
+		t.Errorf("unexpected storage defaults: %+v %+v", cfg.Storage, cfg.Media)
+	}
+}
+
+// TestStorageQuotaValidation checks an instance ceiling may be disabled but
+// never made negative.
+func TestStorageQuotaValidation(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("TRIPVAULT_STORAGE_QUOTA_MB", "-1")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "TRIPVAULT_STORAGE_QUOTA_MB") {
+		t.Fatalf("a negative storage quota loaded: %v", err)
+	}
 }
 
 // TestLoadRefusesUnsafeProduction checks production needs a real signing secret
@@ -56,6 +69,37 @@ func TestLoadRequiresBothAdminCredentials(t *testing.T) {
 	t.Setenv("TRIPVAULT_ADMIN_EMAIL", "admin@example.com")
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "TRIPVAULT_ADMIN_PASSWORD") {
 		t.Errorf("an email without a password: %v", err)
+	}
+}
+
+// TestMailSettings checks SMTP is either absent or complete and never sends
+// credentials over a deliberately unsecured connection.
+func TestMailSettings(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("TRIPVAULT_MAIL_HOST", "smtp.example.com")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "TRIPVAULT_MAIL_FROM_ADDRESS") {
+		t.Fatalf("a partial mail target loaded: %v", err)
+	}
+	t.Setenv("TRIPVAULT_MAIL_FROM_ADDRESS", "tripvault@example.com")
+	t.Setenv("TRIPVAULT_MAIL_PUBLIC_URL", "https://trips.example.com")
+	t.Setenv("TRIPVAULT_MAIL_USERNAME", "tripvault")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "TRIPVAULT_MAIL_PASSWORD") {
+		t.Fatalf("a partial mail login loaded: %v", err)
+	}
+	t.Setenv("TRIPVAULT_MAIL_PASSWORD", "secret")
+	t.Setenv("TRIPVAULT_MAIL_TLS", "none")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "requires starttls or tls") {
+		t.Fatalf("an unsecured mail login loaded: %v", err)
+	}
+	t.Setenv("TRIPVAULT_MAIL_TLS", "tls")
+	t.Setenv("TRIPVAULT_MAIL_PUBLIC_URL", "https://trips.example.com/login?next=mail")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "without a path") {
+		t.Fatalf("a public URL with an application path loaded: %v", err)
+	}
+	t.Setenv("TRIPVAULT_MAIL_PUBLIC_URL", "https://trips.example.com")
+	cfg, err := Load()
+	if err != nil || !cfg.Mail.Configured() {
+		t.Fatalf("a complete mail target was refused: %+v %v", cfg.Mail, err)
 	}
 }
 

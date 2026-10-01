@@ -112,19 +112,67 @@ const (
 	journalDayHeightPx = 400
 )
 
+// journalMapInner is how wide a day's map is drawn inside its card: half the
+// page beside the story, or the whole of it when nothing sits beside it.
+func journalMapInner(wide bool) float64 {
+	if wide {
+		return contentWidth - 2*journalPadding
+	}
+	return (contentWidth-journalGap)/2 - 2*journalPadding
+}
+
+// journalWideDayWidthPx is the width of the background of a day's map drawn
+// across the page. Its height is the half-page map's, so the wide map stands
+// as tall on the page and shows more of the land to either side, at the same
+// scale, rather than growing twice as tall.
+func journalWideDayWidthPx() int {
+	return int(math.Round(journalDayWidthPx * journalMapInner(true) / journalMapInner(false)))
+}
+
+// storyBeside reports whether a day's story is short enough to sit beside its
+// half-page map; a longer one is written under it across the page.
+func storyBeside(doc *document, story string) bool {
+	inner := journalMapInner(false)
+	return story != "" && markdownHeight(doc, story, inner) < journalDayHeightPx*inner/journalDayWidthPx+40
+}
+
+// wideDayMap reports whether a day's map takes the whole width of the page:
+// it does when nothing would sit beside it - no story short enough to, and no
+// moment of the day, which otherwise fills the place a long story left.
+func wideDayMap(doc *document, day domain.Day) bool {
+	return day.Highlight == "" && !storyBeside(doc, day.NotesMD)
+}
+
 // ReportMapRequests - lists the maps a report's journal is drawn with: the
-// whole trip across the page, and each day in half of it, beside its story.
+// whole trip across the page, and each day in half of it, beside its story,
+// or across the page when nothing sits beside it.
+//
+// The words are measured here, before the tiles are fetched, so content must
+// already be in the language the document is written in.
 //
 // Arguments:
-//   - content: the report.
+//   - content: the report, translated into the language it is read in.
 //
 // Returns:
 //   - the maps, keyed as MapRequests keys them.
 func ReportMapRequests(content domain.DocumentContent) []MapRequest {
 	requests := MapRequests(content)
+	days := make(map[uuid.UUID]domain.Day, len(content.Days))
+	for _, day := range content.Days {
+		days[day.ID] = day
+	}
+	var measure *document
 	for index := range requests {
-		if requests[index].Key != uuid.Nil {
-			requests[index].Width, requests[index].Height = journalDayWidthPx, journalDayHeightPx
+		key := requests[index].Key
+		if key == uuid.Nil {
+			continue
+		}
+		requests[index].Width, requests[index].Height = journalDayWidthPx, journalDayHeightPx
+		if measure == nil {
+			measure = newDocument("", "")
+		}
+		if wideDayMap(measure, days[key]) {
+			requests[index].Width = journalWideDayWidthPx()
 		}
 	}
 	return requests

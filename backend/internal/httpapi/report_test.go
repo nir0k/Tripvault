@@ -56,9 +56,27 @@ func TestCreateReport(t *testing.T) {
 		}
 	}
 
-	// A report cannot be copied into another report.
-	s, docs := newReportServer(domain.RoleOwner)
+	// A copied track duplicates its source file in PostgreSQL and therefore
+	// needs room in the instance allowance like a fresh upload does.
+	s, docs := newDocumentServer(domain.RoleOwner)
+	docs.track = &domain.Track{FileSize: 1024}
+	s.storage = &fakeStorage{reserveErr: domain.ErrStorageQuota}
 	recorder := send(s, http.MethodPost, "/api/v1/trips/"+docs.document.TripID.String()+"/reports", "good", "")
+	if recorder.Code != http.StatusInsufficientStorage || errorCode(t, recorder) != "storage_quota" || docs.changed != 0 {
+		t.Errorf("a report copied a track beyond storage: %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	s, docs = newDocumentServer(domain.RoleOwner)
+	docs.track = &domain.Track{FileSize: 1024}
+	s.storage = &fakeStorage{usage: domain.StorageUsage{TripQuotaBytes: 1}}
+	recorder = send(s, http.MethodPost, "/api/v1/trips/"+docs.document.TripID.String()+"/reports", "good", "")
+	if recorder.Code != http.StatusConflict || errorCode(t, recorder) != "media_quota" || docs.changed != 0 {
+		t.Errorf("a report copied a track beyond its trip allowance: %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	// A report cannot be copied into another report.
+	s, docs = newReportServer(domain.RoleOwner)
+	recorder = send(s, http.MethodPost, "/api/v1/trips/"+docs.document.TripID.String()+"/reports", "good", "")
 	if recorder.Code != http.StatusConflict || docs.changed != 0 {
 		t.Errorf("a report was copied: %d %s", recorder.Code, recorder.Body.String())
 	}

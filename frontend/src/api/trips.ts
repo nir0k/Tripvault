@@ -1,7 +1,7 @@
 import { http } from './client'
 import type {
   Budget, CoverCrop, CreatedShareLink, DocumentKind, ListResponse, MemberRole, PageResponse, PlanState, ShareLink, Trip,
-  TripMember, TripUser,
+  TripInvitation, TripMember, TripUser,
 } from './types'
 
 export type TripScope = 'all' | 'owned' | 'shared'
@@ -122,6 +122,26 @@ export async function updateMember(tripId: string, userId: string, role: MemberR
 /** removeMember takes a member's access away. */
 export async function removeMember(tripId: string, userId: string): Promise<void> {
   await http.delete(tripPath(tripId, `/members/${encodeURIComponent(userId)}`))
+}
+
+/** acceptTripInvitation joins the signed-in account to the offered trip. */
+export async function acceptTripInvitation(token: string): Promise<string> {
+  return (await http.post<{ trip_id: string }>('/api/v1/invitations/trip/accept', { token })).data.trip_id
+}
+
+/** listTripInvitations returns invitations created for one trip. */
+export async function listTripInvitations(tripId: string): Promise<TripInvitation[]> {
+  return (await http.get<ListResponse<TripInvitation>>(tripPath(tripId, '/invitations'))).data.items
+}
+
+/** inviteTripMember emails an invitation to one address. */
+export async function inviteTripMember(tripId: string, email: string, role: MemberRole, locale: string): Promise<TripInvitation> {
+  return (await http.post<TripInvitation>(tripPath(tripId, '/invitations'), { email, role, locale })).data
+}
+
+/** revokeTripInvitation withdraws an unused invitation. */
+export async function revokeTripInvitation(tripId: string, invitationId: string): Promise<void> {
+  await http.delete(tripPath(tripId, `/invitations/${encodeURIComponent(invitationId)}`))
 }
 
 /** NewShareLink describes a link to create; every field has a default. */

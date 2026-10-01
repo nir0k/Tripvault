@@ -18,6 +18,12 @@ export interface User {
   is_admin: boolean
   is_active: boolean
   must_change_password: boolean
+  /** Whether ordinary event notifications are emailed; security mail is always sent. */
+  email_notifications: boolean
+  /** False for a self-registered account whose address is not confirmed yet. */
+  email_verified: boolean
+  /** When an unconfirmed self-registered account is deleted; null for every other account. */
+  delete_after: string | null
   /** Interface language; empty follows the browser. */
   locale: string
   theme: Theme
@@ -74,6 +80,10 @@ export interface ClientConfig {
   map_tile_url: string
   /** Attribution the map must show; may contain links. */
   map_attribution: string
+  /** Whether SMTP is configured and enabled for recovery and invitations. */
+  mail_enabled: boolean
+  /** Whether people may register themselves; it needs mail to be delivered. */
+  self_registration: boolean
 }
 
 /** ProviderStatus describes an external provider and its cache. */
@@ -89,12 +99,81 @@ export interface ProviderStatus {
   cache_hits: number
 }
 
+/** StorageStatus is the user-file usage and the two configured allowances. */
+export interface StorageStatus {
+  media_bytes: number
+  database_bytes: number
+  used_bytes: number
+  /** Zero means the operator left the instance unlimited. */
+  limit_bytes: number
+  /** Zero means an individual trip is unlimited. */
+  trip_quota_bytes: number
+}
+
 export interface ServiceStatus {
   version: string
   schema_version: number
   users: { total: number; active: number; admins: number }
   routing: ProviderStatus
   geocoding: ProviderStatus
+  storage: StorageStatus
+  mail: MailStatus
+}
+
+/** MailStatus is the operator configuration, administrator switch and delivery queue. */
+export interface MailStatus {
+  configured: boolean
+  enabled: boolean
+  /** The administrator's registration switch; registration is open only while mail is configured and enabled too. */
+  self_registration: boolean
+  queued: number
+  failed: number
+  last_success_at: string | null
+  last_error_at: string | null
+  last_error: string
+}
+
+/** VerificationSent says when another confirmation message may be requested. */
+export interface VerificationSent {
+  resend_available_in: number
+}
+
+export type InvitationStatus = 'pending' | 'accepted' | 'revoked' | 'expired'
+
+/** UserInvitation is an account invitation without its one-time token. */
+export interface UserInvitation {
+  id: string
+  email: string
+  display_name: string
+  is_admin: boolean
+  status: InvitationStatus
+  expires_at: string
+  created_at: string
+}
+
+/** TripInvitation is an email invitation to one trip. */
+export interface TripInvitation {
+  id: string
+  email: string
+  role: MemberRole
+  status: InvitationStatus
+  expires_at: string
+  created_at: string
+}
+
+export interface UserInvitationPreview {
+  email: string
+  display_name: string
+  is_admin: boolean
+  expires_at: string
+}
+
+export interface TripInvitationPreview {
+  trip_id: string
+  trip_title: string
+  email: string
+  role: MemberRole
+  expires_at: string
 }
 
 /**

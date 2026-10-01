@@ -53,6 +53,20 @@ func (s *Server) handleSetAvatar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := avatarKey(user.ID)
+	var previousBytes int64
+	if s.storage != nil {
+		previousBytes, err = s.storage.ObjectBytes(r.Context(), user.AvatarKey)
+		if err != nil {
+			s.internalError(w, r, "measure replaced avatar", err)
+			return
+		}
+	}
+	release, err := s.reserveStorage(r.Context(), int64(len(square))-previousBytes)
+	if err != nil {
+		s.writeStorageError(w, r, "reserve avatar storage", err)
+		return
+	}
+	defer release()
 	if _, err := s.mediaFiles.Put(r.Context(), key, bytes.NewReader(square)); err != nil {
 		s.internalError(w, r, "store avatar", err)
 		return

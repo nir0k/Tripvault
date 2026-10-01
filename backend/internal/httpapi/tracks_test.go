@@ -50,6 +50,7 @@ func importTrack(t *testing.T, s *Server, itemID string, name string, data []byt
 // a place, with its length measured and its points counted.
 func TestImportTrackStoresTheRecordedLine(t *testing.T) {
 	s, docs := newReportServerWithTracks(t)
+	s.mediaTripQuota = 4096
 	recorder := importTrack(t, s, docs.place.ID.String(), "day1.gpx",
 		gpx([][2]float64{{63.532, -19.511}, {63.500, -19.400}, {63.491, -19.364}}))
 	if recorder.Code != http.StatusOK {
@@ -57,6 +58,9 @@ func TestImportTrackStoresTheRecordedLine(t *testing.T) {
 	}
 	if docs.track == nil {
 		t.Fatal("nothing was stored")
+	}
+	if docs.trackQuota != 4096 || docs.track.FileSize != int64(len(docs.trackFile)) {
+		t.Errorf("track quota %d and size %d, want 4096 and %d", docs.trackQuota, docs.track.FileSize, len(docs.trackFile))
 	}
 	if docs.track.OriginalName != "day1.gpx" || docs.track.PointCount != 3 {
 		t.Errorf("stored %q with %d points, want day1.gpx with 3", docs.track.OriginalName, docs.track.PointCount)
@@ -75,6 +79,18 @@ func TestImportTrackStoresTheRecordedLine(t *testing.T) {
 	}
 	if docs.track.OriginalName != "again.gpx" {
 		t.Errorf("after replacing, the place holds %q", docs.track.OriginalName)
+	}
+}
+
+// TestTrackCountsAgainstTripQuota checks imported database files obey the same
+// administrator policy as photographs and attachments.
+func TestTrackCountsAgainstTripQuota(t *testing.T) {
+	s, docs := newReportServerWithTracks(t)
+	s.mediaTripQuota = 1
+	recorder := importTrack(t, s, docs.place.ID.String(), "day.gpx",
+		gpx([][2]float64{{63.5, -19.5}, {63.51, -19.51}}))
+	if recorder.Code != http.StatusConflict || errorCode(t, recorder) != "media_quota" || docs.track != nil {
+		t.Fatalf("a track beyond the trip quota: %d %s", recorder.Code, recorder.Body.String())
 	}
 }
 

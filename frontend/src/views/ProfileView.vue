@@ -84,6 +84,18 @@ function saveCurrency(code: string): void {
     })
 }
 
+// saveEmailNotifications changes ordinary event mail; security messages remain mandatory.
+async function saveEmailNotifications(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  accountError.value = ''
+  try {
+    session.setUser(await updateMe({ email_notifications: input.checked }))
+  } catch (err) {
+    input.checked = user.value?.email_notifications ?? false
+    accountError.value = errorMessage(err, t, te)
+  }
+}
+
 // storeAvatar sends the square the editor cut out and shows the account with it.
 async function storeAvatar(picture: Blob): Promise<void> {
   avatarError.value = ''
@@ -249,6 +261,18 @@ onMounted(loadSessions)
               @update:model-value="saveCurrency"
             />
           </div>
+          <label class="label cursor-pointer justify-start gap-3">
+            <input
+              type="checkbox"
+              class="toggle toggle-primary"
+              :checked="user?.email_notifications"
+              @change="saveEmailNotifications"
+            />
+            <span>
+              <span class="block text-sm">{{ t('profile.emailNotifications') }}</span>
+              <span class="block text-xs text-base-content/60">{{ t('profile.emailNotificationsHint') }}</span>
+            </span>
+          </label>
         </div>
       </div>
 

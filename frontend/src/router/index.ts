@@ -29,6 +29,44 @@ export const router = createRouter({
       meta: { public: true, bare: true },
     },
     {
+      path: '/register',
+      name: 'register',
+      component: () => import('@/views/RegisterView.vue'),
+      meta: { public: true, bare: true },
+    },
+    {
+      path: '/verify-email',
+      name: 'verify-email',
+      component: () => import('@/views/VerifyEmailView.vue'),
+      meta: { public: true, bare: true },
+    },
+    {
+      path: '/forgot-password',
+      name: 'forgot-password',
+      component: () => import('@/views/ForgotPasswordView.vue'),
+      meta: { public: true, bare: true },
+    },
+    {
+      path: '/reset-password',
+      name: 'reset-password',
+      component: () => import('@/views/ResetPasswordView.vue'),
+      meta: { public: true, bare: true },
+    },
+    {
+      path: '/invite/account',
+      name: 'account-invitation',
+      component: () => import('@/views/InvitationView.vue'),
+      props: { kind: 'account' },
+      meta: { public: true, bare: true },
+    },
+    {
+      path: '/invite/trip',
+      name: 'trip-invitation',
+      component: () => import('@/views/InvitationView.vue'),
+      props: { kind: 'trip' },
+      meta: { public: true, bare: true },
+    },
+    {
       // A read-only link: https://<host>/s#token=<token>. The fragment never
       // reaches the server, so the address itself carries no credential into a log.
       // The link opens the same pages a member reads - the document and its
@@ -144,7 +182,7 @@ router.beforeEach(async (to) => {
 
   // Signing in again makes no sense; every other public page does, so an owner
   // signed in here can still open a link they handed out and see what it shows.
-  if (to.name === 'login') {
+  if (to.name === 'login' || to.name === 'register') {
     return session.signedIn ? { name: 'home' } : true
   }
   if (to.meta.public) {

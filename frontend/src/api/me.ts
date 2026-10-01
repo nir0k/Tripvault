@@ -9,6 +9,7 @@ export interface ProfileChanges {
   date_format?: DateFormat
   time_format?: TimeFormat
   default_currency?: string
+  email_notifications?: boolean
 }
 
 /** getMe reads the signed-in account. */
