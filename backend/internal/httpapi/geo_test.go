@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -14,10 +15,12 @@ import (
 	"github.com/nir0k/tripvault/backend/internal/geocoding"
 )
 
-// fakeGeocoder records the query and answers with one place, or fails.
+// fakeGeocoder records the query and answers with one place, with none when
+// told to find nothing, or fails.
 type fakeGeocoder struct {
-	query geocoding.Query
-	err   error
+	query   geocoding.Query
+	err     error
+	nothing bool
 }
 
 // Enabled reports a configured geocoder.
@@ -26,6 +29,9 @@ func (f *fakeGeocoder) Enabled() bool { return f.err != geocoding.ErrDisabled }
 // Search records the query.
 func (f *fakeGeocoder) Search(_ context.Context, query geocoding.Query) ([]geocoding.Place, error) {
 	f.query = query
+	if f.nothing {
+		return nil, f.err
+	}
 	return []geocoding.Place{{Name: "Vík", Lat: 63.41, Lng: -19.0}}, f.err
 }
 
@@ -72,5 +78,41 @@ func TestGeoEndpoints(t *testing.T) {
 	}
 	if recorder = send(s, http.MethodGet, "/api/v1/geo/parse-link?url=Reykjavik", "good", ""); recorder.Code != http.StatusUnprocessableEntity {
 		t.Errorf("unrecognized link: %d", recorder.Code)
+	}
+}
+
+// TestParseLinkSearchesANameOnlyPlace checks a Google place link without a
+// position is found by its name through the geocoder, and refused without one
+// or when nothing is found.
+func TestParseLinkSearchesANameOnlyPlace(t *testing.T) {
+	geocoder := &fakeGeocoder{}
+	s := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+		Auth:     &fakeAuth{user: domain.User{ID: uuid.New(), IsActive: true, Locale: "en"}},
+		Geocoder: geocoder,
+	})
+	link := "/api/v1/geo/parse-link?url=" + url.QueryEscape("https://www.google.com/maps/place/"+
+		"Googleplex,+1600+Amphitheatre+Pkwy,+Mountain+View,+CA+94043/data=!4m2!3m1!1s0x808fba02425dad8f:0x6c296c66619367e0")
+
+	recorder := send(s, http.MethodGet, link, "good", "")
+	if recorder.Code != http.StatusOK ||
+		!strings.Contains(recorder.Body.String(), `{"lat":63.41,"lng":-19,"name":"Googleplex"}`) ||
+		geocoder.query.Text != "Googleplex, 1600 Amphitheatre Pkwy, Mountain View, CA 94043" {
+		t.Errorf("name-only link: %d %s %+v", recorder.Code, recorder.Body.String(), geocoder.query)
+	}
+
+	geocoder.nothing = true
+	if recorder = send(s, http.MethodGet, link, "good", ""); recorder.Code != http.StatusUnprocessableEntity {
+		t.Errorf("nothing found: %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	geocoder.nothing, geocoder.err = false, geocoding.ErrUnavailable
+	if recorder = send(s, http.MethodGet, link, "good", ""); recorder.Code != http.StatusServiceUnavailable ||
+		errorCode(t, recorder) != "geocoding_unavailable" {
+		t.Errorf("geocoder down: %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	geocoder.err = geocoding.ErrDisabled
+	if recorder = send(s, http.MethodGet, link, "good", ""); recorder.Code != http.StatusUnprocessableEntity {
+		t.Errorf("no geocoder: %d %s", recorder.Code, recorder.Body.String())
 	}
 }

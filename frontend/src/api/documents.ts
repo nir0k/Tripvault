@@ -2,7 +2,7 @@ import { http, PDF_TIMEOUT_MS, UPLOAD_TIMEOUT_MS } from './client'
 import { filenameFrom, saveBlob } from '@/utils/download'
 import type {
   ActivityType, CostCategory, CostShare, CostSplit, GeoPoint, ItemStatus, LegStop, ListResponse, PlaceCategory, RouteOption,
-  RoutePreference, StayKind,
+  RoutePreference, StayKind, StopKind,
   Attachment, Track, TransferKind, TranslationEntry, TravelMode, TripDocument,
 } from './types'
 
@@ -59,6 +59,26 @@ export interface PlaceFields {
   actual_cost_amount?: string | null
   /** The picture the place is shown by; null takes the cover away. */
   cover_media_id?: string | null
+}
+
+/** StopFields are the fields of a stop a change sends; an absent one stays as it is. */
+export interface StopFields {
+  kind?: StopKind
+  name?: string
+  note_md?: string
+  /** A point to place the stop at; the server moves it onto the line. */
+  lat?: number
+  lng?: number
+  /** Refused on a plan. */
+  actual_time?: string | null
+  planned_cost_amount?: string | null
+  actual_cost_amount?: string | null
+  cost_per_person?: boolean
+  cost_category?: CostCategory
+  cost_note?: string
+  paid_by?: string | null
+  cost_split?: CostSplit
+  cost_shares?: CostShare[]
 }
 
 export interface StayFields {
@@ -260,6 +280,11 @@ export async function updatePlace(itemId: string, fields: PlaceFields): Promise<
   return (await http.patch<TripDocument>(path`/items/${itemId}`, fields)).data
 }
 
+/** updateNight tells the story of the night a day of a report ends with, on its evening stay mark. */
+export async function updateNight(itemId: string, story: string): Promise<TripDocument> {
+  return (await http.patch<TripDocument>(path`/items/${itemId}/night`, { story_md: story })).data
+}
+
 /** deletePlace removes a place. */
 export async function deletePlace(itemId: string): Promise<TripDocument> {
   return (await http.delete<TripDocument>(path`/items/${itemId}`)).data
@@ -441,6 +466,21 @@ export async function setItemTrackSpeed(itemId: string, speedKmh: number | null)
 /** deleteItemTrack removes the recorded line of a place or an activity. */
 export async function deleteItemTrack(itemId: string): Promise<TripDocument> {
   return (await http.delete<TripDocument>(`/api/v1/items/${encodeURIComponent(itemId)}/track`)).data
+}
+
+/** createStop adds a stop along the line of an activity, at the point of the line nearest to the one given. */
+export async function createStop(itemId: string, fields: StopFields): Promise<TripDocument> {
+  return (await http.post<TripDocument>(`/api/v1/items/${encodeURIComponent(itemId)}/stops`, fields)).data
+}
+
+/** updateStop changes a stop; a new point is placed on the line again. */
+export async function updateStop(stopId: string, fields: StopFields): Promise<TripDocument> {
+  return (await http.patch<TripDocument>(`/api/v1/stops/${encodeURIComponent(stopId)}`, fields)).data
+}
+
+/** deleteStop removes a stop. */
+export async function deleteStop(stopId: string): Promise<TripDocument> {
+  return (await http.delete<TripDocument>(`/api/v1/stops/${encodeURIComponent(stopId)}`)).data
 }
 
 /**

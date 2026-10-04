@@ -276,7 +276,8 @@ func writeAnchor(doc *document, text labels, item domain.Item, stay domain.Stay,
 
 // writePlanPlace writes one place or activity: when it is reached, what it is,
 // how long it takes, where it is and what it costs, with a QR code of it on a
-// map beside it and one of its website below. number is its number on the day's map, or empty.
+// map beside it and one of its website below, and the stops along its line.
+// number is its number on the day's map, or empty.
 func writePlanPlace(doc *document, text labels, plan Plan, place domain.Item, number string,
 	schedule *domain.ItemSchedule) {
 	title := place.Name
@@ -320,6 +321,10 @@ func writePlanPlace(doc *document, text labels, plan Plan, place domain.Item, nu
 	writeInfoBlock(doc, text, title, lines, mapLink(place.Lat, place.Lng), place.URL)
 	if place.DescriptionMD != "" {
 		writeMarkdown(doc, place.DescriptionMD)
+	}
+	// The stops along an activity's line carry its number on the day's map.
+	if numbered, err := strconv.Atoi(number); err == nil {
+		writeStops(doc, text, plan.Trip, place, plan.Content.Tracks, numbered, false, marginLeft, contentWidth)
 	}
 	doc.space(2)
 }

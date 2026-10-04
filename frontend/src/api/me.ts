@@ -1,5 +1,5 @@
 import { http, UPLOAD_TIMEOUT_MS } from './client'
-import type { DateFormat, ListResponse, SessionItem, Theme, TimeFormat, Units, User } from './types'
+import type { DateFormat, HomeInput, HomeSettings, ListResponse, SessionItem, Theme, TimeFormat, Units, User } from './types'
 
 export interface ProfileChanges {
   display_name?: string
@@ -52,6 +52,25 @@ export async function deleteAvatar(): Promise<User> {
  */
 export async function deleteAccount(currentPassword: string): Promise<void> {
   await http.delete('/api/v1/me', { data: { current_password: currentPassword } })
+}
+
+/** getHome reads where the signed-in person lives and the circle hidden around it. */
+export async function getHome(): Promise<HomeSettings> {
+  return (await http.get<HomeSettings>('/api/v1/me/home')).data
+}
+
+/**
+ * setHome stores the signed-in person's home. The server draws the hidden
+ * circle around it, its centre moved off the home, and draws it again only
+ * when the point or the radius changes.
+ */
+export async function setHome(home: HomeInput): Promise<HomeSettings> {
+  return (await http.put<HomeSettings>('/api/v1/me/home', home)).data
+}
+
+/** deleteHome forgets the signed-in person's home. */
+export async function deleteHome(): Promise<void> {
+  await http.delete('/api/v1/me/home')
 }
 
 /** changePassword replaces the signed-in account's password. */

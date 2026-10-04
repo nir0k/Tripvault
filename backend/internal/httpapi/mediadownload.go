@@ -255,11 +255,20 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ticket.items = items
+	// A read-only link downloads no picture that says it was taken at
+	// somebody's home.
+	var zones domain.PrivacyZones
+	if ticket.reader.userID == nil {
+		var ok bool
+		if zones, ok = s.privacyZones(w, r, ticket.tripID); !ok {
+			return
+		}
+	}
 	if len(ticket.items) == 1 {
-		s.writeDownloadedFile(w, r, ticket.items[0])
+		s.writeDownloadedFile(w, r, ticket.items[0], hidesLocation(ticket.items[0], zones))
 		return
 	}
-	s.writeArchive(w, r, ticket)
+	s.writeArchive(w, r, ticket, zones)
 }
 
 // stillDownloadable checks the reader of a ticket against its trip as things
@@ -331,9 +340,10 @@ func (s *Server) stillDownloadable(ctx context.Context, ticket downloadTicket) (
 }
 
 // writeDownloadedFile sends one picture to be saved under its original name,
-// answering a range, so a download broken off resumes where it stopped.
-func (s *Server) writeDownloadedFile(w http.ResponseWriter, r *http.Request, item domain.Media) {
-	file, err := s.mediaFiles.Open(r.Context(), item.StorageKey)
+// answering a range, so a download broken off resumes where it stopped. With
+// scrub the place it was taken at is blanked, which keeps its length.
+func (s *Server) writeDownloadedFile(w http.ResponseWriter, r *http.Request, item domain.Media, scrub bool) {
+	file, err := s.openMedia(r.Context(), item, scrub)
 	if err != nil {
 		if errors.Is(err, media.ErrNotFound) {
 			s.writeError(w, r, http.StatusNotFound, "not_found", "Resource not found")
@@ -359,14 +369,17 @@ func (s *Server) writeDownloadedFile(w http.ResponseWriter, r *http.Request, ite
 // rather than compressed: a photograph is compressed already, and squeezing it
 // again costs time for nothing. The archive is written as it is read from the
 // store, so it never sits whole in memory; names that repeat get a number,
-// "IMG_0001 (2).jpg".
-func (s *Server) writeArchive(w http.ResponseWriter, r *http.Request, ticket downloadTicket) {
+// "IMG_0001 (2).jpg". A picture taken inside one of zones goes in without
+// the place it was taken at.
+func (s *Server) writeArchive(w http.ResponseWriter, r *http.Request, ticket downloadTicket,
+	zones domain.PrivacyZones) {
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", attachment(archiveName(ticket.title)))
 	archive := zip.NewWriter(w)
 	names := make(map[string]int, len(ticket.items))
 	for _, item := range ticket.items {
-		if err := s.addToArchive(r, archive, item, uniqueName(names, item.OriginalName)); err != nil {
+		err := s.addToArchive(r, archive, item, uniqueName(names, item.OriginalName), hidesLocation(item, zones))
+		if err != nil {
 			// The answer has begun; all that is left is to stop it short, which
 			// the browser reports as a failed download rather than a broken file.
 			s.logger.Warn("write media archive failed", "error", err, "media_id", item.ID.String())
@@ -378,9 +391,11 @@ func (s *Server) writeArchive(w http.ResponseWriter, r *http.Request, ticket dow
 	}
 }
 
-// addToArchive copies one stored file into the archive under a name.
-func (s *Server) addToArchive(r *http.Request, archive *zip.Writer, item domain.Media, name string) error {
-	file, err := s.mediaFiles.Open(r.Context(), item.StorageKey)
+// addToArchive copies one stored file into the archive under a name, with
+// scrub blanking the place it was taken at.
+func (s *Server) addToArchive(r *http.Request, archive *zip.Writer, item domain.Media, name string,
+	scrub bool) error {
+	file, err := s.openMedia(r.Context(), item, scrub)
 	if err != nil {
 		if errors.Is(err, media.ErrNotFound) {
 			// A file lost from the store is left out rather than failing the rest.

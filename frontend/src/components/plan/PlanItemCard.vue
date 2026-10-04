@@ -5,6 +5,7 @@ import type { PlaceFields } from '@/api/documents'
 import type { ActivityType, PlaceCategory, PlanItem } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import IconSelect from '@/components/IconSelect.vue'
+import ActivityStops from '@/components/plan/ActivityStops.vue'
 import ItemAttachments from '@/components/plan/ItemAttachments.vue'
 import MarkdownText from '@/components/MarkdownText.vue'
 import ReportTrackLine from '@/components/report/ReportTrackLine.vue'
@@ -314,6 +315,14 @@ const host = computed(() => {
         @import="(file) => emit('importTrack', file)"
         @remove="emit('removeTrack')"
         @speed="(speed) => emit('trackSpeed', speed)"
+      />
+      <ActivityStops
+        v-if="item.track"
+        :item="item"
+        :editing="editable"
+        :report="false"
+        :number="number"
+        class="mt-1"
       />
       <ItemAttachments
         v-if="!isAnchor"

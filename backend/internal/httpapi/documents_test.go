@@ -47,6 +47,8 @@ type fakeDocuments struct {
 	attachmentFiles map[uuid.UUID][]byte
 	// attachmentQuota is the allowance the last CreateAttachment was given.
 	attachmentQuota int64
+	// stops are the stops along the stored track.
+	stops []domain.Stop
 }
 
 // CreateAttachment stores a file of the place, refusing a second copy of one
@@ -157,12 +159,70 @@ func (f *fakeDocuments) Content(context.Context, uuid.UUID) (domain.DocumentCont
 		Transfers: f.transfers(), Expenses: f.expenses(), Tracks: f.tracks(), Translations: f.translations}, nil
 }
 
-// tracks lists the stored track, if there is one.
+// tracks lists the stored track, if there is one, with its stops.
 func (f *fakeDocuments) tracks() []domain.Track {
 	if f.track == nil {
 		return nil
 	}
-	return []domain.Track{*f.track}
+	line := *f.track
+	line.Stops = f.stops
+	return []domain.Track{line}
+}
+
+// Stop finds one stored stop.
+func (f *fakeDocuments) Stop(_ context.Context, id uuid.UUID) (domain.Stop, error) {
+	for _, stop := range f.stops {
+		if stop.ID == id {
+			return stop, nil
+		}
+	}
+	return domain.Stop{}, domain.ErrNotFound
+}
+
+// CreateStop keeps a stop of the activity with the stored track.
+func (f *fakeDocuments) CreateStop(_ context.Context, stop domain.Stop) error {
+	if f.track == nil || f.track.ItemID != stop.ItemID {
+		return domain.ErrNotFound
+	}
+	f.stops = append(f.stops, stop)
+	f.changed++
+	return nil
+}
+
+// UpdateStop replaces a stored stop.
+func (f *fakeDocuments) UpdateStop(_ context.Context, stop domain.Stop) error {
+	for index := range f.stops {
+		if f.stops[index].ID == stop.ID {
+			f.stops[index] = stop
+			f.changed++
+			return nil
+		}
+	}
+	return domain.ErrNotFound
+}
+
+// MoveStops stores the stops' new places.
+func (f *fakeDocuments) MoveStops(_ context.Context, stops []domain.Stop) error {
+	for _, moved := range stops {
+		for index := range f.stops {
+			if f.stops[index].ID == moved.ID {
+				f.stops[index].Point, f.stops[index].DistanceM, f.stops[index].GradesTo =
+					moved.Point, moved.DistanceM, moved.GradesTo
+			}
+		}
+	}
+	return nil
+}
+
+// DeleteStop removes a stored stop.
+func (f *fakeDocuments) DeleteStop(_ context.Context, id uuid.UUID) error {
+	for index := range f.stops {
+		if f.stops[index].ID == id {
+			f.stops = append(f.stops[:index], f.stops[index+1:]...)
+			return nil
+		}
+	}
+	return domain.ErrNotFound
 }
 
 // CreateReport records the report and lets the fake trips read it back as a
@@ -363,6 +423,16 @@ func (f *fakeDocuments) SetTrackSpeed(_ context.Context, itemID uuid.UUID, speed
 		return domain.ErrNotFound
 	}
 	f.track.SpeedKmh = speed
+	return nil
+}
+
+// SetNightStory stores the story of the evening stay mark.
+func (f *fakeDocuments) SetNightStory(_ context.Context, itemID uuid.UUID, story string) error {
+	if itemID != f.anchor.ID {
+		return domain.ErrNotFound
+	}
+	f.anchor.StoryMD = story
+	f.changed++
 	return nil
 }
 
@@ -636,6 +706,35 @@ func TestDocumentRules(t *testing.T) {
 		`{"name":"Hotel","check_in_date":"2026-06-20"}`)
 	if recorder.Code != http.StatusUnprocessableEntity {
 		t.Errorf("stay without check-out: %d", recorder.Code)
+	}
+}
+
+// TestNightStory checks the evening stay mark of a report takes the story of
+// the night, while a plan's mark and a place are refused.
+func TestNightStory(t *testing.T) {
+	s, docs := newDocumentServer(domain.RoleEditor)
+	path := "/api/v1/items/" + docs.anchor.ID.String() + "/night"
+
+	recorder := send(s, http.MethodPatch, path, "good", `{"story_md":"Northern lights"}`)
+	if recorder.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(recorder.Body.String(), `"reason":"report_only"`) {
+		t.Errorf("plan night: %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	docs.document.Kind = domain.DocumentReport
+	recorder = send(s, http.MethodPatch, "/api/v1/items/"+docs.place.ID.String()+"/night", "good",
+		`{"story_md":"x"}`)
+	if recorder.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(recorder.Body.String(), `"reason":"not_a_night"`) {
+		t.Errorf("place as a night: %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	recorder = send(s, http.MethodPatch, path, "good", `{"story_md":"Northern lights"}`)
+	if recorder.Code != http.StatusOK || docs.anchor.StoryMD != "Northern lights" {
+		t.Errorf("report night: %d %q", recorder.Code, docs.anchor.StoryMD)
+	}
+	if !strings.Contains(recorder.Body.String(), `"story_md":"Northern lights"`) {
+		t.Errorf("document lacks the night's story: %s", recorder.Body.String())
 	}
 }
 

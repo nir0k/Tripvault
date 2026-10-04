@@ -11,6 +11,7 @@ import TransferRow from '@/components/plan/TransferRow.vue'
 import EditableMarkdown from '@/components/report/EditableMarkdown.vue'
 import ReportLegLine from '@/components/report/ReportLegLine.vue'
 import ReportPlaceCard from '@/components/report/ReportPlaceCard.vue'
+import ReportStayCard from '@/components/report/ReportStayCard.vue'
 import { useReportText } from '@/composables/useContentLanguage'
 import { formatDayDate, formatDistance, formatMoney } from '@/utils/format'
 import { activeUnits } from '@/utils/units'
@@ -18,13 +19,13 @@ import type { MediaHint } from '@/utils/mediaHints'
 import { isVisit } from '@/utils/plan'
 
 // One day of a report: what it was called, what happened, the places of the day
-// and what it cost. Stay marks are left out here - where the night was spent is
-// part of the plan's schedule, and the report reads as prose - but the journey
-// to each place is told in a line above it: how, how long and how far.
+// and what it cost, ending where the night was spent, with its story. The
+// journey to each place and to the night is told in a line above it: how, how
+// long and how far.
 //
-// While a translation is written the day keeps only its words editable - its
-// title, its notes and the stories of its places - and adding, removing and
-// arranging wait for the original.
+// While a translation is written the day's words - its title, its notes and
+// the stories of its places - are written in that language, and everything
+// every language shares is edited as ever.
 const props = defineProps<{
   day: PlanDay
   currency: string
@@ -45,6 +46,8 @@ const props = defineProps<{
   removable?: boolean
   /** Whether places are dragged: on a wide screen with a pointer, as in the plan. */
   draggable?: boolean
+  /** The speed on the flat a line without times is estimated at. */
+  trackSpeed?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -56,6 +59,7 @@ const emit = defineEmits<{
   rate: [item: PlanItem, rating: number | null]
   story: [item: PlanItem, story: string]
   edit: [item: PlanItem]
+  translate: [item: PlanItem]
   remove: [item: PlanItem]
   /** A place goes to a position of a day, as in the plan. */
   move: [itemId: string, dayId: string, position: number]
@@ -78,26 +82,25 @@ const emit = defineEmits<{
   dismissHints: []
   removeDay: []
   editLeg: [leg: Leg]
+  translateLeg: [leg: Leg]
+  /** The story of the night the day ends with, told on its evening stay mark. */
+  night: [night: PlanItem, story: string]
   translateTransfer: [transfer: Transfer]
 }>()
 
 const { t, locale } = useI18n()
 const text = useReportText()
 
-// structural is editing what every language shares.
-const structural = computed(() => props.editing && !text.value.translating)
-
-// legEditable says whether a journey's line opens a form: its own while the
-// original is written, and the translation of its note - when it has one -
-// while a translation is.
-function legEditable(leg: Leg): boolean {
-  if (!props.editing) {
-    return false
-  }
-  return !text.value.translating || !!text.value.original(leg.id, 'note')
+// legTranslatable says whether a journey's note is offered for translation:
+// while a translation is written, and when there is a note to translate.
+function legTranslatable(leg: Leg): boolean {
+  return props.editing && text.value.translating && !!text.value.original(leg.id, 'note')
 }
 
 const places = computed(() => props.day.items.filter(isVisit))
+// placeNumbers are the places' numbers in the day, as the map numbers its pins,
+// counting the places hidden from the list too.
+const placeNumbers = computed(() => new Map(places.value.map((item, index) => [item.id, index + 1])))
 
 const shown = computed(() => (props.hideSkipped ? places.value.filter((item) => item.status !== 'skipped') : places.value))
 const hidden = computed(() => places.value.length - shown.value.length)
@@ -106,7 +109,7 @@ const hidden = computed(() => places.value.length - shown.value.length)
 // days - while every place is shown, so a position means the same to the page
 // and to the server. The drag library reorders this copy while dragging; it is
 // replaced whenever the document changes.
-const dragging = computed(() => !!props.draggable && structural.value && !props.hideSkipped)
+const dragging = computed(() => !!props.draggable && props.editing && !props.hideSkipped)
 const local = ref<PlanItem[]>([])
 watch(shown, (next) => {
   local.value = [...next]
@@ -143,6 +146,14 @@ function legFrom(leg: Leg): string | undefined {
   }
   return own ? undefined : from.name || undefined
 }
+
+// night is the day's evening stay mark and the stay it names, when the day
+// has a stay for the night.
+const night = computed(() => {
+  const mark = props.day.items.find((item) => item.kind === 'stay_anchor' && item.anchor === 'evening')
+  const stay = mark && props.stays?.find((each) => each.id === mark.stay_id)
+  return mark && stay ? { mark, stay } : null
+})
 
 // dayTransfers are the flights and trains that leave or arrive on the day's
 // date; a day without a date has none.
@@ -184,7 +195,7 @@ const spent = computed(() => formatMoney(props.day.summary.actual_cost, props.cu
           @change="emit('title', ($event.target as HTMLInputElement).value)"
         />
         <button
-          v-if="removable && structural"
+          v-if="removable && editing"
           type="button"
           class="btn btn-ghost btn-sm btn-square text-error"
           :aria-label="t('plan.deleteDay')"
@@ -266,13 +277,23 @@ const spent = computed(() => formatMoney(props.day.summary.actual_cost, props.cu
       @update="onDrop"
     >
       <div v-for="(item, index) in local" :key="item.id" class="flex flex-col gap-3">
-        <ReportLegLine
-          v-if="legTo.get(item.id)"
-          :leg="legTo.get(item.id)!"
-          :from="legFrom(legTo.get(item.id)!)"
-          :editing="legEditable(legTo.get(item.id)!)"
-          @edit="emit('editLeg', legTo.get(item.id)!)"
-        />
+        <div v-if="legTo.get(item.id)" class="flex items-center gap-2">
+          <ReportLegLine
+            class="min-w-0 flex-1"
+            :leg="legTo.get(item.id)!"
+            :from="legFrom(legTo.get(item.id)!)"
+            :editing="editing"
+            @edit="emit('editLeg', legTo.get(item.id)!)"
+          />
+          <button
+            v-if="legTranslatable(legTo.get(item.id)!)"
+            type="button"
+            class="btn btn-ghost btn-xs"
+            @click="emit('translateLeg', legTo.get(item.id)!)"
+          >
+            {{ t('report.translate') }}
+          </button>
+        </div>
         <ReportPlaceCard
           :item="item"
           :currency="currency"
@@ -281,10 +302,13 @@ const spent = computed(() => formatMoney(props.day.summary.actual_cost, props.cu
           :first="index === 0"
           :last="index === local.length - 1"
           :draggable="dragging"
+          :track-speed="trackSpeed"
+          :number="placeNumbers.get(item.id)"
           @status="(status) => emit('status', item, status)"
           @rate="(rating) => emit('rate', item, rating)"
           @story="(story) => emit('story', item, story)"
           @edit="emit('edit', item)"
+          @translate="emit('translate', item)"
           @remove="emit('remove', item)"
           @up="step(item, -1)"
           @down="step(item, 1)"
@@ -303,10 +327,42 @@ const spent = computed(() => formatMoney(props.day.summary.actual_cost, props.cu
 
     <p v-if="hidden > 0" class="text-sm text-base-content/60">{{ t('report.hiddenSkipped', hidden) }}</p>
 
+    <div v-if="night" class="flex flex-col gap-3">
+      <div v-if="legTo.get(night.mark.id)" class="flex items-center gap-2">
+        <ReportLegLine
+          class="min-w-0 flex-1"
+          :leg="legTo.get(night.mark.id)!"
+          :editing="editing"
+          @edit="emit('editLeg', legTo.get(night.mark.id)!)"
+        />
+        <button
+          v-if="legTranslatable(legTo.get(night.mark.id)!)"
+          type="button"
+          class="btn btn-ghost btn-xs"
+          @click="emit('translateLeg', legTo.get(night.mark.id)!)"
+        >
+          {{ t('report.translate') }}
+        </button>
+      </div>
+      <ReportStayCard
+        :night="night.mark"
+        :stay="night.stay"
+        :currency="currency"
+        :editing="editing"
+        :trip-id="tripId"
+        @story="(story) => emit('night', night!.mark, story)"
+        @uploaded="(media) => emit('uploadedToPlace', night!.mark, media)"
+        @privacy="(media, isPrivate) => emit('privacy', media, isPrivate)"
+        @favorite-media="(media, isFavorite) => emit('favoritePlaceMedia', night!.mark, media, isFavorite)"
+        @unlink-media="(media) => emit('unlinkPlaceMedia', night!.mark, media)"
+        @remove-media="(media) => emit('removeMedia', media)"
+      />
+    </div>
+
     <!-- The places are what a day of a report is made of, so adding one comes
          right after them and before the pictures, as two tiles that are hard
          to miss. -->
-    <div v-if="structural" class="grid gap-3 sm:grid-cols-2">
+    <div v-if="editing" class="grid gap-3 sm:grid-cols-2">
       <button
         type="button"
         class="flex min-h-16 items-center justify-center gap-3 rounded-box border-2 border-dashed border-primary/30 bg-primary/5 px-4 py-3 font-medium text-primary transition-colors hover:border-primary/60 hover:bg-primary/10"
@@ -328,11 +384,11 @@ const spent = computed(() => formatMoney(props.day.summary.actual_cost, props.cu
     <MediaGallery
       v-if="day.media.length > 0"
       :items="day.media"
-      :can-edit="structural"
+      :can-edit="editing"
       :cover-id="day.cover_media_id"
       :trip-id="tripId"
       prefer-favorites
-      :can-favorite="structural"
+      :can-favorite="editing"
       @cover="(media) => emit('cover', media)"
       @privacy="(media, isPrivate) => emit('privacy', media, isPrivate)"
       @favorite="(media, isFavorite) => emit('favoriteMedia', media, isFavorite)"
@@ -347,6 +403,6 @@ const spent = computed(() => formatMoney(props.day.summary.actual_cost, props.cu
       @attach-to-place="(item, media) => emit('attachMediaToPlace', item, media)"
       @dismiss="emit('dismissHints')"
     />
-    <MediaUploader v-if="structural && tripId" :trip-id="tripId" small @uploaded="(media) => emit('uploaded', media)" />
+    <MediaUploader v-if="editing && tripId" :trip-id="tripId" small @uploaded="(media) => emit('uploaded', media)" />
   </section>
 </template>

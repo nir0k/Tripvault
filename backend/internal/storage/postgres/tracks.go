@@ -200,6 +200,30 @@ func (r *DocumentRepository) SetTrackSpeed(ctx context.Context, itemID uuid.UUID
 	return nil
 }
 
+// SetNightStory - stores the story of the night a day of a report ends with,
+// which is kept on the day's evening stay mark. The mark outlives a change of
+// the stay it names, so the story stays with the night.
+//
+// Arguments:
+//   - ctx: context bounding the statement.
+//   - itemID: the evening stay mark.
+//   - story: the checked story.
+//
+// Returns:
+//   - domain.ErrNotFound when no such mark exists.
+func (r *DocumentRepository) SetNightStory(ctx context.Context, itemID uuid.UUID, story string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE items SET story_md = $2, updated_at = now()
+		 WHERE id = $1 AND kind = 'stay_anchor' AND anchor = 'evening'`, itemID, story)
+	if err != nil {
+		return fmt.Errorf("set night story: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 // DeleteTrack - removes the line of an activity. Its
 // journeys go back to leaving and reaching the place's own position.
 //

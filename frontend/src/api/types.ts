@@ -56,6 +56,22 @@ export interface SessionResponse {
   user: User
 }
 
+/** HomeInput is a home as its owner sets it: a point and the radius hidden around it. */
+export interface HomeInput {
+  lat: number
+  lng: number
+  radius_m: number
+}
+
+/**
+ * HomeSettings is the owner's home and the circle actually hidden, whose centre
+ * is moved off the home; both are null when no home is set.
+ */
+export interface HomeSettings {
+  home: HomeInput | null
+  zone: HomeInput | null
+}
+
 export interface SessionItem {
   id: string
   user_agent: string
@@ -361,7 +377,7 @@ export type TripTranslations = Record<string, { title?: string; summary?: string
 export type DocumentTranslations = Record<string, Record<string, Record<string, string>>>
 
 /** TranslationTarget is the kind of element a translation belongs to. */
-export type TranslationTarget = 'trip' | 'document' | 'day' | 'stay' | 'transfer' | 'item' | 'leg'
+export type TranslationTarget = 'trip' | 'document' | 'day' | 'stay' | 'transfer' | 'item' | 'leg' | 'stop'
 
 /** TranslationEntry is one translated field sent to the server; an empty value removes it. */
 export interface TranslationEntry {
@@ -578,6 +594,45 @@ export interface Track {
   /** The first and last moment the file records; null when it records no time. */
   started_at: string | null
   ended_at: string | null
+  /** The stops along the line, the nearest its start first. */
+  stops: Stop[]
+}
+
+/** StopKind says what a stop along a line is for. */
+export type StopKind =
+  | 'food' | 'shop' | 'rest' | 'viewpoint' | 'water' | 'shelter' | 'hut' | 'summit' | 'cave' | 'swim' | 'other'
+
+export const STOP_KINDS: readonly StopKind[] = [
+  'food', 'shop', 'rest', 'viewpoint', 'water', 'shelter', 'hut', 'summit', 'cave', 'swim', 'other',
+]
+
+/**
+ * Stop is somewhere along the line of an activity: a café halfway up a hike, a
+ * rest by a lake. It costs like a place, in the activity's day.
+ */
+export interface Stop {
+  id: string
+  kind: StopKind
+  /** The stop's own name; empty when its kind says enough. */
+  name: string
+  note_md: string
+  /** Where it lies, on the line. */
+  lat: number
+  lng: number
+  /** How far along the line from its start it lies. */
+  distance_m: number
+  /** The metres of the line up to it at each slope, as Track.grades; null without heights. */
+  grades_to: number[] | null
+  /** When it was reached. Report only. */
+  actual_time: string | null
+  planned_cost_amount: string | null
+  actual_cost_amount: string | null
+  cost_per_person: boolean
+  cost_category: CostCategory
+  cost_note: string
+  paid_by: string | null
+  cost_split: CostSplit
+  cost_shares: CostShare[]
 }
 
 /**
@@ -977,7 +1032,7 @@ export interface Shared {
 }
 
 /** BudgetEntryKind says what carries a cost. */
-export type BudgetEntryKind = 'place' | 'stay' | 'transfer' | 'leg' | 'expense'
+export type BudgetEntryKind = 'place' | 'stop' | 'stay' | 'transfer' | 'leg' | 'expense'
 
 /** BudgetEntry is one cost of the document, for the expense list and its filters. */
 export interface BudgetEntry {

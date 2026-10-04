@@ -293,12 +293,6 @@ func TestMoneyAndDifference(t *testing.T) {
 	if got := money(domain.Money(5200), ""); got != "52.00" {
 		t.Errorf("money() without a currency = %q", got)
 	}
-	if got := signed(domain.Money(700)); got != "+7.00" {
-		t.Errorf("signed(over) = %q", got)
-	}
-	if got := signed(domain.Money(-700)); got != "-7.00" {
-		t.Errorf("signed(under) = %q", got)
-	}
 }
 
 // TestLabelsWriteDatesAndFigures checks the wording of both languages, including
@@ -372,6 +366,7 @@ func TestEveryLabelIsTranslated(t *testing.T) {
 		{"transfer kinds", english.transferKinds, russian.transferKinds},
 		{"categories", english.categories, russian.categories},
 		{"activities", english.activities, russian.activities},
+		{"stop kinds", english.stopKinds, russian.stopKinds},
 	}
 	for _, pair := range maps {
 		for key := range pair.english {
@@ -404,6 +399,11 @@ func TestEveryLabelIsTranslated(t *testing.T) {
 	for _, activity := range domain.ActivityTypes {
 		if english.activities[string(activity)] == "" {
 			t.Errorf("the activity %q has no wording", activity)
+		}
+	}
+	for _, kind := range domain.StopKinds {
+		if english.stopKinds[string(kind)] == "" {
+			t.Errorf("the stop kind %q has no wording", kind)
 		}
 	}
 	for _, mode := range travelModeOrder {
@@ -445,12 +445,20 @@ func TestTrackNote(t *testing.T) {
 	ascent, descent := 615, 693
 	track := &domain.Track{DistanceM: 21397, StartedAt: &start, EndedAt: &end, AscentM: &ascent, DescentM: &descent}
 	want := "Recorded track: 21.4 km" + separator + "time 4:57:51" + separator + "up 615 m, down 693 m"
-	if got := trackNote(english, track); got != want {
+	if got := trackNote(english, track, domain.Item{}, 4.7); got != want {
 		t.Errorf("note: %q, want %q", got, want)
 	}
+
+	// A line without times takes the activity's own, past midnight included,
 	track.StartedAt = nil
-	if got := trackNote(english, track); strings.Contains(got, "time") {
-		t.Errorf("a track without time has one: %q", got)
+	from, to := domain.ClockTime(22*60), domain.ClockTime(60+30)
+	activity := domain.Item{ActualTime: &from, ActualEndTime: &to}
+	if got := trackNote(english, track, activity, 4.7); !strings.Contains(got, "time "+english.duration(3*3600+30*60)) {
+		t.Errorf("activity time: %q", got)
+	}
+	// and is otherwise estimated at the trip's speed.
+	if got := trackNote(english, track, domain.Item{}, 4.7); !strings.Contains(got, "time about ") {
+		t.Errorf("estimate: %q", got)
 	}
 }
 
@@ -470,7 +478,8 @@ func TestEveryDayOpensAPage(t *testing.T) {
 
 // TestOverviewLeavesOutEmptyFigures checks the overview writes only the
 // figures that have something to say: no rating card when nothing was rated,
-// no amount when nothing was spent, no distance when nothing was travelled.
+// no distance when nothing was travelled, and never an amount, which is the
+// budget's.
 func TestOverviewLeavesOutEmptyFigures(t *testing.T) {
 	text := wording("en", domain.UnitsKilometres)
 	report := sampleReport(t)
@@ -481,14 +490,13 @@ func TestOverviewLeavesOutEmptyFigures(t *testing.T) {
 		}
 		return strings.Join(names, ",")
 	}
-	if got := labelsOf(overviewStats(text, report)); got != "Days,Visited,Distance,Avg rating,Spent" {
+	if got := labelsOf(overviewStats(text, report)); got != "Days,Visited,Distance,Avg rating" {
 		t.Errorf("a full report has the figures %s", got)
 	}
 	report.Totals.AverageRating = nil
-	report.Totals.ActualCost = 0
 	report.Totals.DistanceM = 0
 	if got := labelsOf(overviewStats(text, report)); got != "Days,Visited" {
-		t.Errorf("a report with nothing rated, spent or travelled has the figures %s", got)
+		t.Errorf("a report with nothing rated or travelled has the figures %s", got)
 	}
 }
 
@@ -537,5 +545,86 @@ func TestModeLabelsFitTheirCards(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// pagesOf renders a report and counts its pages.
+func pagesOf(t *testing.T, report Report) int {
+	t.Helper()
+	var out bytes.Buffer
+	if err := Render(&out, report); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	return bytes.Count(out.Bytes(), []byte("/Type /Page\n"))
+}
+
+// TestCoverIsOnePage checks the trip's words on the cover never push its dates
+// onto pages of their own, however long they run.
+func TestCoverIsOnePage(t *testing.T) {
+	report := sampleReport(t)
+	report.Trip.Summary = "Short."
+	short := pagesOf(t, report)
+	report.Trip.Summary = strings.Repeat("A long weekend in the mountains, told at length.\n\n", 60)
+	if long := pagesOf(t, report); long != short {
+		t.Errorf("a long summary made %d pages, a short one %d", long, short)
+	}
+}
+
+// TestJournalLeavesOutTheBudget checks the journal names no amount: not on a
+// place, a journey or a stay, and not in a closing page of its own.
+func TestJournalLeavesOutTheBudget(t *testing.T) {
+	report := sampleReport(t)
+	text := wording("en", domain.UnitsKilometres)
+	cost := domain.Money(3960)
+	for _, item := range report.Content.Items {
+		item.ActualCost, item.PlannedCost = &cost, &cost
+		leg := domain.Leg{Mode: domain.ModeCar, ActualCost: &cost}
+		for _, tag := range placePills(text, report, item, &leg, "") {
+			if strings.Contains(tag.text, "39.60") {
+				t.Errorf("a pill names an amount: %q", tag.text)
+			}
+		}
+	}
+
+	report.Content.Document.SummaryMD = ""
+	without := pagesOf(t, report)
+	report.Content.Expenses = []domain.Expense{{ID: uuid.New(), Note: "Vignette", Actual: &cost}}
+	report.Totals.ActualCost = cost
+	if with := pagesOf(t, report); with != without {
+		t.Errorf("costs alone made a closing page: %d pages against %d", with, without)
+	}
+}
+
+// TestNightPicturesAreDrawn checks the pictures of the night a day ends with
+// are drawn in its end-of-day card.
+func TestNightPicturesAreDrawn(t *testing.T) {
+	report := sampleReport(t)
+	var night *domain.Item
+	for index := range report.Content.Items {
+		if report.Content.Items[index].Kind == domain.ItemStayAnchor {
+			night = &report.Content.Items[index]
+		}
+	}
+	if night == nil || len(report.Content.Stays) == 0 {
+		t.Fatal("the sample has no night")
+	}
+	night.Anchor, night.StayID = domain.AnchorEvening, &report.Content.Stays[0].ID
+	images := func() int {
+		var out bytes.Buffer
+		if err := Render(&out, report); err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		return bytes.Count(out.Bytes(), []byte("/Subtype /Image"))
+	}
+	without := images()
+
+	picture := image.NewRGBA(image.Rect(0, 0, 40, 30))
+	var encoded bytes.Buffer
+	if err := jpeg.Encode(&encoded, picture, nil); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	report.Photos[night.ID] = []Photo{{ID: uuid.New(), JPEG: encoded.Bytes()}}
+	if with := images(); with != without+1 {
+		t.Errorf("the night's picture was not drawn: %d images against %d", with, without)
 	}
 }

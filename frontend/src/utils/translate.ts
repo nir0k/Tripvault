@@ -56,13 +56,26 @@ export function translateDocument(document: TripDocument, lang: string): TripDoc
   const pick = (id: string, field: string, original: string): string => texts[id]?.[field] || original
   const item = (each: PlanItem): PlanItem => {
     if (each.kind === 'stay_anchor') {
-      return each.stay_id ? { ...each, name: pick(each.stay_id, 'name', each.name) } : each
+      // A stay mark is named by its stay; the evening's tells the story of the night.
+      return {
+        ...each,
+        name: each.stay_id ? pick(each.stay_id, 'name', each.name) : each.name,
+        story_md: pick(each.id, 'story_md', each.story_md),
+      }
     }
     return {
       ...each,
       name: pick(each.id, 'name', each.name),
       description_md: pick(each.id, 'description_md', each.description_md),
       story_md: pick(each.id, 'story_md', each.story_md),
+      track: each.track && {
+        ...each.track,
+        stops: each.track.stops.map((stop) => ({
+          ...stop,
+          name: pick(stop.id, 'name', stop.name),
+          note_md: pick(stop.id, 'note_md', stop.note_md),
+        })),
+      },
     }
   }
   return {
@@ -121,11 +134,18 @@ export function translatableTexts(document: TripDocument): TranslatableText[] {
     add('day', day.id, 'highlight', day.highlight)
     for (const each of day.items) {
       if (each.kind === 'stay_anchor') {
+        if (each.anchor === 'evening') {
+          add('item', each.id, 'story_md', each.story_md)
+        }
         continue
       }
       add('item', each.id, 'name', each.name)
       add('item', each.id, 'description_md', each.description_md)
       add('item', each.id, 'story_md', each.story_md)
+      for (const stop of each.track?.stops ?? []) {
+        add('stop', stop.id, 'name', stop.name)
+        add('stop', stop.id, 'note_md', stop.note_md)
+      }
     }
     for (const leg of day.legs) {
       add('leg', leg.id, 'note', leg.note)

@@ -8,10 +8,10 @@ import { loadMediaUrl, useMediaBase } from '@/composables/useMediaUrl'
 import { mediaThumbnailPath } from '@/api/media'
 import type { Leg, PlanItem, TripDocument } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
-import { OUTLINE } from '@/components/icons'
+import { OUTLINE, STOP_KIND_ICONS } from '@/components/icons'
 import { formatClock, formatDistance, formatTimeOfDay } from '@/utils/format'
 import { markdownExcerpt } from '@/utils/markdown'
-import { dayColor, isVisit, itemIcon, itemKindLabel } from '@/utils/plan'
+import { dayColor, isVisit, itemIcon, itemKindLabel, stopLabel, stopName } from '@/utils/plan'
 import { activeUnits } from '@/utils/units'
 import { decodePolyline, type LatLng } from '@/utils/polyline'
 import { mapText } from '@/utils/mapText'
@@ -29,11 +29,14 @@ const props = defineProps<{
   attribution: string
   /** Whether a click on the map offers to add a place there. */
   canEdit?: boolean
+  /** Whether a click on the line of an activity offers to add a stop there. */
+  canAddStops?: boolean
 }>()
 
 const emit = defineEmits<{
   focus: [itemId: string, dayIndex: number | null]
   addAt: [lat: number, lng: number]
+  addStop: [itemId: string, lat: number, lng: number]
 }>()
 
 const { t, locale } = useI18n()
@@ -117,6 +120,20 @@ function trackEndIcon(end: 'start' | 'finish', color: string, muted: boolean): L
 function trackLabel(distance: number): string {
   const glyph = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${OUTLINE.activityHike}"/></svg>`
   return `<span class="map-track-label">${glyph}${formatDistance(distance, locale.value, activeUnits.value, true)}</span>`
+}
+
+// stopIcon marks a stop along a track: a small white disc ringed in the day's
+// colour with the stop's picture. Only fixed glyph paths and colours reach the
+// HTML.
+function stopIcon(kind: keyof typeof STOP_KIND_ICONS, color: string, muted: boolean): L.DivIcon {
+  const glyph: PinGlyph = STOP_KIND_ICONS[kind]
+  const svg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${OUTLINE[glyph]}"/></svg>`
+  return L.divIcon({
+    className: 'map-pin-wrapper',
+    html: `<span class="map-track-stop${muted ? ' map-pin-muted' : ''}" style="--pin:${color}">${svg}</span>`,
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
+  })
 }
 
 // arrowIcon is a white chevron turned to the direction of travel.
@@ -353,6 +370,8 @@ function draw(): void {
     // It is drawn as a trail - a dark casing, the day's colour and a dotted
     // white core - with its start and finish marked, so a recording is never
     // taken for a road (solid) or an estimate (dashed).
+    // The places' numbers in the day, which label the stops along their lines.
+    const visits = day.items.filter(isVisit)
     for (const item of day.items) {
       const recorded = item.track ? decodePolyline(item.track.geometry) : []
       if (!item.track || recorded.length < 2) {
@@ -362,7 +381,16 @@ function draw(): void {
       L.polyline(recorded, {
         color: TRACK_CASING, weight: line.weight + 4, opacity: line.opacity * 0.8, interactive: false,
       }).addTo(layers)
-      const track = L.polyline(recorded, { color, ...line }).addTo(layers)
+      // A click on the line of somebody who may change the trip puts a stop
+      // there; it does not reach the map, which would offer a place instead.
+      const track = L.polyline(recorded, { color, ...line, bubblingMouseEvents: !props.canAddStops }).addTo(layers)
+      if (props.canAddStops) {
+        const itemId = item.id
+        track.on('click', (event: L.LeafletMouseEvent) => {
+          const { lat, lng } = event.latlng.wrap()
+          emit('addStop', itemId, Number(lat.toFixed(6)), Number(lng.toFixed(6)))
+        })
+      }
       L.polyline(recorded, {
         color: '#ffffff', weight: Math.max(1.5, line.weight / 3), opacity: line.opacity,
         dashArray: '1 8', lineCap: 'round', interactive: false,
@@ -370,10 +398,18 @@ function draw(): void {
       drawnTracks.push({ points: recorded, muted: !current })
       L.marker(recorded[0]!, { icon: trackEndIcon('start', color, !current), interactive: false, zIndexOffset: -1000 }).addTo(layers)
       L.marker(recorded.at(-1)!, { icon: trackEndIcon('finish', color, !current), interactive: false, zIndexOffset: -1000 }).addTo(layers)
+      const number = visits.indexOf(item) + 1
+      item.track.stops.forEach((stop, position) => {
+        L.marker([stop.lat, stop.lng], { icon: stopIcon(stop.kind, color, !current), title: stopName(stop, t) })
+          .bindTooltip(mapText(`${stopLabel(number || undefined, position)} · ${stopName(stop, t)}`))
+          .addTo(layers!)
+      })
       if (showDistances.value) {
         track.bindTooltip(mapText(trackLabel(item.track.distance_m)), {
           permanent: true, direction: 'center', className: 'map-distance',
         })
+      } else if (props.canAddStops) {
+        track.bindTooltip(mapText(t('stop.addHere')), { sticky: true })
       }
     }
 
@@ -512,7 +548,7 @@ watch(() => props.selectedDay, () => {
   draw()
   fit()
 })
-watch(() => [props.document, showDistances.value, locale.value], () => {
+watch(() => [props.document, showDistances.value, locale.value, props.canAddStops], () => {
   // The first positions on an empty map are framed, like a new day would be.
   const wasEmpty = bounds === null
   draw()

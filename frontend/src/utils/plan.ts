@@ -1,6 +1,6 @@
-import { ACTIVITY_TYPES, COST_CATEGORIES, PLACE_CATEGORIES, TRAVEL_MODES, type PlanItem, type RemovedDay } from '@/api/types'
+import { ACTIVITY_TYPES, COST_CATEGORIES, PLACE_CATEGORIES, STOP_KINDS, TRAVEL_MODES, type PlanItem, type RemovedDay, type Stop } from '@/api/types'
 import type { IconOption } from '@/components/IconSelect.vue'
-import { ACTIVITY_ICONS, COST_CATEGORY_ICONS, PLACE_CATEGORY_ICONS, TRAVEL_MODE_ICONS, type OUTLINE } from '@/components/icons'
+import { ACTIVITY_ICONS, COST_CATEGORY_ICONS, PLACE_CATEGORY_ICONS, STOP_KIND_ICONS, TRAVEL_MODE_ICONS, type OUTLINE } from '@/components/icons'
 import { formatClock, formatDayDate, splitDuration } from '@/utils/format'
 
 type Translate = (key: string, named?: Record<string, unknown>) => string
@@ -101,6 +101,26 @@ export function costCategoryOptions(t: Translate): IconOption[] {
   return COST_CATEGORIES.map((category) => ({
     value: category, label: t(`costCategories.${category}`), icon: COST_CATEGORY_ICONS[category],
   }))
+}
+
+/** stopKindOptions lists the kinds of stop along a line, with their pictures. */
+export function stopKindOptions(t: Translate): IconOption[] {
+  return STOP_KINDS.map((kind) => ({ value: kind, label: t(`stop.kinds.${kind}`), icon: STOP_KIND_ICONS[kind] }))
+}
+
+/**
+ * stopLabel names a stop beside its activity, as the map and the PDF do: the
+ * activity's number and a letter for the stop, "3a", "3b", along the line.
+ * Without a number it is the letter alone.
+ */
+export function stopLabel(number: number | undefined, index: number): string {
+  const letter = index < 26 ? String.fromCharCode(97 + index) : `.${index + 1}`
+  return number === undefined ? letter : `${number}${letter}`
+}
+
+/** stopName is what a stop is called: its own name, or its kind. */
+export function stopName(stop: Pick<Stop, 'name' | 'kind'>, t: Translate): string {
+  return stop.name || t(`stop.kinds.${stop.kind}`)
 }
 
 /** minutesOfDay reads "HH:MM" as minutes since midnight; null when it is no time. */

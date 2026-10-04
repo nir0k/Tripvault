@@ -28,6 +28,7 @@ const (
 	TranslateTransfer TranslationTarget = "transfer"
 	TranslateItem     TranslationTarget = "item"
 	TranslateLeg      TranslationTarget = "leg"
+	TranslateStop     TranslationTarget = "stop"
 )
 
 // translatableFields lists, for each kind of element, the fields a report
@@ -42,6 +43,7 @@ var translatableFields = map[TranslationTarget]map[string]int{
 	TranslateTransfer: {"from_name": maxNameLength, "to_name": maxNameLength, "notes_md": maxMarkdownLength},
 	TranslateItem:     {"name": maxNameLength, "description_md": maxMarkdownLength, "story_md": maxMarkdownLength},
 	TranslateLeg:      {"note": maxLegNoteLength},
+	TranslateStop:     {"name": maxNameLength, "note_md": maxMarkdownLength},
 }
 
 // Translation is one field of one element of a report in one further language.
@@ -65,7 +67,7 @@ func (t Translation) Normalize() (Translation, error) {
 	fields, ok := translatableFields[t.Target]
 	if !ok {
 		return t, NewValidationError("target_type", "unsupported",
-			"must be trip, document, day, stay, transfer, item or leg")
+			"must be trip, document, day, stay, transfer, item, leg or stop")
 	}
 	limit, ok := fields[t.Field]
 	if !ok {
@@ -233,6 +235,15 @@ func (c DocumentContent) Translated(language string) DocumentContent {
 	c.Legs = slices.Clone(c.Legs)
 	for index := range c.Legs {
 		apply(c.Legs[index].ID, "note", &c.Legs[index].Note)
+	}
+	c.Tracks = slices.Clone(c.Tracks)
+	for index := range c.Tracks {
+		stops := slices.Clone(c.Tracks[index].Stops)
+		for position := range stops {
+			apply(stops[position].ID, "name", &stops[position].Name)
+			apply(stops[position].ID, "note_md", &stops[position].NoteMD)
+		}
+		c.Tracks[index].Stops = stops
 	}
 	return c
 }

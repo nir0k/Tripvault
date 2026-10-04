@@ -17,18 +17,28 @@ import { activeUnits } from '@/utils/units'
 // to be travelled in a plan, imported from a watch, a phone or an outdoor app. It is one quiet row of figures - how far, how long, how
 // much up, how much down - each told by its icon rather than a word, with the
 // file one click away; the map above does the actual showing. How long is the
-// whole recording, pauses included, as a watch's total time; a route drawn
-// ahead carries no time and shows none. In a plan the row also tells how long
-// the route takes to walk, worked out from its slopes at the line's own speed
-// or the plan's, which somebody who may change the plan sets with the pencil.
+// whole recording, pauses included, as a watch's total time. In a plan the row
+// also tells how long the route takes to walk, worked out from its slopes at
+// the line's own speed or the plan's, which somebody who may change the plan
+// sets with the pencil.
+//
+// A report's line may carry no time - the route of the plan it was copied
+// from, drawn ahead. It then tells how long the activity took by its own times
+// when both are known, and otherwise how long the line takes to walk, marked
+// as an estimate, so a report never goes without a duration it can work out.
 const props = withDefaults(defineProps<{
   track: Track | null
   editing: boolean
   /** What importing a file here does, shown while there is none. */
   hint: string
-  /** The plan's speed on the flat; null in a report, which shows no estimate. */
+  /** The plan's speed on the flat; null in a report, whose estimate cannot be changed. */
   planSpeed?: number | null
-}>(), { planSpeed: null })
+  /** In a report: the speed on the flat a line without times is estimated at. */
+  reportSpeed?: number | null
+  /** In a report: when the activity started and finished, "HH:MM". */
+  activityStart?: string | null
+  activityEnd?: string | null
+}>(), { planSpeed: null, reportSpeed: null, activityStart: null, activityEnd: null })
 
 const emit = defineEmits<{
   import: [file: File]
@@ -47,15 +57,39 @@ const elapsed = computed(() => {
   }
   return (Date.parse(track.ended_at) - Date.parse(track.started_at)) / 1000
 })
+// activityMinutes is how long the activity took by its own times, or null
+// unless both are known; one that ends past midnight ends the next day.
+const activityMinutes = computed(() => {
+  const start = minutesOfDay(props.activityStart)
+  const end = minutesOfDay(props.activityEnd)
+  if (elapsed.value !== null || start === null || end === null || start === end) {
+    return null
+  }
+  return end > start ? end - start : end + 24 * 60 - start
+})
 // speed is what the line is timed at, and estimate how long it takes then, in
-// minutes; both null in a report.
-const speed = computed(() => (props.planSpeed === null ? null : props.track?.speed_kmh ?? props.planSpeed))
+// minutes: always in a plan, and in a report only when nothing better is known.
+const speed = computed(() => {
+  if (props.planSpeed !== null) {
+    return props.track?.speed_kmh ?? props.planSpeed
+  }
+  if (props.reportSpeed === null || elapsed.value !== null || activityMinutes.value !== null) {
+    return null
+  }
+  return props.track?.speed_kmh ?? props.reportSpeed
+})
 const estimate = computed(() => {
   if (!props.track || speed.value === null) {
     return null
   }
   return Math.max(1, Math.round(walkingSeconds(props.track, speed.value) / 60))
 })
+
+// minutesOfDay reads a time of day, "HH:MM", as minutes after midnight.
+function minutesOfDay(value: string | null): number | null {
+  const match = /^(\d{1,2}):(\d{2})/.exec(value ?? '')
+  return match ? Number(match[1]) * 60 + Number(match[2]) : null
+}
 const speedDialog = useTemplateRef<InstanceType<typeof TrackSpeedDialog>>('speedDialog')
 const speedButton = useTemplateRef<HTMLButtonElement>('speedButton')
 
@@ -131,11 +165,12 @@ async function download(track: Track): Promise<void> {
         <AppIcon name="clock" class="size-4! opacity-70" />
         <span class="sr-only">{{ t('track.estimate') }}</span>
         ≈ {{ formatDuration(estimate, t) }}
-        <span :class="track.speed_kmh === null ? 'text-base-content/60' : ''">
+        <span v-if="planSpeed === null" class="badge badge-ghost badge-xs">{{ t('leg.estimate') }}</span>
+        <span v-else :class="track.speed_kmh === null ? 'text-base-content/60' : ''">
           · {{ formatSpeed(speed, locale, activeUnits) }}
         </span>
         <button
-          v-if="editing"
+          v-if="editing && planSpeed !== null"
           ref="speedButton"
           type="button"
           class="btn btn-ghost btn-xs btn-square"
@@ -150,6 +185,11 @@ async function download(track: Track): Promise<void> {
         <AppIcon name="clock" class="size-4! opacity-70" />
         <span class="sr-only">{{ t('track.time') }}</span>
         {{ formatElapsed(elapsed) }}
+      </span>
+      <span v-else-if="activityMinutes !== null" class="flex items-center gap-1" :title="t('track.activityTime')">
+        <AppIcon name="clock" class="size-4! opacity-70" />
+        <span class="sr-only">{{ t('track.activityTime') }}</span>
+        {{ formatDuration(activityMinutes, t) }}
       </span>
       <span v-if="track.ascent_m !== null" class="flex items-center gap-1" :title="t('track.ascent')">
         <AppIcon name="ascent" class="size-4! text-success" />

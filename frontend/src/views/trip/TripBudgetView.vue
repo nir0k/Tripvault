@@ -5,7 +5,7 @@ import * as documentsApi from '@/api/documents'
 import { getBudget, updateTrip } from '@/api/trips'
 import {
   COST_CATEGORIES, type Budget, type BudgetEntry, type BudgetEntryKind, type Expense, type Leg, type PlanItem,
-  type Stay, type Transfer, type TripDocument,
+  type Stay, type Stop, type Transfer, type TripDocument,
 } from '@/api/types'
 import AppIcon, { type IconName } from '@/components/AppIcon.vue'
 import BudgetAmountDialog from '@/components/budget/BudgetAmountDialog.vue'
@@ -15,6 +15,7 @@ import PlanLegDialog from '@/components/plan/PlanLegDialog.vue'
 import PlanPlaceDialog from '@/components/plan/PlanPlaceDialog.vue'
 import PlanStayDialog from '@/components/plan/PlanStayDialog.vue'
 import PlanTransferDialog from '@/components/plan/PlanTransferDialog.vue'
+import StopEditor from '@/components/plan/StopEditor.vue'
 import { useTripStore } from '@/stores/trip'
 import { categoryRows as layCategories } from '@/utils/budget'
 import { errorMessage } from '@/utils/errors'
@@ -50,6 +51,7 @@ const savedAmount = ref(false)
 
 const amountDialog = useTemplateRef<InstanceType<typeof BudgetAmountDialog>>('amountDialog')
 const confirmDialog = useTemplateRef<InstanceType<typeof ConfirmDialog>>('confirmDialog')
+const stopEditor = useTemplateRef<InstanceType<typeof StopEditor>>('stopEditor')
 const expenseDialog = useTemplateRef<InstanceType<typeof BudgetExpenseDialog>>('expenseDialog')
 const placeDialog = useTemplateRef<InstanceType<typeof PlanPlaceDialog>>('placeDialog')
 const stayDialog = useTemplateRef<InstanceType<typeof PlanStayDialog>>('stayDialog')
@@ -110,7 +112,7 @@ const filteredActual = computed(() =>
 
 // ENTRY_ICONS shows at a glance what carries each cost.
 const ENTRY_ICONS: Record<BudgetEntryKind, IconName> = {
-  place: 'map', stay: 'stay', transfer: 'modeFlight', leg: 'transport', expense: 'wallet',
+  place: 'map', stop: 'mapPin', stay: 'stay', transfer: 'modeFlight', leg: 'transport', expense: 'wallet',
 }
 
 // expenses finds an expense of the listed document by its id, so its entry can
@@ -241,6 +243,18 @@ function findPlace(id: string): PlanItem | null {
   return plan.value?.unassigned.find((item) => item.id === id) ?? null
 }
 
+/** findStop looks up a stop along the line of an activity of the plan, with its activity. */
+function findStop(id: string): { item: PlanItem; stop: Stop } | null {
+  const items = [...(plan.value?.days ?? []).flatMap((day) => day.items), ...(plan.value?.unassigned ?? [])]
+  for (const item of items) {
+    const stop = item.track?.stops.find((each) => each.id === id)
+    if (stop) {
+      return { item, stop }
+    }
+  }
+  return null
+}
+
 /** findLeg looks up a leg of the plan by its identifier. */
 function findLeg(id: string): Leg | null {
   for (const day of plan.value?.days ?? []) {
@@ -260,6 +274,14 @@ function edit(entry: BudgetEntry): void {
       const item = findPlace(entry.id)
       if (item) {
         placeDialog.value?.open(item)
+      }
+      return
+    }
+    case 'stop': {
+      // A stop's entry is its cost, so the cost form is what opens.
+      const found = findStop(entry.id)
+      if (found) {
+        void stopEditor.value?.editCost(found.item, found.stop)
       }
       return
     }
@@ -301,6 +323,7 @@ async function remove(entry: BudgetEntry): Promise<void> {
   const name = entry.label || amount(entry.amount)
   const questions: Record<BudgetEntryKind, string> = {
     place: 'plan.confirmDeletePlace',
+    stop: 'stop.confirmDelete',
     stay: 'stay.confirmDelete',
     transfer: 'transfer.confirmDelete',
     leg: 'budget.confirmClearLegCost',
@@ -313,6 +336,9 @@ async function remove(entry: BudgetEntry): Promise<void> {
   switch (entry.kind) {
     case 'place':
       await change(() => documentsApi.deletePlace(entry.id))
+      return
+    case 'stop':
+      await change(() => documentsApi.deleteStop(entry.id))
       return
     case 'stay':
       await change(() => documentsApi.deleteStay(entry.id))
@@ -694,6 +720,7 @@ async function saveLeg(leg: Leg, changes: documentsApi.LegChanges, _route: unkno
       <PlanStayDialog ref="stayDialog" :focus="null" @save="saveStay" />
       <PlanTransferDialog ref="transferDialog" :focus="null" @save="saveTransfer" />
       <PlanLegDialog ref="legDialog" costs-only @save="saveLeg" />
+      <StopEditor ref="stopEditor" :report="isReport" @changed="(changed) => change(async () => changed)" />
       <ConfirmDialog ref="confirmDialog" />
     </template>
   </div>

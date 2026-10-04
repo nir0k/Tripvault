@@ -87,6 +87,11 @@ func BuildReportTotals(trip Trip, content DocumentContent) ReportTotals {
 		}
 		totals.PlannedCost += item.PlannedCostTotal(travelers)
 		totals.ActualCost += item.ActualCostTotal(travelers)
+		for _, stop := range StopsOf(content.Tracks, item.ID) {
+			cost := stop.CostItem(item)
+			totals.PlannedCost += cost.PlannedCostTotal(travelers)
+			totals.ActualCost += cost.ActualCostTotal(travelers)
+		}
 	}
 	if totals.Rated > 0 {
 		average := math.Round(float64(ratings)/float64(totals.Rated)*10) / 10

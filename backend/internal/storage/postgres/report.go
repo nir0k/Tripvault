@@ -22,7 +22,8 @@ import (
 // matters.
 //
 // A place's route comes along with its file: in the plan it is the line meant
-// to be walked, and the report shows it until a recording takes its place.
+// to be walked, and the report shows it until a recording takes its place. The
+// stops along it come too, for the report to tell when each was reached.
 //
 // Two things are deliberately left out. The unassigned places do not come along:
 // a report describes what was actually done, and those were never put in a day.
@@ -102,6 +103,9 @@ func copyPlan(ctx context.Context, tx pgx.Tx, tripID uuid.UUID, plan domain.Docu
 		return uuid.Nil, err
 	}
 	if err := copyTracks(ctx, tx, reportID, plan.Tracks, places); err != nil {
+		return uuid.Nil, err
+	}
+	if err := copyStops(ctx, tx, reportID, plan.Tracks, places); err != nil {
 		return uuid.Nil, err
 	}
 

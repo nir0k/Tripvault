@@ -25,8 +25,10 @@ import PlanStays from '@/components/plan/PlanStays.vue'
 import PlanTransferDialog from '@/components/plan/PlanTransferDialog.vue'
 import PlanTransfers from '@/components/plan/PlanTransfers.vue'
 import PlanTargetDialog from '@/components/plan/PlanTargetDialog.vue'
+import StopEditor from '@/components/plan/StopEditor.vue'
 import EditableMarkdown from '@/components/report/EditableMarkdown.vue'
 import { provideDocumentChange } from '@/composables/useDocumentChange'
+import { provideStopEditing } from '@/composables/useStopEditor'
 import { useLegCalculation } from '@/composables/useLegCalculation'
 import { useMediaQuery } from '@/composables/useMediaQuery'
 import { useTripStore } from '@/stores/trip'
@@ -66,6 +68,25 @@ const stayDialog = useTemplateRef<InstanceType<typeof PlanStayDialog>>('stayDial
 const transferDialog = useTemplateRef<InstanceType<typeof PlanTransferDialog>>('transferDialog')
 const targetDialog = useTemplateRef<InstanceType<typeof PlanTargetDialog>>('targetDialog')
 const legDialog = useTemplateRef<InstanceType<typeof PlanLegDialog>>('legDialog')
+// The stops along the lines of activities are changed through the forms the
+// page holds once, which the cards and the map open.
+const stopEditor = useTemplateRef<InstanceType<typeof StopEditor>>('stopEditor')
+provideStopEditing({
+  add: (item, point) => stopEditor.value?.add(item, point),
+  edit: (item, stop) => stopEditor.value?.edit(item, stop),
+  editCost: (item, stop) => void stopEditor.value?.editCost(item, stop),
+  remove: (item, stop) => void stopEditor.value?.remove(item, stop),
+})
+
+// addStop answers a click on the line of an activity on the map: a new stop
+// there.
+function addStop(itemId: string, lat: number, lng: number): void {
+  const item = plan.value?.days.flatMap((day) => day.items).find((each) => each.id === itemId)
+    ?? plan.value?.unassigned.find((each) => each.id === itemId)
+  if (item) {
+    stopEditor.value?.add(item, { lat, lng })
+  }
+}
 // The map is beside the list on a wide screen and a tab of its own below that,
 // so each has a ref and only one of them is ever mounted.
 const wideMap = useTemplateRef<InstanceType<typeof PlanMap>>('wideMap')
@@ -670,8 +691,10 @@ async function removeStay(stay: Stay): Promise<void> {
             :tile-url="clientConfig.map_tile_url"
             :attribution="clientConfig.map_attribution"
             :can-edit="canEdit"
+            :can-add-stops="canEdit"
             @focus="focusItem"
             @add-at="addAt"
+            @add-stop="addStop"
           />
         </div>
 
@@ -803,8 +826,10 @@ async function removeStay(stay: Stay): Promise<void> {
           :tile-url="clientConfig.map_tile_url"
           :attribution="clientConfig.map_attribution"
           :can-edit="canEdit"
+          :can-add-stops="canEdit"
           @focus="focusItem"
           @add-at="addAt"
+          @add-stop="addStop"
         />
       </aside>
     </div>
@@ -822,6 +847,7 @@ async function removeStay(stay: Stay): Promise<void> {
     <PlanTransferDialog ref="transferDialog" :focus="searchFocus" @save="saveTransfer" />
     <PlanLegDialog ref="legDialog" @save="saveLeg" @recalculate="recalculateLegFromForm" />
     <PlanTargetDialog v-if="plan" ref="targetDialog" :days="plan.days" @choose="chooseTarget" />
+    <StopEditor ref="stopEditor" :report="false" @changed="(document) => (plan = document)" />
     <ConfirmDialog ref="confirmDialog" />
     <BackToTop />
   </div>

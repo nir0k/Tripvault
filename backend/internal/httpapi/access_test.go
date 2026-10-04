@@ -84,6 +84,8 @@ type fakeUsers struct {
 	deleted map[uuid.UUID]struct{}
 	// lastAdmin makes Delete refuse as if the account were the last one.
 	lastAdmin bool
+	// zones are the homes PrivacyZones finds on every trip.
+	zones domain.PrivacyZones
 }
 
 // avatarChanged is the moment every fake avatar was last changed.
@@ -145,6 +147,16 @@ func (fakeUsers) Update(context.Context, uuid.UUID, domain.UserChanges) (domain.
 func (fakeUsers) UpdateProfile(_ context.Context, id uuid.UUID, p domain.Profile) (domain.User, error) {
 	return domain.User{ID: id, DisplayName: p.DisplayName, Locale: p.Locale, Theme: p.Theme,
 		DefaultCurrency: p.DefaultCurrency, EmailNotifications: p.EmailNotifications}, nil
+}
+
+// SetHome echoes the home back.
+func (fakeUsers) SetHome(_ context.Context, id uuid.UUID, home *domain.HomeZone) (domain.User, error) {
+	return domain.User{ID: id, IsActive: true, Home: home}, nil
+}
+
+// PrivacyZones returns the homes the test gave.
+func (f fakeUsers) PrivacyZones(context.Context, uuid.UUID) (domain.PrivacyZones, error) {
+	return f.zones, nil
 }
 
 // ResetPassword is not used by these tests.

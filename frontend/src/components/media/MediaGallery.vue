@@ -39,8 +39,11 @@ const props = withDefaults(defineProps<{
   preferFavorites?: boolean
   /** Whether the menu offers to choose what the report shows. */
   canFavorite?: boolean
+  /** Whether the menu offers to make a picture the cover; a night has none. */
+  canCover?: boolean
 }>(), {
   canEdit: false,
+  canCover: true,
   coverId: null,
   tripId: '',
   preferFavorites: false,
@@ -126,7 +129,7 @@ const full = computed(() => favorites.value.length >= MEDIA_FAVORITE_LIMIT)
               class="menu dropdown-content z-20 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
               @click="closeMenu"
             >
-              <li>
+              <li v-if="canCover">
                 <button type="button" @click="emit('cover', item.id === coverId ? null : item)">
                   <AppIcon name="image" />
                   {{ item.id === coverId ? t('media.unsetCover') : t('media.setCover') }}

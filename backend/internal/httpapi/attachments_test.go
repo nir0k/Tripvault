@@ -286,3 +286,15 @@ func TestViewerCannotDescribeAttachment(t *testing.T) {
 		t.Errorf("a viewer described a file: %d %s", recorder.Code, recorder.Body.String())
 	}
 }
+
+// TestReportPlacesTakeNoAttachments checks a report's place refuses a file:
+// tickets and bookings belong to the plan.
+func TestReportPlacesTakeNoAttachments(t *testing.T) {
+	s, docs := newAttachmentServer(domain.RoleEditor)
+	docs.document.Kind = domain.DocumentReport
+	recorder := attach(t, s, docs.place.ID.String(), "receipt.pdf", ticket)
+	if recorder.Code != http.StatusUnprocessableEntity || !strings.Contains(recorder.Body.String(), `"reason":"plan_only"`) ||
+		len(docs.attachments) != 0 {
+		t.Errorf("a report's place took a file: %d %s", recorder.Code, recorder.Body.String())
+	}
+}

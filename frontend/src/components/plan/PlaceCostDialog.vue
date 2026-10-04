@@ -9,10 +9,10 @@ import { amountCents, centsToAmount, equalShares } from '@/utils/amount'
 import { formatMoney, normalizeAmount } from '@/utils/format'
 import { costCategoryOptions } from '@/utils/plan'
 
-// The cost of a place or an activity: how much, of what kind and for what, who
-// of the trip's members pays it, and how it is shared among them - not at all,
-// equally among the members ticked, or in amounts of each one's own that make
-// up the whole.
+// The cost of a place, an activity or a stop along an activity's line: how
+// much, of what kind and for what, who of the trip's members pays it, and how
+// it is shared among them - not at all, equally among the members ticked, or in
+// amounts of each one's own that make up the whole.
 //
 // A per-person cost is shared for the whole group, the amount multiplied by the
 // travellers, since that is what the payer lays out.
@@ -27,12 +27,16 @@ const emit = defineEmits<{
   save: [fields: PlaceFields]
 }>()
 
+/** CostHolder is anything that carries a cost the way a place does. */
+type CostHolder = Pick<PlanItem, 'planned_cost_amount' | 'cost_per_person' | 'cost_category' | 'cost_note'
+  | 'paid_by' | 'cost_split' | 'cost_shares'>
+
 const { t, locale } = useI18n()
 
 const categories = computed(() => costCategoryOptions(t))
 
 const dialog = useTemplateRef<HTMLDialogElement>('dialog')
-const item = ref<PlanItem | null>(null)
+const item = ref<CostHolder | null>(null)
 const error = ref('')
 const form = reactive({
   amount: '', perPerson: false, category: 'other' as CostCategory, note: '',
@@ -77,8 +81,8 @@ function money(cents: number): string {
   return formatMoney(centsToAmount(cents), props.currency, locale.value)
 }
 
-/** open shows the form filled with the place's cost. */
-function open(target: PlanItem): void {
+/** open shows the form filled with the cost of a place or a stop. */
+function open(target: CostHolder): void {
   item.value = target
   error.value = ''
   Object.assign(form, {

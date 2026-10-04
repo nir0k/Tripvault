@@ -58,7 +58,7 @@ func tripSummaryColumns(reader string) string {
 	t.track_speed_kmh,
 	(SELECT jsonb_object_agg(tr.lang, tr.fields) FROM (
 	   SELECT lang, jsonb_object_agg(field, value) AS fields FROM translations
-	   WHERE trip_id = t.id AND num_nonnulls(document_id, day_id, stay_id, item_id, leg_id, transfer_id) = 0
+	   WHERE trip_id = t.id AND num_nonnulls(document_id, day_id, stay_id, item_id, leg_id, transfer_id, stop_id) = 0
 	   GROUP BY lang) tr) AS translations,
 	t.created_at, t.updated_at, o.display_name, o.email,
 	(SELECT d.id FROM documents d WHERE d.trip_id = t.id AND d.kind = 'plan') AS plan_id,
@@ -368,7 +368,7 @@ func (r *TripRepository) List(ctx context.Context, userID uuid.UUID, filter doma
 		conditions = append(conditions, `(t.title ILIKE `+pattern+` ESCAPE '\' OR EXISTS (
 		  SELECT 1 FROM translations x
 		  WHERE x.trip_id = t.id AND x.field = 'title'
-		    AND num_nonnulls(x.document_id, x.day_id, x.stay_id, x.item_id, x.leg_id, x.transfer_id) = 0
+		    AND num_nonnulls(x.document_id, x.day_id, x.stay_id, x.item_id, x.leg_id, x.transfer_id, x.stop_id) = 0
 		    AND x.value ILIKE `+pattern+` ESCAPE '\'))`)
 	}
 

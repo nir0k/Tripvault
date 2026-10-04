@@ -1,4 +1,4 @@
-import type { Track } from '@/api/types'
+import type { Stop, Track } from '@/api/types'
 
 // How long a plan's line takes to walk, and the scale its speed is chosen on.
 //
@@ -59,6 +59,17 @@ export function walkingSeconds(track: Pick<Track, 'distance_m' | 'grades'>, spee
     counted += metres
   })
   return seconds + Math.max(track.distance_m - counted, 0) / flat
+}
+
+/**
+ * stopSeconds works out how long the way from the start of a line to a stop
+ * along it takes at a speed on the flat, from the slopes of the way there.
+ *
+ * Returns:
+ *   - the time in seconds.
+ */
+export function stopSeconds(stop: Pick<Stop, 'distance_m' | 'grades_to'>, speedKmh: number): number {
+  return walkingSeconds({ distance_m: stop.distance_m, grades: stop.grades_to }, speedKmh)
 }
 
 /** clampSpeed keeps a speed within the scale, to a tenth. */

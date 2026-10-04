@@ -169,6 +169,23 @@
   height: 11px;
   width: 11px;
 }
+/* A stop along a track: a white disc ringed in the day's colour with its picture. */
+.map-track-stop {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--pin);
+  border-radius: 9999px;
+  background: #ffffff;
+  color: #1f2937;
+  box-shadow: 0 0 0 1px #1f2937;
+}
+.map-track-stop svg {
+  height: 12px;
+  width: 12px;
+}
 /* An arrow along a track, pointing the way it was travelled. */
 .map-track-arrow {
   display: flex;

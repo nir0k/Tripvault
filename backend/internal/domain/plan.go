@@ -265,7 +265,7 @@ type DaySummary struct {
 //   - tracks: the document's recorded lines. The recordings of the day's
 //     places and activities - a hike, a walk around a lake - are added to the
 //     legs, because that is distance covered inside them rather than between
-//     them.
+//     them, and the costs of the stops along them to the day's.
 //
 // Returns:
 //   - one schedule per element, in the same order.
@@ -326,6 +326,11 @@ func ScheduleDay(day Day, items []Item, opening *Leg, legs []*Leg, travelers int
 			summary.ActualCost += item.ActualCostTotal(travelers)
 			if track := TrackOfItem(tracks, item.ID); track != nil {
 				summary.DistanceM += track.DistanceM
+				for _, stop := range track.Stops {
+					cost := stop.CostItem(item)
+					summary.PlannedCost += cost.PlannedCostTotal(travelers)
+					summary.ActualCost += cost.ActualCostTotal(travelers)
+				}
 			}
 		}
 		schedule.DepartureMinutes = cursor

@@ -109,6 +109,30 @@ func (g gallery) coverID(id *uuid.UUID) *string {
 	return &value
 }
 
+// outside returns the gallery with the place every picture taken inside a
+// circle was taken at cleared, for a reader from outside the trip.
+func (g gallery) outside(zones domain.PrivacyZones) gallery {
+	if len(zones) == 0 {
+		return g
+	}
+	result := gallery{
+		byID:      make(map[uuid.UUID]domain.Media, len(g.byID)),
+		byTarget:  make(map[uuid.UUID][]shown, len(g.byTarget)),
+		favorites: g.favorites,
+	}
+	for id, item := range g.byID {
+		result.byID[id] = zones.Media(item)
+	}
+	for target, pictures := range g.byTarget {
+		moved := make([]shown, len(pictures))
+		for index, picture := range pictures {
+			moved[index] = shown{item: zones.Media(picture.item), isFavorite: picture.isFavorite}
+		}
+		result.byTarget[target] = moved
+	}
+	return result
+}
+
 // galleryOf collects a trip's files and their links. includePrivate is false
 // for a read-only link that was not given private files, and those files then
 // disappear from every gallery and cover in the answer.
@@ -514,6 +538,34 @@ type setMediaLinksRequest struct {
 	FavoriteMediaID *[]string `json:"favorite_media_ids"`
 }
 
+// checkStayMarkPictures refuses pictures on a stay mark other than the night a
+// day of a report ends with: a morning mark, or a plan's, is shown nowhere a
+// picture could be seen.
+//
+// Returns:
+//   - false when the answer has already been written with an error.
+func (s *Server) checkStayMarkPictures(w http.ResponseWriter, r *http.Request, target domain.MediaTarget,
+	targetID uuid.UUID) bool {
+	if target != domain.MediaTargetItem || s.documents == nil {
+		return true
+	}
+	item, err := s.documents.Item(r.Context(), targetID)
+	if err != nil || item.Kind != domain.ItemStayAnchor {
+		return true
+	}
+	document, err := s.documents.Document(r.Context(), item.DocumentID)
+	if err != nil {
+		s.writeDomainError(w, r, "find media target", err)
+		return false
+	}
+	if !item.IsNight() || document.Kind != domain.DocumentReport {
+		s.writeDomainError(w, r, "link media", domain.NewValidationError("target_id", "not_a_night",
+			"of the stay marks only the night of a report's day takes pictures"))
+		return false
+	}
+	return true
+}
+
 // handleSetMediaLinks makes a trip, a day or a place show exactly these files.
 func (s *Server) handleSetMediaLinks(w http.ResponseWriter, r *http.Request) {
 	var body setMediaLinksRequest
@@ -542,6 +594,9 @@ func (s *Server) handleSetMediaLinks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, ok := s.tripAccess(w, r, tripID, domain.ActionEdit); !ok {
+		return
+	}
+	if !s.checkStayMarkPictures(w, r, target, targetID) {
 		return
 	}
 	// The favourites are read and checked against the gallery before anything is
@@ -659,7 +714,7 @@ func (s *Server) handleGetMediaFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.writeMediaFile(w, r, item)
+	s.writeMediaFile(w, r, item, false)
 }
 
 // handleGetMediaThumbnail serves a preview to somebody with an account.
@@ -677,7 +732,11 @@ func (s *Server) handleSharedMediaFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.writeMediaFile(w, r, item)
+	zones, ok := s.privacyZones(w, r, item.TripID)
+	if !ok {
+		return
+	}
+	s.writeMediaFile(w, r, item, hidesLocation(item, zones))
 }
 
 // handleSharedMediaThumbnail serves a preview to a read-only link.
@@ -737,15 +796,41 @@ func (s *Server) sharedMedia(w http.ResponseWriter, r *http.Request) (domain.Med
 // an access token changes every few minutes and would empty the cache with it.
 const mediaCacheControl = "private, no-cache"
 
+// hidesLocation reports whether a picture must leave without the place it was
+// taken at: a JPEG, the one kind whose location is read, taken inside a circle.
+func hidesLocation(item domain.Media, zones domain.PrivacyZones) bool {
+	return item.MIME == "image/jpeg" && zones.Hides(item.Lat, item.Lng)
+}
+
+// openMedia opens a stored file to be sent; with scrub, where it was taken is
+// blanked on the way (media.ScrubLocation).
+func (s *Server) openMedia(ctx context.Context, item domain.Media, scrub bool) (io.ReadCloser, error) {
+	file, err := s.mediaFiles.Open(ctx, item.StorageKey)
+	if err != nil || !scrub {
+		return file, err
+	}
+	free, err := media.NewLocationFree(file, item.Size)
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return free, nil
+}
+
 // writeMediaFile sends the stored bytes, letting the browser cache them: the
 // bytes under a key never change, so the checksum is a complete validator.
-func (s *Server) writeMediaFile(w http.ResponseWriter, r *http.Request, item domain.Media) {
+// With scrub the place the picture was taken at is blanked, and the tag says
+// so, so the copy is never mistaken for the whole file.
+func (s *Server) writeMediaFile(w http.ResponseWriter, r *http.Request, item domain.Media, scrub bool) {
 	tag := `"` + hex.EncodeToString(item.Checksum) + `"`
+	if scrub {
+		tag = `"` + hex.EncodeToString(item.Checksum) + `-nolocation"`
+	}
 	if match := r.Header.Get("If-None-Match"); match == tag {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	file, err := s.mediaFiles.Open(r.Context(), item.StorageKey)
+	file, err := s.openMedia(r.Context(), item, scrub)
 	if err != nil {
 		if errors.Is(err, media.ErrNotFound) {
 			s.writeError(w, r, http.StatusNotFound, "not_found", "Resource not found")

@@ -32,9 +32,10 @@ FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
 REPORT_ONLY = {"actual_cost_amount", "actual_amount", "report"}
 
 # What a fixture's place, day or trip names beside its own fields: the files
-# the seed uploads for it after it exists. The API takes none of them in the
-# body that creates the element.
-EXTRAS = {"photos", "favorite_photos", "cover_photo", "track", "attachments"}
+# the seed uploads for it after it exists, and the stops along its line, which
+# need the line first. The API takes none of them in the body that creates the
+# element.
+EXTRAS = {"photos", "favorite_photos", "cover_photo", "track", "attachments", "stops"}
 
 
 class Failure(Exception):
@@ -254,7 +255,10 @@ class Gallery:
 
 def dress_place(admin, gallery, item, extras, report=False):
     """Give a stored place what a fixture adds after it exists: its photographs,
-    favourites and cover, its route or recording, and its attachments."""
+    favourites and cover, its route or recording with the stops along it, and
+    its attachments. A report's place names the stops its plan's route brought
+    along - moved onto the recording - with when they were reached and what
+    they cost."""
     if extras.get("photos"):
         gallery.link("item", item["id"], extras["photos"], extras.get("favorite_photos") if report else None)
     if extras.get("cover_photo"):
@@ -262,9 +266,17 @@ def dress_place(admin, gallery, item, extras, report=False):
     track = extras.get("track")
     if track:
         track = track if isinstance(track, dict) else {"file": track}
-        upload(f"/items/{item['id']}/track", admin, track["file"], fixture_file("tracks", track["file"]))
+        document = upload(f"/items/{item['id']}/track", admin, track["file"], fixture_file("tracks", track["file"]))
         if track.get("speed_kmh"):
             request("PATCH", f"/items/{item['id']}/track", admin, {"speed_kmh": track["speed_kmh"]})
+        for stop in track.get("stops", []):
+            request("POST", f"/items/{item['id']}/stops", admin, stop)
+        if report:
+            line = next(each for day in document["days"] for each in day["items"] if each["id"] == item["id"])["track"]
+            for stop in line["stops"]:
+                outcome = extras.get("stops", {}).get(stop["name"])
+                if outcome:
+                    request("PATCH", f"/stops/{stop['id']}", admin, outcome)
     for attachment in extras.get("attachments", []):
         # An attachment is its file's name, or the name with the line describing it.
         attachment = attachment if isinstance(attachment, dict) else {"file": attachment}
@@ -401,8 +413,8 @@ def write_report(admin, plan_trip_id, trip, people):
 def dress_report(admin, report_trip_id, report_id, trip):
     """Add the report's own files: the photographs of its days and places with
     their favourites, covers and the private one, the recordings that replace
-    the plan's routes and the receipts attached to its places. None of the
-    plan's pictures or attachments came along with the copy."""
+    the plan's routes. None of the plan's pictures or attachments came along
+    with the copy, and a report's places carry no files of their own."""
     report = trip["report"]
     gallery = Gallery(admin, report_trip_id, report.get("private_photos", []))
     document = request("GET", f"/documents/{report_id}", admin)
@@ -442,6 +454,10 @@ def translate(admin, report_trip_id, report_id, translation):
             if item["kind"] != "stay_anchor" and words:
                 for field in ("name", "description_md", "story_md"):
                     add("item", item["id"], field, words.get(field))
+            for stop in (item.get("track") or {}).get("stops", []):
+                words = translation.get("stops", {}).get(stop["name"], {})
+                for field in ("name", "note_md"):
+                    add("stop", stop["id"], field, words.get(field))
     request("PUT", f"/documents/{report_id}/translations/{translation['lang']}", admin, {"translations": entries})
 
 

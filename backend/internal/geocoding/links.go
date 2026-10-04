@@ -15,6 +15,11 @@ import (
 // ErrUnrecognized reports text that holds no position this service can read.
 var ErrUnrecognized = errors.New("no position found in the text")
 
+// ErrNameOnly reports a Google Maps place link that names its place but holds
+// no position, as the links the Google Maps app shares often lead to. It wraps
+// ErrUnrecognized, so whoever cannot search for the name treats it as such.
+var ErrNameOnly = fmt.Errorf("%w: the link names a place without its position", ErrUnrecognized)
+
 // Location is a position read from coordinates or a map link.
 type Location struct {
 	Lat float64
@@ -65,6 +70,8 @@ func pair(value string) (Location, bool) {
 //
 // Returns:
 //   - the position, with the place name when the link carries one.
+//   - a Location holding only the name, with ErrNameOnly, for a Google Maps
+//     place link without a position.
 //   - ErrUnrecognized when no position can be read.
 func ParseLocation(text string) (Location, error) {
 	text = strings.TrimSpace(text)
@@ -111,6 +118,9 @@ func ParseLocation(text string) (Location, error) {
 				location.Name = name
 				return location, nil
 			}
+		}
+		if name != "" {
+			return Location{Name: name}, ErrNameOnly
 		}
 	case host == "openstreetmap.org" || strings.HasSuffix(host, ".openstreetmap.org") || host == "osm.org":
 		query := link.Query()

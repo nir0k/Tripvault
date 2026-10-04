@@ -114,6 +114,12 @@ func (s *Server) writeReportPDF(w http.ResponseWriter, r *http.Request, trip dom
 	if byLink {
 		content = content.ForShareLink()
 	}
+	// A PDF is handed on, so whoever asked for it, it shows nobody's home.
+	zones, ok := s.privacyZones(w, r, trip.ID)
+	if !ok {
+		return
+	}
+	content = content.Outside(zones)
 	requested := r.URL.Query().Get("content_lang")
 	if requested == "" {
 		requested = language
@@ -243,11 +249,11 @@ func plainText(attribution string) string {
 
 // reportPhotos renders the pictures of a report to the sizes the journal uses.
 //
-// Every picture of a day or a place is read at the width of a row; the ones
-// the journal shows across the page are read again at a width fit for it: the
-// cover, the picture each day opens with - its cover, or the first picture of
-// its places that is wider than tall - and the first such picture of each
-// place, which the place is laid out around.
+// Every picture of a day, a place or the night a day ends with is read at the
+// width of a row; the ones the journal shows across the page are read again at
+// a width fit for it: the cover, the picture each day opens with - its cover,
+// or the first picture of its places that is wider than tall - and the first
+// such picture of each place and night, which it is laid out around.
 //
 // Arguments:
 //   - ctx: context bounding the reads.
@@ -282,12 +288,20 @@ func (s *Server) reportPhotos(ctx context.Context, trip domain.TripSummary,
 	// scattering of them.
 	targets := make([]uuid.UUID, 0, len(content.Days)+len(content.Items))
 	placesOf := make(map[uuid.UUID][]uuid.UUID, len(content.Days))
+	nightOf := make(map[uuid.UUID]uuid.UUID, len(content.Days))
 	for _, day := range content.Days {
 		targets = append(targets, day.ID)
 		for _, place := range content.Items {
 			if place.DayID != nil && *place.DayID == day.ID && place.Kind.IsVisit() {
 				targets = append(targets, place.ID)
 				placesOf[day.ID] = append(placesOf[day.ID], place.ID)
+			}
+		}
+		// The night ends the day, so its pictures come after the places'.
+		for _, item := range content.Items {
+			if item.DayID != nil && *item.DayID == day.ID && item.IsNight() {
+				targets = append(targets, item.ID)
+				nightOf[day.ID] = item.ID
 			}
 		}
 	}
@@ -350,7 +364,7 @@ func (s *Server) reportPhotos(ctx context.Context, trip domain.TripSummary,
 			heroOf[day.ID] = hero.item.ID
 			sharp = append(sharp, *hero)
 		}
-		for _, place := range placesOf[day.ID] {
+		for _, place := range append(placesOf[day.ID], nightOf[day.ID]) {
 			if index, ok := firstWide(place, heroOf[day.ID]); ok {
 				sharp = append(sharp, pictureJob{target: place, item: chosen[index].item, width: pdfHeroWidth})
 			}
@@ -549,6 +563,11 @@ func (s *Server) writePlanPDF(w http.ResponseWriter, r *http.Request, trip domai
 	if byLink {
 		content = content.ForShareLink()
 	}
+	zones, ok := s.privacyZones(w, r, trip.ID)
+	if !ok {
+		return
+	}
+	content = content.Outside(zones)
 	if domain.ValidateUnits(units) != nil {
 		units = domain.UnitsKilometres
 	}

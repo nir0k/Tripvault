@@ -321,6 +321,11 @@ func readContent(ctx context.Context, q querier, id uuid.UUID) (domain.DocumentC
 		`SELECT `+trackColumns+` FROM tracks t WHERE t.document_id = $1`, id); err != nil {
 		return content, err
 	}
+	stops, err := readStops(ctx, q, id)
+	if err != nil {
+		return content, err
+	}
+	attachStops(content.Tracks, stops)
 	content.Translations, err = documentTranslations(ctx, q, content.Document.TripID)
 	return content, err
 }

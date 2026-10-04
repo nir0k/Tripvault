@@ -42,6 +42,14 @@ func TestParseLocation(t *testing.T) {
 			t.Errorf("%q accepted", text)
 		}
 	}
+	// The Google Maps app shares links that lead to a place without its position.
+	nameOnly := "https://www.google.com/maps/place/Googleplex,+1600+Amphitheatre+Pkwy,+Mountain+View,+CA+94043/" +
+		"data=!4m2!3m1!1s0x808fba02425dad8f:0x6c296c66619367e0!18m1!1e1?utm_source=mstt_1&entry=gps"
+	got, err := ParseLocation(nameOnly)
+	if !errors.Is(err, ErrNameOnly) || !errors.Is(err, ErrUnrecognized) ||
+		got != (Location{Name: "Googleplex, 1600 Amphitheatre Pkwy, Mountain View, CA 94043"}) {
+		t.Errorf("name-only link: got %+v, %v", got, err)
+	}
 	if !IsShortLink("https://maps.app.goo.gl/abc123") || IsShortLink("http://maps.app.goo.gl/abc") || IsShortLink("https://evil.example/abc") {
 		t.Error("short link detection")
 	}

@@ -33,14 +33,25 @@ func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
 // userColumns is the shared select list, kept in step with scanUser.
 const userColumns = `u.id, u.email, u.display_name, u.password_hash, u.is_admin, u.is_active,
 	u.must_change_password, u.email_notifications, u.email_unverified_since, coalesce(u.locale, ''), u.theme, u.units, u.date_format, u.time_format,
-	u.default_currency, u.avatar_key, u.avatar_updated_at, u.last_login_at, u.created_at, u.updated_at`
+	u.default_currency, u.avatar_key, u.avatar_updated_at, u.last_login_at, u.created_at, u.updated_at,
+	u.home_lat, u.home_lng, u.home_radius_m, u.zone_lat, u.zone_lng`
 
 // scanUser reads one row in the order of userColumns.
 func scanUser(row pgx.Row) (domain.User, error) {
 	var u domain.User
+	var homeLat, homeLng, zoneLat, zoneLng *float64
+	var radius *int
 	err := row.Scan(&u.ID, &u.Email, &u.DisplayName, &u.PasswordHash, &u.IsAdmin, &u.IsActive,
 		&u.MustChangePassword, &u.EmailNotifications, &u.EmailUnverifiedSince, &u.Locale, &u.Theme, &u.Units, &u.DateFormat, &u.TimeFormat,
-		&u.DefaultCurrency, &u.AvatarKey, &u.AvatarUpdatedAt, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
+		&u.DefaultCurrency, &u.AvatarKey, &u.AvatarUpdatedAt, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt,
+		&homeLat, &homeLng, &radius, &zoneLat, &zoneLng)
+	// The table keeps the five set together, so one of them stands for all.
+	if err == nil && homeLat != nil && homeLng != nil && radius != nil && zoneLat != nil && zoneLng != nil {
+		u.Home = &domain.HomeZone{
+			Home: domain.Point{Lat: *homeLat, Lng: *homeLng},
+			Zone: domain.PrivacyZone{Center: domain.Point{Lat: *zoneLat, Lng: *zoneLng}, RadiusM: *radius},
+		}
+	}
 	return u, err
 }
 
@@ -211,6 +222,72 @@ func (r *UserRepository) UpdateProfile(ctx context.Context, id uuid.UUID, profil
 		 RETURNING `+userColumns,
 		id, profile.DisplayName, profile.Locale, profile.Theme, profile.Units,
 		profile.DateFormat, profile.TimeFormat, profile.DefaultCurrency, profile.EmailNotifications), "update profile")
+}
+
+// SetHome - stores where an account's owner lives and the circle hidden around
+// it, or forgets both.
+//
+// Arguments:
+//   - ctx: context bounding the statement.
+//   - id: the account.
+//   - home: the home with its circle, or nil to forget it.
+//
+// Returns:
+//   - the stored account.
+//   - domain.ErrNotFound when no such account exists.
+func (r *UserRepository) SetHome(ctx context.Context, id uuid.UUID, home *domain.HomeZone) (domain.User, error) {
+	var homeLat, homeLng, zoneLat, zoneLng *float64
+	var radius *int
+	if home != nil {
+		homeLat, homeLng = &home.Home.Lat, &home.Home.Lng
+		zoneLat, zoneLng = &home.Zone.Center.Lat, &home.Zone.Center.Lng
+		radius = &home.Zone.RadiusM
+	}
+	return oneUser(r.pool.QueryRow(ctx,
+		`UPDATE users AS u
+		 SET home_lat = $2, home_lng = $3, home_radius_m = $4, zone_lat = $5, zone_lng = $6, updated_at = now()
+		 WHERE u.id = $1
+		 RETURNING `+userColumns,
+		id, homeLat, homeLng, radius, zoneLat, zoneLng), "set home")
+}
+
+// PrivacyZones - lists the circles hidden from a reader of a trip from outside
+// it: the homes of its owner and members, and of the owner and members of the
+// plan a report was copied from, whose content came with the copy.
+//
+// Arguments:
+//   - ctx: context bounding the query.
+//   - tripID: the trip being read.
+//
+// Returns:
+//   - the circles, none when nobody named a home.
+//   - an error if the query fails.
+func (r *UserRepository) PrivacyZones(ctx context.Context, tripID uuid.UUID) (domain.PrivacyZones, error) {
+	rows, err := r.pool.Query(ctx,
+		`WITH trip_ids AS (
+		     SELECT id FROM trips WHERE id = $1
+		     UNION
+		     SELECT source_trip_id FROM trips WHERE id = $1 AND source_trip_id IS NOT NULL
+		 ), people AS (
+		     SELECT owner_id AS user_id FROM trips WHERE id IN (SELECT id FROM trip_ids)
+		     UNION
+		     SELECT user_id FROM trip_members WHERE trip_id IN (SELECT id FROM trip_ids)
+		 )
+		 SELECT u.zone_lat, u.zone_lng, u.home_radius_m
+		 FROM users u JOIN people p ON p.user_id = u.id
+		 WHERE u.zone_lat IS NOT NULL`, tripID)
+	if err != nil {
+		return nil, fmt.Errorf("list privacy zones: %w", err)
+	}
+	zones, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (domain.PrivacyZone, error) {
+		var zone domain.PrivacyZone
+		err := row.Scan(&zone.Center.Lat, &zone.Center.Lng, &zone.RadiusM)
+		return zone, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list privacy zones: %w", err)
+	}
+	return zones, nil
 }
 
 // SetAvatar - stores where an account's picture lives and when it was put there.

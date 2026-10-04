@@ -8,6 +8,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import AvatarEditor from '@/components/AvatarEditor.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import CurrencyMenu from '@/components/CurrencyMenu.vue'
+import HomeZoneCard from '@/components/HomeZoneCard.vue'
 import LanguageSelect from '@/components/LanguageSelect.vue'
 import PasswordChangeForm from '@/components/PasswordChangeForm.vue'
 import ThemeSelect from '@/components/ThemeSelect.vue'
@@ -323,6 +324,8 @@ onMounted(loadSessions)
           </fieldset>
         </div>
       </div>
+
+      <HomeZoneCard />
 
       <div class="card border border-base-300 bg-base-100">
         <div class="card-body gap-3">

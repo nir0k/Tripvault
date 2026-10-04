@@ -129,7 +129,10 @@ type locationResponse struct {
 }
 
 // handleParseLink reads a position from pasted coordinates or a Google Maps or
-// OpenStreetMap link, expanding Google's short links. It needs no provider.
+// OpenStreetMap link, expanding Google's short links. It needs no provider,
+// except for a Google place link that names its place without a position:
+// that name is looked up with the configured geocoder, the only server asked,
+// and the first result's position is taken - a few metres from Google's pin.
 func (s *Server) handleParseLink(w http.ResponseWriter, r *http.Request) {
 	text := strings.TrimSpace(r.URL.Query().Get("url"))
 	unrecognized := domain.NewValidationError("url", "unrecognized_link", "no position found in the text")
@@ -148,9 +151,43 @@ func (s *Server) handleParseLink(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	location, err := geocoding.ParseLocation(text)
+	if errors.Is(err, geocoding.ErrNameOnly) && s.geocoder != nil && s.geocoder.Enabled() {
+		location, err = s.locatePlaceName(r, location.Name)
+		if err != nil && !errors.Is(err, geocoding.ErrUnrecognized) {
+			s.writeGeocodingError(w, r, err)
+			return
+		}
+	}
 	if err != nil {
 		s.writeDomainError(w, r, "parse link", unrecognized)
 		return
 	}
 	writeJSON(w, s.logger, http.StatusOK, locationResponse{Lat: location.Lat, Lng: location.Lng, Name: location.Name})
+}
+
+// locatePlaceName finds the position of a place a link names without one,
+// such as "Googleplex, 1600 Amphitheatre Pkwy, Mountain View, CA 94043".
+//
+// Arguments:
+//   - r: the request, which gives the language results are named in.
+//   - name: the place name read from the link.
+//
+// Returns:
+//   - the first result's position, named by the link's name up to its first
+//     comma, which is the place's own name.
+//   - geocoding.ErrUnrecognized when nothing is found, or the geocoder's error.
+func (s *Server) locatePlaceName(r *http.Request, name string) (geocoding.Location, error) {
+	query := strings.TrimSpace(strings.ReplaceAll(name, "+", " "))
+	if len([]rune(query)) > maxSearchLength {
+		query = string([]rune(query)[:maxSearchLength])
+	}
+	places, err := s.geocoder.Search(r.Context(), geocoding.Query{Text: query, Lang: requestLang(r)})
+	if err != nil {
+		return geocoding.Location{}, err
+	}
+	if len(places) == 0 {
+		return geocoding.Location{}, geocoding.ErrUnrecognized
+	}
+	own, _, _ := strings.Cut(query, ",")
+	return geocoding.Location{Lat: places[0].Lat, Lng: places[0].Lng, Name: strings.TrimSpace(own)}, nil
 }

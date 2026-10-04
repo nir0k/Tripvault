@@ -6,7 +6,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import { useDropdown } from '@/composables/useDropdown'
 import MediaGallery from '@/components/media/MediaGallery.vue'
 import MediaUploader from '@/components/media/MediaUploader.vue'
-import ItemAttachments from '@/components/plan/ItemAttachments.vue'
+import ActivityStops from '@/components/plan/ActivityStops.vue'
 import EditableMarkdown from '@/components/report/EditableMarkdown.vue'
 import ReportTrackLine from '@/components/report/ReportTrackLine.vue'
 import { useReportText } from '@/composables/useContentLanguage'
@@ -17,9 +17,10 @@ import { itemIcon, itemKindLabel } from '@/utils/plan'
 // there. A place was visited unless the switch on its card says otherwise,
 // which is one tap on a phone during the trip rather than a form afterwards.
 //
-// While a translation is written only the words of the card can be changed:
-// the story in place, the name and description through the form "Translate"
-// opens. Everything else is shared by every language.
+// While a translation is written the story is written in place in that
+// language and the name and description through the form "Translate" opens;
+// everything else is shared by every language and is edited as ever, the
+// form "Edit" opens included, which writes the original.
 const props = defineProps<{
   item: PlanItem
   currency: string
@@ -31,6 +32,10 @@ const props = defineProps<{
   last?: boolean
   /** Show the handle the card is dragged by, as in the plan. */
   draggable?: boolean
+  /** The speed on the flat a line without times is estimated at. */
+  trackSpeed?: number | null
+  /** The place's number in its day, which labels the stops along its line. */
+  number?: number
 }>()
 
 const emit = defineEmits<{
@@ -38,6 +43,8 @@ const emit = defineEmits<{
   rate: [rating: number | null]
   story: [story: string]
   edit: []
+  /** Open the translation of the name and description. */
+  translate: []
   remove: []
   up: []
   down: []
@@ -63,9 +70,7 @@ function choose(action: () => void): void {
   action()
 }
 
-// structural is editing what every language shares; translating is writing the
-// words of one language.
-const structural = computed(() => props.editing && !text.value.translating)
+// translating is writing the words of one language besides the rest.
 const translating = computed(() => props.editing && text.value.translating)
 
 const planned = computed(() => amountOf(props.item.planned_cost_amount))
@@ -118,7 +123,7 @@ function rate(stars: number): void {
       <!-- The handle a card is dragged by, as in the plan: to another place of
            its day or onto another day in the list of days. -->
       <span
-        v-if="structural && draggable"
+        v-if="editing && draggable"
         class="drag-handle mt-0.5 cursor-grab text-base-content/40"
         aria-hidden="true"
       >⋮⋮</span>
@@ -147,11 +152,11 @@ function rate(stars: number): void {
         </p>
       </div>
 
-      <button v-if="translating" type="button" class="btn btn-ghost btn-sm" @click="emit('edit')">
-        <AppIcon name="globe" />
-        {{ t('report.translate') }}
-      </button>
-      <div v-else-if="structural" class="flex items-center gap-1">
+      <div v-if="editing" class="flex flex-wrap items-center justify-end gap-1">
+        <button v-if="translating" type="button" class="btn btn-ghost btn-sm" @click="emit('translate')">
+          <AppIcon name="globe" />
+          {{ t('report.translate') }}
+        </button>
         <label v-if="item.status !== 'unplanned'" class="label me-2 cursor-pointer gap-2 text-sm">
           <input
             type="checkbox"
@@ -191,8 +196,8 @@ function rate(stars: number): void {
       </div>
     </header>
 
-    <div v-if="structural || item.rating !== null" class="flex items-center gap-0.5">
-      <template v-if="structural">
+    <div v-if="editing || item.rating !== null" class="flex items-center gap-0.5">
+      <template v-if="editing">
         <button
           v-for="stars in 5"
           :key="stars"
@@ -224,28 +229,31 @@ function rate(stars: number): void {
     <ReportTrackLine
       v-if="item.kind === 'activity'"
       :track="item.track"
-      :editing="structural"
+      :editing="editing"
       :hint="t('track.activityHint')"
+      :report-speed="trackSpeed ?? null"
+      :activity-start="item.actual_time"
+      :activity-end="item.actual_end_time"
       @import="(file) => emit('importTrack', file)"
       @remove="emit('removeTrack')"
     />
 
-    <ItemAttachments :item-id="item.id" :attachments="item.attachments" :editing="structural" add-button />
+    <ActivityStops v-if="item.track" :item="item" :editing="editing" :report="true" :number="number" />
 
     <MediaGallery
       v-if="item.media.length > 0"
       :items="item.media"
-      :can-edit="structural"
+      :can-edit="editing"
       :cover-id="item.cover_media_id"
       :trip-id="tripId"
       prefer-favorites
-      :can-favorite="structural"
+      :can-favorite="editing"
       @cover="(media) => emit('cover', media)"
       @privacy="(media, isPrivate) => emit('privacy', media, isPrivate)"
       @favorite="(media, isFavorite) => emit('favoriteMedia', media, isFavorite)"
       @unlink="(media) => emit('unlinkMedia', media)"
       @remove="(media) => emit('removeMedia', media)"
     />
-    <MediaUploader v-if="structural && tripId" :trip-id="tripId" small @uploaded="(media) => emit('uploaded', media)" />
+    <MediaUploader v-if="editing && tripId" :trip-id="tripId" small @uploaded="(media) => emit('uploaded', media)" />
   </article>
 </template>

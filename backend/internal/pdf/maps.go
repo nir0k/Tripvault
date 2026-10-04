@@ -76,6 +76,14 @@ type trackEnd struct {
 	finish bool
 }
 
+// stopMarker is a stop along a track: a small ring in the day's colour, and on
+// a day's map the label it is listed under beside its activity.
+type stopMarker struct {
+	point domain.Point
+	color [3]int
+	label string
+}
+
 // mapMarker is one point of a map; a label turns the dot into a numbered pin.
 type mapMarker struct {
 	point domain.Point
@@ -89,7 +97,9 @@ type mapLayer struct {
 	// ends are drawn under the markers, so a place at the start of its own
 	// track keeps its pin on top. They lie on their tracks' lines, so the
 	// frame needs nothing from them.
-	ends    []trackEnd
+	ends []trackEnd
+	// stops lie on their tracks' lines too, and are drawn over the ends.
+	stops   []stopMarker
 	markers []mapMarker
 }
 
@@ -207,6 +217,7 @@ func tripLayer(content domain.DocumentContent) mapLayer {
 		each := dayLayer(content, day, index, false)
 		layer.lines = append(layer.lines, each.lines...)
 		layer.ends = append(layer.ends, each.ends...)
+		layer.stops = append(layer.stops, each.stops...)
 		layer.markers = append(layer.markers, each.markers...)
 	}
 	return layer
@@ -265,6 +276,13 @@ func dayLayer(content domain.DocumentContent, day domain.Day, index int, numbere
 		if item.Kind.IsVisit() {
 			number++
 		}
+		for index, stop := range domain.StopsOf(content.Tracks, item.ID) {
+			marker := stopMarker{point: stop.Point, color: color}
+			if numbered {
+				marker.label = stopLabel(number, index)
+			}
+			layer.stops = append(layer.stops, marker)
+		}
 		point := domain.ItemPoint(item, stays)
 		if point == nil {
 			continue
@@ -278,6 +296,15 @@ func dayLayer(content domain.DocumentContent, day domain.Day, index int, numbere
 		layer.markers = append(layer.markers, marker)
 	}
 	return layer
+}
+
+// stopLabel names a stop on a day's map and in its activity's block: the
+// activity's number and a letter for the stop, "3a", "3b", along the line.
+func stopLabel(number, index int) string {
+	if index < 26 {
+		return strconv.Itoa(number) + string(rune('a'+index))
+	}
+	return strconv.Itoa(number) + "." + strconv.Itoa(index+1)
 }
 
 // legPoints finds a journey's line: the route it was calculated along, or the
@@ -422,6 +449,25 @@ func (d *document) drawMapIn(layer mapLayer, m Map, attribution string, left, to
 			d.pdf.SetFillColor(255, 255, 255)
 		}
 		d.pdf.Circle(x, y, 1.2, "FD")
+	}
+
+	// A stop is a white ring in the day's colour on its track, its label beside
+	// it in the colour of the track's casing over a white halo.
+	d.pdf.SetFont(fontFamily, "B", 5.5)
+	for _, stop := range layer.stops {
+		x, y := place(stop.point)
+		d.pdf.SetLineWidth(0.45)
+		d.pdf.SetDrawColor(stop.color[0], stop.color[1], stop.color[2])
+		d.pdf.SetFillColor(255, 255, 255)
+		d.pdf.Circle(x, y, 0.9, "FD")
+		if stop.label != "" {
+			width := d.pdf.GetStringWidth(stop.label) + 0.8
+			d.pdf.SetFillColor(255, 255, 255)
+			d.pdf.RoundedRect(x+1.2, y-1.1, width, 2.2, 0.5, "1234", "F")
+			d.pdf.SetTextColor(trackCasing[0], trackCasing[1], trackCasing[2])
+			d.pdf.SetXY(x+1.2, y-1.1)
+			d.pdf.CellFormat(width, 2.2, stop.label, "", 0, "CM", false, 0, "")
+		}
 	}
 
 	d.pdf.SetDrawColor(255, 255, 255)

@@ -251,3 +251,34 @@ func TestSharedHidesTheTravellersDetails(t *testing.T) {
 		}
 	}
 }
+
+// TestSharedHidesTheHomes checks a link reads a place inside somebody's home
+// without its position and address, which the members still read.
+func TestSharedHidesTheHomes(t *testing.T) {
+	s, docs := newDocumentServer(domain.RoleOwner)
+	home := domain.Point{Lat: 64.1466, Lng: -21.9426}
+	s.users = fakeUsers{zones: domain.PrivacyZones{{Center: home, RadiusM: 500}}}
+	docs.place.Lat, docs.place.Lng, docs.place.Address = &home.Lat, &home.Lng, "Laugavegur 1"
+	secrets := []string{"Laugavegur 1", "64.1466"}
+
+	member := send(s, http.MethodGet, "/api/v1/documents/"+docs.document.ID.String(), "good", "")
+	for _, secret := range secrets {
+		if !strings.Contains(member.Body.String(), secret) {
+			t.Errorf("a member does not read %q", secret)
+		}
+	}
+
+	link := createLink(t, s, docs.document.TripID.String(), `{}`)
+	shared := sendShared(s, "/api/v1/shared/document", link.Token)
+	if shared.Code != http.StatusOK {
+		t.Fatalf("read the shared document: %d %s", shared.Code, shared.Body.String())
+	}
+	for _, secret := range secrets {
+		if strings.Contains(shared.Body.String(), secret) {
+			t.Errorf("a link reads %q", secret)
+		}
+	}
+	if !strings.Contains(shared.Body.String(), "Seljalandsfoss") {
+		t.Error("the place itself is gone, not only where it is")
+	}
+}

@@ -56,9 +56,12 @@ type User struct {
 	// makes a browser fetch the new one.
 	AvatarKey       string
 	AvatarUpdatedAt *time.Time
-	LastLoginAt     *time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// Home is where the person lives and the circle hidden around it, nil
+	// when they named none. Only its owner ever reads it back.
+	Home        *HomeZone
+	LastLoginAt *time.Time
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // Session is one signed-in device: a stored, revocable refresh token.

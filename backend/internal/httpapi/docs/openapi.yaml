@@ -425,6 +425,70 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /api/v1/me/home:
+    get:
+      tags: [Profile]
+      summary: Read own home
+      description: |
+        Where the signed-in person lives, and the circle around it that is kept
+        out of what their trips show to a reader from outside them: every
+        read-only link - the document, its PDFs, the track files and the
+        original pictures it downloads - and every PDF, whoever asks for it.
+        The home is read back only by its owner, never with the account an
+        administrator lists. Both fields are null when no home is set.
+      operationId: getHome
+      responses:
+        "200":
+          $ref: "#/components/responses/Home"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags: [Profile]
+      summary: Set own home
+      description: |
+        Stores the home and draws the circle hidden around it. The circle is not
+        centred on the home but on a random point within half its radius, so the
+        ends of the lines trimmed at its edge do not point at the door; it is
+        drawn again only when the point or the radius changes. Inside the circle
+        a place, a stay, an end of a transfer or a change of a journey keeps its
+        name and loses its position and address, lines lose their points, a stop
+        moves to the nearest point of its line still shown, a picture loses
+        where it was taken - in the answer and, for a JPEG, in the original
+        file - and a track file is sent as GPX without those points. Distances,
+        times and costs are not changed.
+      operationId: setHome
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HomeInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/Home"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      tags: [Profile]
+      summary: Forget own home
+      description: Removes the home; the person's trips are shown whole again.
+      operationId: deleteHome
+      responses:
+        "204":
+          description: The home is forgotten.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /api/v1/users/{userID}/avatar:
     get:
       tags: [Profile]
@@ -628,7 +692,13 @@ paths:
         map centre, `q`/`ll`/`query` parameters, and `maps.app.goo.gl` short
         links, which are followed only through Google hosts) and
         openstreetmap.org links (`mlat`/`mlon` or `#map=zoom/lat/lng`). Needs no
-        geocoder. Anything else answers `422` with reason `unrecognized_link`.
+        geocoder, except for a Google place link that names its place without a
+        position, as the Google Maps app often shares: that name is searched
+        with the configured geocoder and the first result's position is
+        returned, named by the link's name up to its first comma. A geocoder
+        that is busy or does not answer gives `503` as `/geo/search` does.
+        Anything else, a name-only link without a geocoder or with no result
+        included, answers `422` with reason `unrecognized_link`.
       operationId: geoParseLink
       parameters:
         - name: url
@@ -1489,7 +1559,9 @@ paths:
         reading only, less what is the travellers' own: the files attached to
         places, the booking references of stays, transfers and places, the
         contacts of stays, and who pays and shares a place's cost. The PDFs a
-        link reads leave out the same. A trip without its document answers `404`.
+        link reads leave out the same. Nothing inside the home of anybody on
+        the trip is shown either (`/me/home`). A trip without its document
+        answers `404`.
       operationId: getSharedDocument
       security: []
       parameters:
@@ -1801,6 +1873,9 @@ paths:
         Makes a trip, a day or a place show exactly these files, in this order.
         The call replaces whatever was shown before, so repeating it changes
         nothing, and every file must belong to the same trip as the target.
+        Of the stay marks only the night a day of a report ends with - its
+        evening mark - takes pictures, like a place and without a cover; any
+        other mark answers `422` with reason `not_a_night`.
       operationId: setMediaLinks
       requestBody:
         required: true
@@ -1858,8 +1933,10 @@ paths:
       tags: [Sharing]
       summary: Read a shared file
       description: |
-        A file of the trip the link opens. A file of another trip, and a private
-        file in a link that was not given private files, answer `404`.
+        A file of the trip the link opens. A JPEG taken inside the home of
+        anybody on the trip (`/me/home`) is sent without where it was taken. A
+        file of another trip, and a private file in a link that was not given
+        private files, answer `404`.
       operationId: getSharedMediaFile
       security: []
       parameters:
@@ -1995,8 +2072,9 @@ paths:
       tags: [Sharing]
       summary: Download a shared track file
       description: |
-        The file a track of the shared trip was imported from. A track of
-        another trip answers `404`.
+        The file a track of the shared trip was imported from. A file that passes
+        through the home of anybody on the trip (`/me/home`) is written again as
+        GPX without the points inside it. A track of another trip answers `404`.
       operationId: getSharedTrackFile
       security: []
       parameters:
@@ -2113,7 +2191,8 @@ paths:
         with the journeys between them; and last the ideas without a day.
         Every place and stay with a position carries a QR code, and its
         address a link, that open the way there in a map. It is written in the
-        reader's language and units. Every member may.
+        reader's language and units. Every member may. Like every PDF, it shows
+        nothing inside the home of anybody on the trip (`/me/home`).
       operationId: getPlanPDF
       parameters:
         - $ref: "#/components/parameters/TripID"
@@ -2453,7 +2532,8 @@ paths:
         The report rendered as a file: a cover, the figures it opens with, every
         day with its places, journeys, stays and photographs, and the comparison
         of what was planned against what was spent. Its language and its
-        distance units are the reader's own, from their profile.
+        distance units are the reader's own, from their profile. Like every PDF,
+        it shows nothing inside the home of anybody on the trip (`/me/home`).
 
         The document is rendered by the server, so it reads the same wherever it
         was asked for. Photographs are included at the width the page draws them
@@ -2668,7 +2748,7 @@ paths:
                     properties:
                       target_type:
                         type: string
-                        enum: [trip, document, day, stay, transfer, item, leg]
+                        enum: [trip, document, day, stay, transfer, item, leg, stop]
                       target_id:
                         type: string
                         format: uuid
@@ -2676,7 +2756,7 @@ paths:
                       field:
                         type: string
                         enum: [title, summary, intro_md, summary_md, notes_md, highlight, name, description_md,
-                               story_md, note, from_name, to_name]
+                               story_md, note, from_name, to_name, note_md]
                         description: One of the fields the target translates.
                       value:
                         type: string
@@ -3049,6 +3129,47 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationFailed"
 
+  /api/v1/items/{itemID}/night:
+    patch:
+      tags: [Documents]
+      summary: Tell the story of a night of a report
+      description: |
+        The story of the night a day of a report ends with, kept on the day's
+        evening stay mark (`kind` `stay_anchor`, `anchor` `evening`) and read
+        back as its `story_md`. The mark keeps the story while the day has a
+        stay, whichever stay it is; a day left without one loses its mark and
+        the story with it. Any other element answers `422` with reason
+        `not_a_night`, a plan's mark `422` with reason `report_only`. Its
+        translations are written like a place's, as `story_md` of target
+        `item`. Owners and editors may.
+      operationId: updateNight
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [story_md]
+              properties:
+                story_md:
+                  type: string
+                  maxLength: 20000
+      responses:
+        "200":
+          $ref: "#/components/responses/Document"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
   /api/v1/items/{itemID}/track:
     post:
       tags: [Documents]
@@ -3180,7 +3301,8 @@ paths:
       summary: Attach a file to a place or an activity
       description: |
         A multipart upload with one `file` part: a ticket, a booking, a
-        timetable. Only documents and pictures are accepted, decided from the
+        timetable. Only a plan's places carry files; a report's place answers
+        `422` with reason `plan_only`. Only documents and pictures are accepted, decided from the
         bytes rather than the declared type, and the file's name has to end the
         way its kind is named: PDF (`.pdf`); plain text (`.txt`, `.md`,
         `.markdown`, `.csv`, a calendar `.ics`, a saved message `.eml`); a saved
@@ -3397,6 +3519,87 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationFailed"
 
+  /api/v1/items/{itemID}/stops:
+    post:
+      tags: [Documents]
+      summary: Add a stop along the line of an activity
+      description: |
+        A café, a rest, a view or a spring along the line of an activity. The
+        point given is moved onto the nearest stretch of the line, and how far
+        along the line it lies (`distance_m`) and the slopes of the way there
+        (`grades_to`) are measured from the line's own file. An activity
+        without a line answers `422` with reason `no_track`; an activity holds
+        at most 50 stops (`too_many_stops`). A stop costs like a place and is
+        counted in its activity's day; `actual_time` and `actual_cost_amount`
+        belong to a report (`report_only`). Owners and editors may.
+      operationId: createStop
+      parameters:
+        - $ref: "#/components/parameters/ItemID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/StopRequest"
+                - required: [lat, lng]
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+  /api/v1/stops/{stopID}:
+    patch:
+      tags: [Documents]
+      summary: Change a stop
+      description: |
+        Omitted fields keep their value. A new point is moved onto the line
+        and measured along it again. Owners and editors may.
+      operationId: updateStop
+      parameters:
+        - $ref: "#/components/parameters/StopID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StopRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      tags: [Documents]
+      summary: Remove a stop
+      operationId: deleteStop
+      parameters:
+        - $ref: "#/components/parameters/StopID"
+      responses:
+        "200":
+          $ref: "#/components/responses/DocumentChanged"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/stays/{stayID}:
     patch:
       tags: [Documents]
@@ -5094,6 +5297,13 @@ components:
       schema:
         type: string
         format: uuid
+    StopID:
+      name: stopID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     LegID:
       name: legID
       in: path
@@ -5204,6 +5414,12 @@ components:
               url:
                 type: string
                 description: The address to open, such as `/api/v1/downloads/…`; it holds no secret.
+    Home:
+      description: The person's home and the circle hiding it.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Home"
     TrackFile:
       description: The track file as it was uploaded.
       headers:
@@ -5739,6 +5955,39 @@ components:
         user:
           $ref: "#/components/schemas/User"
 
+    HomeInput:
+      type: object
+      required: [lat, lng, radius_m]
+      properties:
+        lat:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+        lng:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+        radius_m:
+          type: integer
+          minimum: 200
+          maximum: 2000
+          description: The radius of the hidden circle in metres.
+    Home:
+      type: object
+      required: [home, zone]
+      properties:
+        home:
+          description: The point the person chose; null when no home is set.
+          oneOf:
+            - $ref: "#/components/schemas/HomeInput"
+            - type: "null"
+        zone:
+          description: The circle actually hidden, its centre moved off the home; null when no home is set.
+          oneOf:
+            - $ref: "#/components/schemas/HomeInput"
+            - type: "null"
     User:
       type: object
       required: [id, email, display_name, is_admin, is_active, must_change_password, email_notifications,
@@ -6995,7 +7244,7 @@ components:
           $ref: "#/components/schemas/ItemStatus"
         story_md:
           type: string
-          description: What happened here. Report only.
+          description: What happened here; on the evening stay mark, the story of the night. Report only.
         actual_time:
           oneOf:
             - $ref: "#/components/schemas/ClockTime"
@@ -7136,6 +7385,123 @@ components:
         speed_kmh:
           type: [number, "null"]
           description: The speed on the flat the line is timed at; null to take the plan's `track_speed_kmh`.
+        stops:
+          type: array
+          description: The stops along the line, the nearest its start first.
+          items:
+            $ref: "#/components/schemas/Stop"
+    StopKind:
+      type: string
+      enum: [food, shop, rest, viewpoint, water, shelter, hut, summit, cave, swim, other]
+    Stop:
+      type: object
+      description: |
+        A stop along the line of an activity. It costs like a place, counted
+        in the activity's day; a read-only link reads it without `paid_by` and
+        `cost_shares`. Its `name` and `note_md` are translated like a place's
+        words, as target `stop`.
+      required: [id, kind, name, note_md, lat, lng, distance_m, grades_to, actual_time, planned_cost_amount,
+                 actual_cost_amount, cost_per_person, cost_category, cost_note, paid_by, cost_split, cost_shares]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: "#/components/schemas/StopKind"
+        name:
+          type: string
+          description: The stop's own name; empty when its kind says enough.
+        note_md:
+          type: string
+        lat:
+          type: number
+        lng:
+          type: number
+        distance_m:
+          type: integer
+          description: How far along the line from its start the stop lies.
+        grades_to:
+          type: [array, "null"]
+          minItems: 101
+          maxItems: 101
+          items:
+            type: integer
+          description: |
+            The metres of the line up to the stop at each slope, as `grades` are
+            for the whole line, so the way to it is timed at the same speed;
+            null without heights.
+        actual_time:
+          oneOf:
+            - $ref: "#/components/schemas/ClockTime"
+            - type: "null"
+          description: When the stop was reached. Report only.
+        planned_cost_amount:
+          $ref: "#/components/schemas/NullableAmount"
+        actual_cost_amount:
+          $ref: "#/components/schemas/NullableAmount"
+        cost_per_person:
+          type: boolean
+        cost_category:
+          $ref: "#/components/schemas/CostCategory"
+        cost_note:
+          type: string
+        paid_by:
+          type: [string, "null"]
+          format: uuid
+        cost_split:
+          $ref: "#/components/schemas/CostSplit"
+        cost_shares:
+          type: array
+          items:
+            $ref: "#/components/schemas/CostShare"
+    StopRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        Omitted fields keep their value; null clears the time and the amounts.
+        A new stop is of kind `other` and costs in `food` unless told. The
+        payer and the shares follow the rules of a place's.
+      properties:
+        kind:
+          $ref: "#/components/schemas/StopKind"
+        name:
+          type: string
+          maxLength: 200
+        note_md:
+          type: string
+          maxLength: 20000
+        lat:
+          type: number
+          minimum: -90
+          maximum: 90
+        lng:
+          type: number
+          minimum: -180
+          maximum: 180
+        actual_time:
+          oneOf:
+            - $ref: "#/components/schemas/ClockTime"
+            - type: "null"
+        planned_cost_amount:
+          $ref: "#/components/schemas/NullableAmount"
+        actual_cost_amount:
+          $ref: "#/components/schemas/NullableAmount"
+        cost_per_person:
+          type: boolean
+        cost_category:
+          $ref: "#/components/schemas/CostCategory"
+        cost_note:
+          type: string
+          maxLength: 500
+        paid_by:
+          type: [string, "null"]
+          format: uuid
+        cost_split:
+          $ref: "#/components/schemas/CostSplit"
+        cost_shares:
+          type: array
+          items:
+            $ref: "#/components/schemas/CostShare"
     Media:
       type: object
       required: [id, trip_id, original_name, mime, size, width, height, taken_at, lat, lng, is_private,
@@ -8235,11 +8601,11 @@ components:
             properties:
               kind:
                 type: string
-                enum: [place, stay, transfer, leg, expense]
+                enum: [place, stop, stay, transfer, leg, expense]
               id:
                 type: string
                 format: uuid
-                description: The place, stay, transfer, leg or expense carrying the cost.
+                description: The place, stop, stay, transfer, leg or expense carrying the cost.
               label:
                 type: string
               category:

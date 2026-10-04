@@ -1,4 +1,4 @@
-import type { ActivityType, CostCategory, PackingIcon, PlaceCategory, TransferKind, TravelMode } from '@/api/types'
+import type { ActivityType, CostCategory, PackingIcon, PlaceCategory, StopKind, TransferKind, TravelMode } from '@/api/types'
 
 // The icon shapes the interface draws, kept in one module because two very
 // different renderers need them: AppIcon puts them in an <svg> element, and the
@@ -27,6 +27,15 @@ export const OUTLINE = {
   image: 'm2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z',
   download: 'M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M7.5 12l4.5 4.5m0 0 4.5-4.5m-4.5 4.5V3',
   upload: 'M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 7.5 7.5 12M12 7.5v12',
+  // The stops along a track, drawn for this application in the same hand.
+  stopRest: 'M3 10 12 4.5 21 10M3 10h18M5 10v10M19 10v10M8.5 15.5h7M9 15.5V20M15 15.5V20',
+  stopViewpoint: 'M10.5 15.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm9 0a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM4.75 14.5 6 5.5h3l1.25 9M13.75 14.5 15 5.5h3l1.25 9M10.5 12.5h3',
+  stopWater: 'M12 3.75c3.6 4.5 6 8 6 10.75a6 6 0 0 1-12 0C6 11.75 8.4 8.25 12 3.75ZM9.25 15a2.75 2.75 0 0 0 2.25 2.7',
+  stopShelter: 'M2.5 20 12 4.5 21.5 20M2.5 20h19M9.25 20 12 14.5l2.75 5.5',
+  stopHut: 'M2.75 11.25 12 4l9.25 7.25M5 9.5V20h14V9.5M10 20v-5h4v5M16 6.75V3.5h2v4.75',
+  stopSummit: 'M2.5 20 10 7.5l4 6.5 2-3 5.5 9ZM10 7.5V2.75l4.5 1.5-4.5 1.5',
+  stopCave: 'M2.5 20c.9-7.25 4.5-13 9.5-13s8.6 5.75 9.5 13ZM8.5 20v-3.25a3.5 3.5 0 0 1 7 0V20',
+  stopSwim: 'M2.5 17.25c1.5 1 3 1 4.5 0s3-1 4.5 0 3 1 4.5 0 3-1 4.5 0M2.5 20.75c1.5 1 3 1 4.5 0s3-1 4.5 0 3 1 4.5 0 3-1 4.5 0M18.25 8.5a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0ZM5 14l4.5-4.5 3.5 3.5',
   paperclip: 'm18.375 12.739-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94A3 3 0 1 1 19.5 7.372L8.552 18.32m.009-.01-.01.01m5.699-9.941-7.81 7.81a1.5 1.5 0 0 0 2.112 2.13',
   eye: 'M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178ZM15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',
   eyeSlash: 'M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88',
@@ -405,6 +414,21 @@ export const COST_CATEGORY_ICONS: Record<CostCategory, IconName> = {
   activities: 'activity',
   shopping: 'shopping',
   other: 'other',
+}
+
+/** STOP_KIND_ICONS name the picture of each kind of stop along a line. */
+export const STOP_KIND_ICONS: Record<StopKind, keyof typeof OUTLINE> = {
+  food: 'food',
+  shop: 'shopping',
+  rest: 'stopRest',
+  viewpoint: 'stopViewpoint',
+  water: 'stopWater',
+  shelter: 'stopShelter',
+  hut: 'stopHut',
+  summit: 'stopSummit',
+  cave: 'stopCave',
+  swim: 'stopSwim',
+  other: 'mapPin',
 }
 
 /**

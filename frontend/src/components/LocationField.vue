@@ -24,6 +24,10 @@ const props = defineProps<{
   focus: { lat: number; lng: number } | null
   /** Names the position when a form holds more than one, such as "From". */
   legend?: string
+  /** Leaves the address out, for a position that is kept without one. */
+  noAddress?: boolean
+  /** Leaves the map out, for a form that shows a map of its own beside it. */
+  noMap?: boolean
 }>()
 const model = defineModel<LocationModel>({ required: true })
 
@@ -121,7 +125,7 @@ function choose(place: GeoPlace): void {
  */
 async function lookUpAddress(point?: { lat: number; lng: number }): Promise<void> {
   const position = point ?? (lat.value !== null && lng.value !== null ? { lat: lat.value, lng: lng.value } : null)
-  if (!geocodingEnabled.value || position === null) {
+  if (!geocodingEnabled.value || position === null || props.noAddress) {
     return
   }
   if (model.value.address.trim() !== '' && !addressIsLookedUp) {
@@ -220,12 +224,12 @@ defineExpose({ lookUpAddress })
       <button type="button" class="btn" :disabled="link.trim() === ''" @click="applyLink">{{ t('location.apply') }}</button>
     </div>
 
-    <button v-if="config" type="button" class="btn btn-ghost btn-sm justify-start" :aria-expanded="showMap" @click="showMap = !showMap">
+    <button v-if="config && !noMap" type="button" class="btn btn-ghost btn-sm justify-start" :aria-expanded="showMap" @click="showMap = !showMap">
       <AppIcon name="map" />
       {{ showMap ? t('location.hideMap') : t('location.pickOnMap') }}
     </button>
     <MapPicker
-      v-if="showMap && config"
+      v-if="showMap && config && !noMap"
       :lat="lat"
       :lng="lng"
       :focus="focus"
@@ -234,7 +238,7 @@ defineExpose({ lookUpAddress })
       @pick="onMapPick"
     />
 
-    <label class="floating-label">
+    <label v-if="!noAddress" class="floating-label">
       <span>{{ t('place.address') }}</span>
       <input v-model="model.address" type="text" maxlength="500" class="input w-full" :placeholder="t('place.address')" @input="onAddressInput" />
     </label>

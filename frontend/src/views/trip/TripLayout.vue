@@ -60,8 +60,9 @@ const activeSection = computed(() => sectionOfRoute(route.name))
 const tripId = computed(() => String(route.params.tripId))
 const backTo = computed(() => ({ name: listRouteName(kind.value) }))
 const period = computed(() => formatDateRange(store.trip?.start_date ?? null, store.trip?.end_date ?? null, locale.value))
-// A report's title follows the language its words are read in.
-const { lang: contentLang } = useContentLanguage(() => store.trip?.languages ?? [])
+// A report's title follows the language its words are read or written in.
+const { lang: contentLang } = useContentLanguage(() => store.trip?.languages ?? [],
+  () => canEdit.value && route.query.mode === 'edit')
 const title = computed(() => (store.trip ? translateTrip(store.trip, contentLang.value).title : ''))
 const loadError = computed(() => (store.error ? errorMessage(store.error, t, te) : ''))
 // A plan is closed or reopened by whoever may change it; a link only reads.

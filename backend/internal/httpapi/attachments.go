@@ -50,10 +50,16 @@ func newAttachmentResponses(attachments []domain.Attachment) []attachmentRespons
 // line describing it sent as a "description" field before the file. What the
 // file is is decided from its bytes against the kinds a place may carry, and
 // its name has to agree; the whole document is answered, as after any other
-// change of a place.
+// change of a place. Only a plan's places carry files: a report tells how the
+// trip went, and its tickets and bookings stay with the plan.
 func (s *Server) handleCreateAttachment(w http.ResponseWriter, r *http.Request) {
 	item, document, ok := s.placeFor(w, r)
 	if !ok {
+		return
+	}
+	if document.Kind != domain.DocumentPlan {
+		s.writeDomainError(w, r, "check attachment",
+			domain.NewValidationError("item_id", "plan_only", "only a plan's places carry attachments"))
 		return
 	}
 	s.extendUploadDeadlines(w, r)

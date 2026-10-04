@@ -59,6 +59,8 @@ type UserStore interface {
 	Update(ctx context.Context, id uuid.UUID, changes domain.UserChanges) (domain.User, error)
 	UpdateProfile(ctx context.Context, id uuid.UUID, profile domain.Profile) (domain.User, error)
 	SetAvatar(ctx context.Context, id uuid.UUID, key string, at time.Time) (domain.User, string, error)
+	SetHome(ctx context.Context, id uuid.UUID, home *domain.HomeZone) (domain.User, error)
+	PrivacyZones(ctx context.Context, tripID uuid.UUID) (domain.PrivacyZones, error)
 	Delete(ctx context.Context, id uuid.UUID) ([]string, error)
 	ResetPassword(ctx context.Context, id uuid.UUID, hash string) error
 	Stats(ctx context.Context) (domain.UserStats, error)
@@ -159,6 +161,12 @@ type DocumentStore interface {
 	StaleTracks(ctx context.Context, version int) ([]uuid.UUID, error)
 	UpdateTrackClimb(ctx context.Context, id uuid.UUID, ascent, descent *int, grades []int, version int) error
 	SetTrackSpeed(ctx context.Context, itemID uuid.UUID, speed *float64) error
+	SetNightStory(ctx context.Context, itemID uuid.UUID, story string) error
+	Stop(ctx context.Context, id uuid.UUID) (domain.Stop, error)
+	CreateStop(ctx context.Context, stop domain.Stop) error
+	UpdateStop(ctx context.Context, stop domain.Stop) error
+	MoveStops(ctx context.Context, stops []domain.Stop) error
+	DeleteStop(ctx context.Context, id uuid.UUID) error
 	DeleteTrack(ctx context.Context, itemID uuid.UUID) error
 	CreateAttachment(ctx context.Context, attachment domain.Attachment, file []byte, quota int64) error
 	Attachments(ctx context.Context, documentID uuid.UUID) ([]domain.Attachment, error)
@@ -579,6 +587,9 @@ func (s *Server) routes() http.Handler {
 				member.Delete("/me", s.handleDeleteMe)
 				member.Put("/me/avatar", s.handleSetAvatar)
 				member.Delete("/me/avatar", s.handleDeleteAvatar)
+				member.Get("/me/home", s.handleGetHome)
+				member.Put("/me/home", s.handleSetHome)
+				member.Delete("/me/home", s.handleDeleteHome)
 				member.Get("/users/{userID}/avatar", s.handleGetAvatar)
 				member.Get("/me/sessions", s.handleListSessions)
 				member.Delete("/me/sessions/{sessionID}", s.handleRevokeSession)
@@ -668,6 +679,9 @@ func (s *Server) routes() http.Handler {
 				member.Post("/items/{itemID}/track", s.handleImportItemTrack)
 				member.Patch("/items/{itemID}/track", s.handleUpdateItemTrack)
 				member.Delete("/items/{itemID}/track", s.handleDeleteItemTrack)
+				member.Post("/items/{itemID}/stops", s.handleCreateStop)
+				member.Patch("/stops/{stopID}", s.handleUpdateStop)
+				member.Delete("/stops/{stopID}", s.handleDeleteStop)
 				member.Get("/tracks/{trackID}/file", s.handleGetTrackFile)
 				member.Post("/items/{itemID}/attachments", s.handleCreateAttachment)
 				member.Patch("/attachments/{attachmentID}", s.handleUpdateAttachment)
@@ -675,6 +689,7 @@ func (s *Server) routes() http.Handler {
 				member.Get("/attachments/{attachmentID}/file", s.handleGetAttachmentFile)
 				member.Post("/days/{dayID}/items", s.handleCreateDayPlace)
 				member.Patch("/items/{itemID}", s.handleUpdatePlace)
+				member.Patch("/items/{itemID}/night", s.handleUpdateNight)
 				member.Delete("/items/{itemID}", s.handleDeletePlace)
 				member.Post("/items/{itemID}:copy", s.handleCopyPlace)
 				member.Patch("/stays/{stayID}", s.handleUpdateStay)

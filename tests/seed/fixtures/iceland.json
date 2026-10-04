@@ -1,5 +1,5 @@
 {
-  "_about": "The trip that has been travelled: a plan, closed as completed, with its packing list ticked off, routes for its walks and the bookings attached to its places; and a report copied from it with how every place turned out, what was really spent, the recordings of the walks, photographs on the days and places - favourites among many at one beach, one private, one without a time - covers, and a Russian translation that leaves some days and places untranslated.",
+  "_about": "The trip that has been travelled: a plan, closed as completed, with its packing list ticked off, routes for its walks with stops along one of them and the bookings attached to its places; and a report copied from it with how every place and stop turned out, what was really spent, the recordings of the walks, photographs on the days and places - favourites among many at one beach, one private, one without a time - covers, and a Russian translation that leaves some days and places untranslated.",
   "title": "Iceland: the south coast",
   "summary": "Four days along route 1, from Reykjavík to Vík and back. Waterfalls, black sand and one very windy afternoon.",
   "start_date": "2026-06-20",
@@ -124,7 +124,32 @@
           "cost_category": "activities",
           "track": {
             "file": "reykjadalur-route.gpx",
-            "speed_kmh": 4
+            "speed_kmh": 4,
+            "stops": [
+              {
+                "kind": "food",
+                "name": "Reykjadalur Café",
+                "note_md": "At the car park. Soup and bread **after** the walk, not before.",
+                "lat": 64.0226,
+                "lng": -21.2109,
+                "planned_cost_amount": "18",
+                "cost_per_person": true,
+                "cost_note": "Lamb soup"
+              },
+              {
+                "kind": "viewpoint",
+                "name": "Djúpagil waterfall",
+                "lat": 64.029,
+                "lng": -21.2151
+              },
+              {
+                "kind": "shelter",
+                "name": "Changing walls",
+                "note_md": "Wooden screens by the boardwalk; nothing else to change behind.",
+                "lat": 64.0444,
+                "lng": -21.2238
+              }
+            ]
           },
           "report": {
             "status": "visited",
@@ -133,6 +158,18 @@
             "actual_time": "12:20",
             "actual_end_time": "14:47",
             "track": "reykjadalur-recorded.gpx",
+            "stops": {
+              "Reykjadalur Café": {
+                "actual_time": "15:05",
+                "actual_cost_amount": "21.50"
+              },
+              "Djúpagil waterfall": {
+                "actual_time": "12:48"
+              },
+              "Changing walls": {
+                "actual_time": "13:35"
+              }
+            },
             "photos": [
               "reykjadalur-1.jpg",
               "reykjadalur-2.jpg"
@@ -369,13 +406,7 @@
           "report": {
             "status": "visited",
             "story_md": "Scratch was already on the form. No argument.",
-            "actual_time": "15:15",
-            "attachments": [
-              {
-                "file": "car-return-receipt.pdf",
-                "description": "Signed at the desk, no extra charges"
-              }
-            ]
+            "actual_time": "15:15"
           },
           "attachments": [
             "flight-home.ics"
@@ -509,6 +540,15 @@
       "day_notes": {
         "1": "Прилетели поздно, отстояли очередь за машиной и всё равно добрались засветло. В июне это нетрудно.",
         "2": "Самый длинный день, и он это название заслужил. Два водопада, долгая прогулка по чёрному песку и дорога на утёс, закрытая из-за ветра."
+      },
+      "stops": {
+        "Djúpagil waterfall": {
+          "name": "Водопад Дьюпагиль"
+        },
+        "Changing walls": {
+          "name": "Перегородки для переодевания",
+          "note_md": "Деревянные щиты у настила, больше переодеться негде."
+        }
       },
       "places": {
         "Kvernufoss": {

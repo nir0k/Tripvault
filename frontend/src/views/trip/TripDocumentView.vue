@@ -7,8 +7,8 @@ import * as mediaApi from '@/api/media'
 import { getClientConfig } from '@/api/config'
 import { downloadSharedReportPDF } from '@/api/shared'
 import type {
-  ClientConfig, ItemStatus, Leg, Media, PlanDay, PlanItem, RouteOption, Transfer, TranslationEntry, TranslationTarget,
-  TripDocument,
+  ClientConfig, ItemStatus, Leg, Media, PlanDay, PlanItem, RouteOption, Stop, Transfer, TranslationEntry,
+  TranslationTarget, TripDocument,
 } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
@@ -16,6 +16,7 @@ import { LANGUAGE_NAMES } from '@/i18n'
 import PlanLegDialog from '@/components/plan/PlanLegDialog.vue'
 import PlanTargetDialog from '@/components/plan/PlanTargetDialog.vue'
 import PlanMap from '@/components/plan/PlanMap.vue'
+import StopEditor from '@/components/plan/StopEditor.vue'
 import ContentLanguageSwitch from '@/components/report/ContentLanguageSwitch.vue'
 import EditableMarkdown from '@/components/report/EditableMarkdown.vue'
 import ReportDayNav from '@/components/report/ReportDayNav.vue'
@@ -26,13 +27,14 @@ import ReportTotalsBar from '@/components/report/ReportTotalsBar.vue'
 import ReportTranslateDialog, { type TranslateField } from '@/components/report/ReportTranslateDialog.vue'
 import { reportTextKey, useContentLanguage, type ReportTextEditing } from '@/composables/useContentLanguage'
 import { provideDocumentChange } from '@/composables/useDocumentChange'
+import { provideStopEditing } from '@/composables/useStopEditor'
 import { useLegCalculation } from '@/composables/useLegCalculation'
 import { useMediaQuery } from '@/composables/useMediaQuery'
 import { useTripStore } from '@/stores/trip'
 import { errorMessage } from '@/utils/errors'
 import { mediaHint, type MediaHint } from '@/utils/mediaHints'
 import { tripRoute } from '@/utils/tripRoutes'
-import { isVisit } from '@/utils/plan'
+import { isVisit, stopName } from '@/utils/plan'
 import { revealElement } from '@/utils/reveal'
 import { activeUnits } from '@/utils/units'
 import {
@@ -50,9 +52,11 @@ import {
 // holds; a report made from a plan points back at it for whoever may open it.
 //
 // A report may be written in several languages. The page shows its words in
-// the language chosen above it - the reader's own when the report has it - and
-// editing in a language other than the original writes a translation: only the
-// words can be changed then, each beside the original it is made from.
+// the language chosen above it - the reader's own when the report has it, the
+// original while editing - and editing in a language other than the original
+// writes a translation: the words are written then beside the original they
+// are made from, while everything every language shares - ratings, places,
+// pictures, the forms of places and journeys - stays editable as ever.
 
 const { t, te, locale } = useI18n()
 const route = useRoute()
@@ -84,6 +88,34 @@ const placeDialog = useTemplateRef<InstanceType<typeof ReportPlaceDialog>>('plac
 const legDialog = useTemplateRef<InstanceType<typeof PlanLegDialog>>('legDialog')
 const targetDialog = useTemplateRef<InstanceType<typeof PlanTargetDialog>>('targetDialog')
 const translateDialog = useTemplateRef<InstanceType<typeof ReportTranslateDialog>>('translateDialog')
+// The stops along the lines of activities are changed through the forms the
+// page holds once, which the cards and the map open. They write the original;
+// their words are translated with the place's.
+const stopEditor = useTemplateRef<InstanceType<typeof StopEditor>>('stopEditor')
+provideStopEditing({
+  add: (item, point) => stopEditor.value?.add(originalItem(item), point),
+  edit: (item, stop) => stopEditor.value?.edit(originalItem(item), originalStop(item, stop)),
+  editCost: (item, stop) => void stopEditor.value?.editCost(originalItem(item), originalStop(item, stop)),
+  remove: (item, stop) => void stopEditor.value?.remove(originalItem(item), stop),
+})
+
+// originalItem finds the place as stored, not in the language shown.
+function originalItem(item: PlanItem): PlanItem {
+  return documentItems.value.find((each) => each.id === item.id) ?? item
+}
+
+// originalStop finds a stop as stored, not in the language shown.
+function originalStop(item: PlanItem, stop: Stop): Stop {
+  return originalItem(item).track?.stops.find((each) => each.id === stop.id) ?? stop
+}
+
+// addStop answers a click on the line of an activity on the map: a new stop there.
+function addStop(itemId: string, lat: number, lng: number): void {
+  const item = documentItems.value.find((each) => each.id === itemId)
+  if (item) {
+    stopEditor.value?.add(item, { lat, lng })
+  }
+}
 
 const trip = computed(() => store.trip)
 const canEdit = computed(() => trip.value?.role === 'owner' || trip.value?.role === 'editor')
@@ -106,7 +138,7 @@ const editing = computed(() => canEdit.value && route.query.mode === 'edit')
 const documentItems = computed(() => document.value?.days.flatMap((day) => day.items) ?? [])
 
 const languages = computed(() => trip.value?.languages ?? [])
-const { lang: contentLang, original: originalLang, choose: chooseLanguage } = useContentLanguage(() => languages.value)
+const { lang: contentLang, original: originalLang, choose: chooseLanguage } = useContentLanguage(() => languages.value, () => editing.value)
 // translating is editing in a language other than the original.
 const translating = computed(() => editing.value && contentLang.value !== originalLang.value)
 // shown is the document in the language chosen, the original standing in for
@@ -244,6 +276,11 @@ function saveStory(item: PlanItem, story: string): void {
   saveText('item', item.id, 'story_md', story, () => documentsApi.updatePlace(item.id, { story_md: story }))
 }
 
+// saveNight stores the story of the night a day ends with.
+function saveNight(night: PlanItem, story: string): void {
+  saveText('item', night.id, 'story_md', story, () => documentsApi.updateNight(night.id, story))
+}
+
 // saveTranslation stores what the translation form sends.
 async function saveTranslation(entries: TranslationEntry[]): Promise<void> {
   const current = document.value
@@ -273,13 +310,19 @@ function translateField(target: TranslationTarget, id: string, field: string, la
   return [{ target, id, field, label, original, value, maxlength, multiline }]
 }
 
-// translatePlace opens the translation of a place's name and description; its
-// story is translated in place, like the other prose of the report.
+// translatePlace opens the translation of a place's name and description and
+// of the words of the stops along its line; its story is translated in place,
+// like the other prose of the report.
 function translatePlace(item: PlanItem): void {
-  const original = documentItems.value.find((each) => each.id === item.id) ?? item
+  const original = originalItem(item)
+  const stops = (original.track?.stops ?? []).flatMap((stop) => [
+    ...translateField('stop', stop.id, 'name', t('stop.nameOf', { name: stopName(stop, t) }), 200),
+    ...translateField('stop', stop.id, 'note_md', t('stop.noteOf', { name: stopName(stop, t) }), 20000, true),
+  ])
   translateDialog.value?.open(original.name, [
     ...translateField('item', item.id, 'name', t('place.name'), 200),
     ...translateField('item', item.id, 'description_md', t('place.description'), 20000, true),
+    ...stops,
   ])
 }
 
@@ -298,24 +341,15 @@ function translateTransfer(transfer: Transfer): void {
   ])
 }
 
-// editPlace opens the form a place is changed through: its own, or the
-// translation of its words while one is written.
+// editPlace opens the form a place is changed through, which writes the
+// original whichever language is being written.
 function editPlace(dayId: string, item: PlanItem): void {
-  if (translating.value) {
-    translatePlace(item)
-    return
-  }
   const original = documentItems.value.find((each) => each.id === item.id) ?? item
   openPlace(dayId, original)
 }
 
-// editLeg opens the form a journey is changed through, or the translation of
-// its note while one is written.
+// editLeg opens the form a journey is changed through.
 function editLeg(leg: Leg): void {
-  if (translating.value) {
-    translateLeg(leg)
-    return
-  }
   const original = document.value?.days.flatMap((day) => day.legs).find((each) => each.id === leg.id) ?? leg
   legDialog.value?.open(original)
 }
@@ -653,8 +687,9 @@ async function recalculateLeg(leg: Leg): Promise<void> {
 }
 
 // focusItem answers a pin's "to the description": the page scrolls to the
-// card of the place. A stay mark has no card, and a place the reader hid is
-// not on the page, so for those the page goes to the day instead.
+// card of the place or of the night. A morning stay mark has no card, and a
+// place the reader hid is not on the page, so for those the page goes to the
+// day instead.
 function focusItem(itemId: string, dayIndex: number | null): void {
   if (!revealElement(`item-${itemId}`) && dayIndex !== null) {
     revealElement(`day-${dayIndex + 1}`, false)
@@ -753,7 +788,9 @@ function setStatus(item: PlanItem, status: ItemStatus): void {
           :selected-day="null"
           :tile-url="clientConfig.map_tile_url"
           :attribution="clientConfig.map_attribution"
+          :can-add-stops="editing"
           @focus="focusItem"
+          @add-stop="addStop"
         />
       </div>
 
@@ -772,13 +809,16 @@ function setStatus(item: PlanItem, status: ItemStatus): void {
           :hints="hintsDayId === day.id ? hints : []"
           :removable="shown.days.length > 1"
           :draggable="wide"
+          :track-speed="trip?.track_speed_kmh ?? null"
           @title="(title) => saveDayText(day, 'title', title)"
           @notes="(notes) => saveDayText(day, 'notes_md', notes)"
           @highlight="(highlight) => saveDayText(day, 'highlight', highlight)"
           @status="setStatus"
           @rate="(item, rating) => apply(() => documentsApi.updatePlace(item.id, { rating }))"
           @story="saveStory"
+          @night="saveNight"
           @edit="(item) => editPlace(day.id, item)"
+          @translate="translatePlace"
           @remove="removePlace"
           @move="movePlace"
           @pick-target="(item: PlanItem, mode: 'move' | 'copy') => targetDialog?.open(item, mode)"
@@ -800,6 +840,7 @@ function setStatus(item: PlanItem, status: ItemStatus): void {
           @dismiss-hints="forgetHints"
           @remove-day="removeDay(day)"
           @edit-leg="editLeg"
+          @translate-leg="translateLeg"
           @translate-transfer="translateTransfer"
         />
       </div>
@@ -817,6 +858,7 @@ function setStatus(item: PlanItem, status: ItemStatus): void {
       <PlanTargetDialog v-if="document" ref="targetDialog" :days="document.days" :unassigned="false" @choose="chooseTarget" />
       <PlanLegDialog ref="legDialog" report :busy="busy" @save="saveLeg" @recalculate="recalculateLeg" />
       <ReportTranslateDialog ref="translateDialog" @save="saveTranslation" />
+      <StopEditor ref="stopEditor" report @changed="(changed) => (document = changed)" />
       <ConfirmDialog ref="confirmDialog" />
       <ReportFloatingActions
         :editing="editing"

@@ -8,19 +8,24 @@ import { readingLanguage } from '@/utils/translate'
 // a reader who picks another keeps it in the address (?lang=), so a reload or a
 // shared address opens the report the same way. The interface around the words
 // stays in the reader's language either way.
+//
+// Editing starts at the original instead: adding a translation must not turn
+// the editor of a report into its translator. A translation is written only
+// once its language is chosen above the report.
 
 /**
  * useContentLanguage - the language a report is read and written in.
  *
  * Arguments:
  *   - languages: the report's languages, the original first.
+ *   - writing: whether the report is being edited, which starts at the original.
  *
  * Returns:
  *   - lang: the language shown.
  *   - original: the report's original language.
  *   - choose: switches the language, keeping the choice in the address.
  */
-export function useContentLanguage(languages: () => readonly string[]): {
+export function useContentLanguage(languages: () => readonly string[], writing: () => boolean = () => false): {
   lang: ComputedRef<string>
   original: ComputedRef<string>
   choose: (code: string) => void
@@ -29,13 +34,16 @@ export function useContentLanguage(languages: () => readonly string[]): {
   const route = useRoute()
   const router = useRouter()
 
-  const requested = computed(() => (typeof route.query.lang === 'string' ? route.query.lang : locale.value))
-  const lang = computed(() => readingLanguage(languages(), requested.value))
   const original = computed(() => languages()[0] ?? '')
+  // fallback is the language shown while the address names none.
+  const fallback = computed(() => (writing() ? original.value : readingLanguage(languages(), locale.value)))
+  const lang = computed(() => (typeof route.query.lang === 'string'
+    ? readingLanguage(languages(), route.query.lang)
+    : fallback.value))
 
   function choose(code: string): void {
-    // The reader's own language needs no mark in the address.
-    const lang = code === readingLanguage(languages(), locale.value) ? undefined : code
+    // The language shown without a choice needs no mark in the address.
+    const lang = code === fallback.value ? undefined : code
     void router.replace({ query: { ...route.query, lang } })
   }
 

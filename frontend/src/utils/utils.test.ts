@@ -10,15 +10,15 @@ import { PACKING_TEMPLATES, packingText, parseQuickItem, templateAdded, template
 import { addDays, describeUserAgent, formatClock, formatDayDate, formatDistance, formatDateRange, formatElapsed, formatFileSize, formatMoney, formatSpeed, formatTimeOfDay, fromMetres, normalizeAmount, parseTimeOfDay, splitDuration, toMetres } from '@/utils/format'
 import { markdownExcerpt, renderMarkdown } from '@/utils/markdown'
 import { justifyRows, justifyStrip, previewSize, tileRatio } from '@/utils/justify'
-import { minutesBetween, minutesOfDay, planTimeLabel, timeOfDay } from '@/utils/plan'
+import { minutesBetween, minutesOfDay, planTimeLabel, stopLabel, timeOfDay } from '@/utils/plan'
 import { distanceBetween, mediaHint, takenDate } from '@/utils/mediaHints'
 import { mediaLinkUpdates } from '@/utils/mediaLinks'
-import { decodePolyline } from '@/utils/polyline'
+import { decodePolyline, nearestOnLine } from '@/utils/polyline'
 import { generatePassword } from '@/utils/password'
 import { exifSegment, withExif } from '@/utils/picture'
 import { resolveTheme } from '@/utils/theme'
 import { countryFlag, emptyFilter, filterFromQuery, filterIdeas, filterToQuery, formatDays, formatRange, monthRanges, otherCurrencies, seasonalIdeas } from '@/utils/ideas'
-import { DEFAULT_SPEED, MAX_SPEED, MIN_SPEED, SLIDER_STEPS, SPEED_STOPS, positionOf, speedAt, stopPosition, toblerFactor, walkingSeconds } from '@/utils/trackTime'
+import { DEFAULT_SPEED, MAX_SPEED, MIN_SPEED, SLIDER_STEPS, SPEED_STOPS, positionOf, speedAt, stopPosition, stopSeconds, toblerFactor, walkingSeconds } from '@/utils/trackTime'
 import {
   readingLanguage, translatableTexts, translateDocument, translateTrip, translationProgress,
 } from '@/utils/translate'
@@ -499,6 +499,42 @@ describe('media hints', () => {
         expect.arrayContaining(['f1.from_name', 'f1.to_name']))
     })
 
+    it('translates the story of the night, and only the evening\'s', () => {
+      const mark = (id: string, anchor: 'morning' | 'evening', story: string) => ({
+        ...skogafoss, id, kind: 'stay_anchor' as const, anchor, stay_id: 's1', story_md: story,
+      })
+      const nights: TripDocument = {
+        ...report,
+        days: [{ ...day('d1', 0, '2026-06-20', []), items: [mark('m1', 'morning', 'dawn'), mark('e1', 'evening', 'aurora')] }],
+        translations: { de: { e1: { story_md: 'Polarlicht' } } },
+      }
+      expect(translateDocument(nights, 'de').days[0]?.items[1]?.story_md).toBe('Polarlicht')
+      const listed = translatableTexts(nights).map((text) => `${text.id}.${text.field}`)
+      expect(listed).toContain('e1.story_md')
+      expect(listed).not.toContain('m1.story_md')
+    })
+
+    it('translates the words of the stops along a line', () => {
+      const stop = {
+        id: 's1', kind: 'food' as const, name: 'Café', note_md: 'Soup', lat: 63.5, lng: -19.5, distance_m: 1200,
+        grades_to: null, actual_time: null, planned_cost_amount: null, actual_cost_amount: null, cost_per_person: false,
+        cost_category: 'food' as const, cost_note: '', paid_by: null, cost_split: 'none' as const, cost_shares: [],
+      }
+      const track = {
+        id: 'tr', original_name: 'hike.gpx', format: 'gpx' as const, distance_m: 7000, point_count: 2, ascent_m: null,
+        descent_m: null, geometry: '', grades: null, speed_kmh: null, started_at: null, ended_at: null, stops: [stop],
+      }
+      const withStop: TripDocument = {
+        ...report,
+        days: [{ ...day('d1', 0, '2026-06-20', []), items: [{ ...skogafoss, kind: 'activity' as const, track }] }],
+        translations: { de: { s1: { name: 'Kneipe' } } },
+      }
+      const shown = translateDocument(withStop, 'de').days[0]?.items[0]?.track?.stops[0]
+      expect(shown).toMatchObject({ name: 'Kneipe', note_md: 'Soup' })
+      expect(translatableTexts(withStop).map((text) => `${text.id}.${text.field}`)).toEqual(
+        expect.arrayContaining(['s1.name', 's1.note_md']))
+    })
+
     it('counts what is left to translate', () => {
       // intro, day title, place name, story and leg note hold words.
       expect(translationProgress(report, 'de')).toEqual({ done: 2, total: 5 })
@@ -668,6 +704,32 @@ describe('walkingSeconds', () => {
   it('walks the metres the slopes leave out as flat', () => {
     const counted = walkingSeconds({ distance_m: 1000, grades: grades({ 0: 1000 }) }, 5)
     expect(walkingSeconds({ distance_m: 2000, grades: grades({ 0: 1000 }) }, 5)).toBeCloseTo(counted * 2)
+  })
+})
+
+describe('stops along a line', () => {
+  it('puts a point on the nearest stretch of a line', () => {
+    const line: [number, number][] = [[64, -21], [64.1, -21], [64.1, -20.9]]
+    const [lat, lng] = nearestOnLine(line, [64.05, -20.98])
+    expect(lat).toBeCloseTo(64.05, 6)
+    expect(lng).toBeCloseTo(-21, 6)
+    // Beyond the end it is the end.
+    expect(nearestOnLine(line, [64.2, -20.5])).toEqual([64.1, -20.9])
+    // There and back, the way out.
+    const back: [number, number][] = [[64, -21], [64.1, -21], [64, -21]]
+    expect(nearestOnLine(back, [64.02, -21])[0]).toBeCloseTo(64.02, 6)
+  })
+
+  it('labels a stop by its activity and a letter', () => {
+    expect(stopLabel(3, 0)).toBe('3a')
+    expect(stopLabel(3, 1)).toBe('3b')
+    expect(stopLabel(undefined, 2)).toBe('c')
+  })
+
+  it('times the way to a stop by the slopes up to it', () => {
+    expect(stopSeconds({ distance_m: 4700, grades_to: null }, 4.7)).toBeCloseTo(3600, 0)
+    const climbing = Array.from({ length: 101 }, (_, index) => (index === 60 ? 4700 : 0))
+    expect(stopSeconds({ distance_m: 4700, grades_to: climbing }, 4.7)).toBeGreaterThan(3600)
   })
 })
 

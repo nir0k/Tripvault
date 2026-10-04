@@ -294,7 +294,13 @@ func (s *Server) handleSharedDocument(w http.ResponseWriter, r *http.Request) {
 		s.writeDomainError(w, r, "read shared media", err)
 		return
 	}
+	// Nor does it see the homes of the people on the trip.
+	zones, ok := s.privacyZones(w, r, access.Trip.ID)
+	if !ok {
+		return
+	}
 	// A link never sees the files attached to places, nor the booking numbers,
 	// contacts and payers beside them: they are meant for the travellers alone.
-	writeJSON(w, s.logger, http.StatusOK, newDocumentResponse(content.ForShareLink(), access.Trip, pictures, nil))
+	writeJSON(w, s.logger, http.StatusOK,
+		newDocumentResponse(content.ForShareLink().Outside(zones), access.Trip, pictures.outside(zones), nil))
 }

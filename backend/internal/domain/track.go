@@ -59,6 +59,8 @@ type Track struct {
 	// track measured an older way is measured again from its file.
 	ClimbVersion int
 	CreatedAt    time.Time
+	// Stops are the stops along the line, the nearest its start first.
+	Stops []Stop
 }
 
 // The speeds a track's time may be worked out at, in km/h on the flat, from a
@@ -115,6 +117,34 @@ func (t Track) Elapsed() *time.Duration {
 	}
 	elapsed := t.EndedAt.Sub(*t.StartedAt)
 	return &elapsed
+}
+
+// gradeFlat is the index of the flat in a track's grades, from -50 % at index 0.
+const gradeFlat = 50
+
+// WalkingTime - works out how long a line takes to walk at a speed on the flat,
+// as the browser does (utils/trackTime.ts): each stretch at Tobler's pace for
+// its slope, scaled so the flat is walked at the speed given, and the metres
+// the grades do not account for walked as flat.
+//
+// Arguments:
+//   - speedKmh: the speed on the flat, in km/h.
+//
+// Returns:
+//   - the time, or zero for a speed that is not positive.
+func (t Track) WalkingTime(speedKmh float64) time.Duration {
+	if speedKmh <= 0 {
+		return 0
+	}
+	flat := speedKmh / 3.6
+	seconds, counted := 0.0, 0
+	for index, metres := range t.Grades {
+		slope := float64(index-gradeFlat) / 100
+		seconds += float64(metres) / (flat * math.Exp(-3.5*(math.Abs(slope+0.05)-0.05)))
+		counted += metres
+	}
+	seconds += float64(max(t.DistanceM-counted, 0)) / flat
+	return time.Duration(seconds * float64(time.Second))
 }
 
 // TrackFile is the file a track was imported from, as it will be downloaded.

@@ -234,6 +234,8 @@ type trackResponse struct {
 	// StartedAt and EndedAt are null when the file records no time.
 	StartedAt *time.Time `json:"started_at"`
 	EndedAt   *time.Time `json:"ended_at"`
+	// Stops are the stops along the line, the nearest its start first.
+	Stops []stopResponse `json:"stops"`
 }
 
 // newTrackResponse maps a track onto the wire.
@@ -254,6 +256,7 @@ func newTrackResponse(track *domain.Track) *trackResponse {
 		SpeedKmh:     track.SpeedKmh,
 		StartedAt:    track.StartedAt,
 		EndedAt:      track.EndedAt,
+		Stops:        newStopResponses(track.Stops),
 	}
 }
 
@@ -1286,6 +1289,49 @@ func (s *Server) handleUpdatePlace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeDocument(w, r, http.StatusOK, place.DocumentID)
+}
+
+// nightRequest is the body of PATCH /api/v1/items/{itemID}/night.
+type nightRequest struct {
+	StoryMD string `json:"story_md"`
+}
+
+// handleUpdateNight stores the story of the night a day of a report ends with.
+// The night is the day's evening stay mark, which follows the stays and is
+// otherwise refused like every stay mark.
+func (s *Server) handleUpdateNight(w http.ResponseWriter, r *http.Request) {
+	itemID, ok := s.pathUUID(w, r, "itemID")
+	if !ok {
+		return
+	}
+	item, err := s.documents.Item(r.Context(), itemID)
+	if err != nil {
+		s.writeDomainError(w, r, "get item", err)
+		return
+	}
+	document, ok := s.documentFor(w, r, item.DocumentID, domain.ActionEdit)
+	if !ok {
+		return
+	}
+	if !item.IsNight() {
+		s.writeDomainError(w, r, "check night", domain.NewValidationError("item_id", "not_a_night",
+			"must be the evening stay mark of a day"))
+		return
+	}
+	var body nightRequest
+	if !s.decodeJSON(w, r, &body) {
+		return
+	}
+	story, err := domain.NormalizeNightStory(document.Kind, body.StoryMD)
+	if err != nil {
+		s.writeDomainError(w, r, "validate night", err)
+		return
+	}
+	if err := s.documents.SetNightStory(r.Context(), item.ID, story); err != nil {
+		s.writeDomainError(w, r, "set night story", err)
+		return
+	}
+	s.writeDocument(w, r, http.StatusOK, document.ID)
 }
 
 // handleDeletePlace removes a place.

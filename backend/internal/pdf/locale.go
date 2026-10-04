@@ -40,7 +40,6 @@ type labels struct {
 	unplanned string
 	planned   string
 	distance  string
-	spent     string
 	rating    string
 	ratingOf  string
 	rated     string
@@ -50,20 +49,18 @@ type labels struct {
 	difficulty   string
 	difficulties [domain.MaxDifficulty]string
 
-	day         string
-	track       string
-	trackTime   string
-	stay        string
-	checkIn     string
-	checkOut    string
-	expenses    string
-	byMode      string
-	plannedCost string
-	actualCost  string
-	difference  string
-	statuses    map[string]string
-	modes       map[string]string
-	stayKinds   map[string]string
+	day       string
+	track     string
+	trackTime string
+	// trackEstimate reads how long a line without times takes to walk.
+	trackEstimate string
+	stay          string
+	checkIn       string
+	checkOut      string
+	byMode        string
+	statuses      map[string]string
+	modes         map[string]string
+	stayKinds     map[string]string
 	// transferKinds names how a transfer travels; departs and arrives read
 	// its two ends.
 	transferKinds map[string]string
@@ -71,6 +68,10 @@ type labels struct {
 	arrives       string
 	categories    map[string]string
 	activities    map[string]string
+	// stopKinds names what a stop along a line is for; stopFromStart reads how
+	// long the way to it takes from the start of the line.
+	stopKinds     map[string]string
+	stopFromStart string
 	months        [12]string
 	dateOrder     func(day int, month string, year int) string
 	hourMinute    string
@@ -136,34 +137,30 @@ type labels struct {
 
 // english is the wording every instance has.
 var english = labels{
-	code:        "en",
-	travelers:   "Travellers",
-	currency:    "Currency",
-	summary:     "Summary",
-	planFact:    "Plan and fact",
-	tripMap:     "Route",
-	days:        "Days",
-	nights:      "Nights",
-	visited:     "Visited",
-	skipped:     "Skipped",
-	unplanned:   "Unplanned",
-	planned:     "Planned",
-	distance:    "Distance",
-	spent:       "Spent",
-	rating:      "Average rating",
-	ratingOf:    "Rating",
-	rated:       "%d rated",
-	day:         "Day %d",
-	track:       "Recorded track: %s",
-	trackTime:   "time %s",
-	stay:        "Stay",
-	checkIn:     "from",
-	checkOut:    "to",
-	expenses:    "Other costs",
-	byMode:      "By means of travel",
-	plannedCost: "Planned",
-	actualCost:  "Spent",
-	difference:  "Difference",
+	code:          "en",
+	travelers:     "Travellers",
+	currency:      "Currency",
+	summary:       "Summary",
+	planFact:      "Plan and fact",
+	tripMap:       "Route",
+	days:          "Days",
+	nights:        "Nights",
+	visited:       "Visited",
+	skipped:       "Skipped",
+	unplanned:     "Unplanned",
+	planned:       "Planned",
+	distance:      "Distance",
+	rating:        "Average rating",
+	ratingOf:      "Rating",
+	rated:         "%d rated",
+	day:           "Day %d",
+	track:         "Recorded track: %s",
+	trackTime:     "time %s",
+	trackEstimate: "time about %s",
+	stay:          "Stay",
+	checkIn:       "from",
+	checkOut:      "to",
+	byMode:        "By means of travel",
 	statuses: map[string]string{
 		"planned": "Planned", "visited": "Visited",
 		"skipped": "Skipped", "unplanned": "Unplanned",
@@ -178,6 +175,12 @@ var english = labels{
 		"canyoning": "Canyoning", "climbing": "Climbing", "via_ferrata": "Via ferrata",
 		"kayak": "Kayaking", "swim": "Swim", "ski": "Skiing", "tour": "Guided tour", "other": "Activity",
 	},
+	stopKinds: map[string]string{
+		"food": "Café", "shop": "Shop", "rest": "Rest", "viewpoint": "Viewpoint", "water": "Water",
+		"shelter": "Shelter", "hut": "Hut", "summit": "Summit", "cave": "Cave", "swim": "Swimming",
+		"other": "Stop",
+	},
+	stopFromStart: "about %s from the start",
 	stayKinds: map[string]string{
 		"hotel": "Hotel", "apartment": "Apartment", "hostel": "Hostel",
 		"camping": "Camping", "friends": "With friends", "other": "Other",
@@ -260,34 +263,30 @@ var english = labels{
 // where text other than English belongs: the document is rendered here, and a
 // reader whose interface is Russian should not be handed an English page.
 var russian = labels{
-	code:        "ru",
-	travelers:   "Участников",
-	currency:    "Валюта",
-	summary:     "Итоги",
-	planFact:    "План и факт",
-	tripMap:     "Маршрут",
-	days:        "Дней",
-	nights:      "Ночей",
-	visited:     "Посещено",
-	skipped:     "Пропущено",
-	unplanned:   "Вне плана",
-	planned:     "По плану",
-	distance:    "Расстояние",
-	spent:       "Потрачено",
-	rating:      "Средняя оценка",
-	ratingOf:    "Оценка",
-	rated:       "с оценкой: %d",
-	day:         "День %d",
-	track:       "Записанный трек: %s",
-	trackTime:   "время %s",
-	stay:        "Проживание",
-	checkIn:     "с",
-	checkOut:    "по",
-	expenses:    "Прочие расходы",
-	byMode:      "По способам передвижения",
-	plannedCost: "План",
-	actualCost:  "Факт",
-	difference:  "Разница",
+	code:          "ru",
+	travelers:     "Участников",
+	currency:      "Валюта",
+	summary:       "Итоги",
+	planFact:      "План и факт",
+	tripMap:       "Маршрут",
+	days:          "Дней",
+	nights:        "Ночей",
+	visited:       "Посещено",
+	skipped:       "Пропущено",
+	unplanned:     "Вне плана",
+	planned:       "По плану",
+	distance:      "Расстояние",
+	rating:        "Средняя оценка",
+	ratingOf:      "Оценка",
+	rated:         "с оценкой: %d",
+	day:           "День %d",
+	track:         "Записанный трек: %s",
+	trackTime:     "время %s",
+	trackEstimate: "время около %s",
+	stay:          "Проживание",
+	checkIn:       "с",
+	checkOut:      "по",
+	byMode:        "По способам передвижения",
 	statuses: map[string]string{
 		"planned": "В плане", "visited": "Посещено",
 		"skipped": "Пропущено", "unplanned": "Вне плана",
@@ -302,6 +301,12 @@ var russian = labels{
 		"canyoning": "Каньонинг", "climbing": "Скалолазание", "via_ferrata": "Виа феррата",
 		"kayak": "Каякинг", "swim": "Плавание", "ski": "Лыжи", "tour": "Экскурсия", "other": "Активность",
 	},
+	stopKinds: map[string]string{
+		"food": "Кафе", "shop": "Магазин", "rest": "Отдых", "viewpoint": "Смотровая", "water": "Вода",
+		"shelter": "Укрытие", "hut": "Хижина", "summit": "Вершина", "cave": "Пещера", "swim": "Купание",
+		"other": "Остановка",
+	},
+	stopFromStart: "около %s от старта",
 	stayKinds: map[string]string{
 		"hotel": "Отель", "apartment": "Квартира", "hostel": "Хостел",
 		"camping": "Кемпинг", "friends": "У друзей", "other": "Другое",

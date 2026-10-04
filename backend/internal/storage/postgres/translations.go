@@ -25,11 +25,12 @@ var translationTargets = map[domain.TranslationTarget]struct {
 	// A stay mark shows its stay's name and has no words of its own.
 	domain.TranslateItem: {column: "item_id", table: "items"},
 	domain.TranslateLeg:  {column: "leg_id", table: "legs"},
+	domain.TranslateStop: {column: "stop_id", table: "activity_stops"},
 }
 
 // translationKey is the expression the unique index of translations is built
 // on: the element translated, or the trip when the row names no element.
-const translationKey = `COALESCE(document_id, day_id, stay_id, item_id, leg_id, transfer_id, trip_id)`
+const translationKey = `COALESCE(document_id, day_id, stay_id, item_id, leg_id, transfer_id, stop_id, trip_id)`
 
 // documentTranslations reads the translations of a report's elements, leaving
 // out the trip's own title and summary, which travel with the trip.
@@ -44,10 +45,11 @@ func documentTranslations(ctx context.Context, q querier, tripID uuid.UUID) ([]d
 		             WHEN stay_id IS NOT NULL THEN 'stay'
 		             WHEN transfer_id IS NOT NULL THEN 'transfer'
 		             WHEN item_id IS NOT NULL THEN 'item'
+		             WHEN stop_id IS NOT NULL THEN 'stop'
 		             ELSE 'leg' END,
 		        `+translationKey+`, field, lang, value
 		 FROM translations
-		 WHERE trip_id = $1 AND num_nonnulls(document_id, day_id, stay_id, item_id, leg_id, transfer_id) = 1
+		 WHERE trip_id = $1 AND num_nonnulls(document_id, day_id, stay_id, item_id, leg_id, transfer_id, stop_id) = 1
 		 ORDER BY lang, field`, tripID)
 }
 
@@ -121,7 +123,12 @@ func checkTranslationTarget(ctx context.Context, tx pgx.Tx, document domain.Docu
 	target := translationTargets[translation.Target]
 	condition := ""
 	if translation.Target == domain.TranslateItem {
+		// Of the stay marks only the evening's has words of its own: the story
+		// of the night.
 		condition = " AND kind <> 'stay_anchor'"
+		if translation.Field == "story_md" {
+			condition = " AND (kind <> 'stay_anchor' OR anchor = 'evening')"
+		}
 	}
 	var found bool
 	if err := tx.QueryRow(ctx,

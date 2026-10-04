@@ -79,6 +79,10 @@ const (
 	singleLimit    = 95.0
 	rowLimit       = 46.0
 	photoGap       = 3.0
+	// shrunkLimit is how low the first large picture of a place may be drawn
+	// to fit what is left of a page, cut to its middle, rather than send the
+	// place to the next page and leave the foot of this one empty.
+	shrunkLimit = 55.0
 )
 
 // Render - writes a report as a PDF, laid out as a travel journal.
@@ -146,18 +150,15 @@ func writeCover(doc *document, text labels, report Report) error {
 	doc.label(text.journal, marginLeft, top+14, 8, accentColor)
 	pdf.SetY(top + 22)
 	doc.display(report.Trip.Title, marginLeft, contentWidth, 30, inkColor)
+
+	// The facts sit at the foot of the page, under a hairline, and the trip's
+	// words fill what the title leaves above them: the cover is one page
+	// however long they run.
+	line := pageHeight - marginBottom - 22
 	if report.Trip.Summary != "" {
 		pdf.Ln(3)
-		pdf.SetFont(fontFamily, "", 12)
-		doc.ink(mutedColor)
-		pdf.SetX(marginLeft)
-		pdf.MultiCell(contentWidth, 6, report.Trip.Summary, "", "L", false)
-		doc.ink(inkColor)
+		coverSummary(doc, report.Trip.Summary, line-8-pdf.GetY())
 	}
-
-	// The facts sit at the foot of the page, under a hairline, however long
-	// the title and the words above them ran.
-	line := max(pdf.GetY()+10, pageHeight-marginBottom-22)
 	doc.stroke(borderColor)
 	pdf.SetLineWidth(0.3)
 	pdf.Line(marginLeft, line, pageWidth-marginRight, line)
@@ -171,6 +172,45 @@ func writeCover(doc *document, text labels, report Report) error {
 		doc.label(days, pageWidth-marginRight-doc.labelWidth(days, 8.5), line+6, 8.5, inkColor)
 	}
 	return nil
+}
+
+// coverSizes are the sizes the trip's words are tried at on the cover, the
+// largest first.
+var coverSizes = []float64{12, 10.5, 9.5}
+
+// coverSummary writes the trip's words on the cover within a height: at the
+// largest size they fit at, or at the smallest cut to the lines that fit, the
+// last ending in an ellipsis. They are read in full in the report itself.
+//
+// Arguments:
+//   - doc: the document being written.
+//   - summary: the trip's words.
+//   - room: the height they may take, in millimetres.
+func coverSummary(doc *document, summary string, room float64) {
+	pdf := doc.pdf
+	var lines []string
+	var height float64
+	for _, size := range coverSizes {
+		pdf.SetFont(fontFamily, "", size)
+		height = size * 0.5
+		lines = pdf.SplitText(summary, contentWidth)
+		if float64(len(lines))*height <= room {
+			break
+		}
+	}
+	if fit := int(room / height); fit < len(lines) {
+		if fit <= 0 {
+			return
+		}
+		lines = lines[:fit]
+		lines[fit-1] = fitText(doc, lines[fit-1]+"…", contentWidth)
+	}
+	doc.ink(mutedColor)
+	for _, text := range lines {
+		pdf.SetX(marginLeft)
+		pdf.CellFormat(contentWidth, height, text, "", 1, "L", false, 0, "")
+	}
+	doc.ink(inkColor)
 }
 
 // stat is one figure of the overview: its value and what it counts.
@@ -243,9 +283,6 @@ func overviewStats(text labels, report Report) []stat {
 	}
 	if totals.AverageRating != nil {
 		stats = append(stats, stat{fmt.Sprintf("%.1f", *totals.AverageRating), text.averageShort})
-	}
-	if totals.ActualCost != 0 {
-		stats = append(stats, stat{money(totals.ActualCost, report.Trip.Currency), text.spent})
 	}
 	return stats
 }
@@ -433,14 +470,32 @@ func writeDay(doc *document, text labels, report Report, day domain.Day, index i
 		}
 	}
 
+	// The evening mark is the night: the leg that reaches the stay ends at it,
+	// and it carries the story and the pictures of the night spent there.
+	var night *domain.Item
+	for index := range items {
+		if items[index].IsNight() {
+			night = &items[index]
+		}
+	}
 	for _, stay := range staysOf(report, day) {
 		var last *domain.Leg
-		for _, item := range items {
-			if item.Kind == domain.ItemStayAnchor && item.Anchor == domain.AnchorEvening {
-				last = arriving[item.ID]
+		story := ""
+		var photos []Photo
+		if night != nil {
+			last = arriving[night.ID]
+			if night.StayID != nil && *night.StayID == stay.ID {
+				story = night.StoryMD
+				for _, photo := range report.Photos[night.ID] {
+					if photo.ID != hero.ID || !hasHero {
+						photos = append(photos, photo)
+					}
+				}
 			}
 		}
-		writeStay(doc, text, report, stay, last)
+		if err := writeStay(doc, text, report, stay, last, story, photos); err != nil {
+			return err
+		}
 	}
 
 	var more []Photo
@@ -584,7 +639,7 @@ func writePlace(doc *document, text labels, report Report, place domain.Item, nu
 	// its pictures overleaf.
 	pdf.SetFont(displayFamily, "", 16)
 	first := journalPadding + float64(len(pdf.SplitText(title, titleWidth)))*16*0.42 + 2.5 +
-		doc.pillsHeight(tags, width) + firstPhotoHeight(photos, width) + 2
+		doc.pillsHeight(tags, width) + firstPhotoNeeds(photos, width) + 2
 	if place.Address != "" {
 		first += lineHeight
 	}
@@ -624,6 +679,7 @@ func writePlace(doc *document, text labels, report Report, place domain.Item, nu
 	if story != "" {
 		doc.inColumn(x, width, func() { writeMarkdown(doc, story) })
 	}
+	writeStops(doc, text, report.Trip, place, report.Content.Tracks, number, true, x, width)
 	if arriving != nil && arriving.Note != "" {
 		pdf.SetFont(fontFamily, "I", sizeSmall)
 		doc.ink(mutedColor)
@@ -637,7 +693,8 @@ func writePlace(doc *document, text labels, report Report, place domain.Item, nu
 
 // placePills are the tags under a place's name: how it was reached, how it
 // went when that is not simply visited, what kind of activity it was, when,
-// how hard, what it cost and what its recording measured.
+// how hard and what its recording measured. What it cost is the budget's,
+// which the journal leaves out.
 func placePills(text labels, report Report, place domain.Item, arriving *domain.Leg, origin string) []pill {
 	var tags []pill
 	if arriving != nil {
@@ -657,11 +714,8 @@ func placePills(text labels, report Report, place domain.Item, arriving *domain.
 	if place.Difficulty != nil && *place.Difficulty >= domain.MinDifficulty && *place.Difficulty <= domain.MaxDifficulty {
 		tags = append(tags, pill{text: fmt.Sprintf(text.difficulty, text.difficulties[*place.Difficulty-1])})
 	}
-	if cost := placeCost(place, report.Trip); cost != "" {
-		tags = append(tags, pill{text: cost})
-	}
 	if track := domain.TrackOfItem(report.Content.Tracks, place.ID); track != nil {
-		tags = append(tags, pill{text: trackNote(text, track), icon: "hiking"})
+		tags = append(tags, pill{text: trackNote(text, track, place, report.Trip.TrackSpeedKmh), icon: "hiking"})
 	}
 	return tags
 }
@@ -682,9 +736,6 @@ func legPill(text labels, report Report, leg domain.Leg, origin string) (pill, b
 	}
 	if duration := leg.Duration(); duration != nil && *duration > 0 {
 		parts = append(parts, text.duration(*duration))
-	}
-	if amount := amountOf(leg.ActualCost, leg.PlannedCost); amount != nil {
-		parts = append(parts, money(*amount, report.Trip.Currency))
 	}
 	if len(parts) == 1 && origin == "" && !leg.Composite() {
 		// "By car" alone says nothing a reader wants.
@@ -710,6 +761,7 @@ func (d *document) photoBlock(photos []Photo, x, width float64) error {
 		ratio := info.Width() / info.Height()
 		h := min(width/ratio, singleLimit)
 		w := min(width, h*ratio)
+		h = d.fitted(h)
 		d.keepTogether(h)
 		y := d.pdf.GetY()
 		d.framed(name, info, x, y, w, h, 0.5, 0.5, journalPhotoRadius)
@@ -733,13 +785,44 @@ func (d *document) photoBlock(photos []Photo, x, width float64) error {
 	if err != nil {
 		return err
 	}
-	h := min(width*info.Height()/info.Width(), placeHeroLimit)
+	h := d.fitted(min(width*info.Height()/info.Width(), placeHeroLimit))
 	d.keepTogether(h)
 	y := d.pdf.GetY()
 	d.framed(name, info, x, y, width, h, 0.5, 0.5, journalPhotoRadius)
 	d.pdf.SetXY(x, y+h+photoGap)
 	rest := append(append([]Photo{}, photos[:hero]...), photos[hero+1:]...)
 	return d.photoRows(rest, x, width, rowLimit)
+}
+
+// fitted is how tall a large picture is drawn where the page now is: as tall
+// as it would be when there is room, or as tall as what is left of the page
+// when that is at least shrunkLimit.
+func (d *document) fitted(height float64) float64 {
+	room := pageHeight - marginBottom - d.pdf.GetY() - photoGap
+	if room < height && room >= shrunkLimit {
+		return room
+	}
+	return height
+}
+
+// firstPhotoNeeds is how much of a page the first picture of a place needs
+// beside its heading: a single picture or the large one of several may shrink
+// to shrunkLimit (fitted), while a row of pictures needs its whole height.
+func firstPhotoNeeds(photos []Photo, width float64) float64 {
+	height := firstPhotoHeight(photos, width)
+	shrinks := len(photos) == 1
+	if len(photos) > 2 {
+		for _, photo := range photos {
+			if landscape(photo.JPEG) {
+				shrinks = true
+				break
+			}
+		}
+	}
+	if shrinks {
+		return min(height, shrunkLimit+photoGap)
+	}
+	return height
 }
 
 // firstPhotoHeight is how tall the first picture - or the first row - of a
@@ -828,8 +911,8 @@ func landscape(jpeg []byte) bool {
 }
 
 // writeJournalTransfer writes a booked journey - a flight, a train, a ferry - in a
-// card: what it was, from where to where, when it left and landed, what it
-// cost, and its notes.
+// card: what it was, from where to where, when it left and landed, and its
+// notes.
 func writeJournalTransfer(doc *document, text labels, report Report, transfer domain.Transfer) {
 	pdf := doc.pdf
 	doc.keepTogether(26)
@@ -870,12 +953,6 @@ func writeJournalTransfer(doc *document, text labels, report Report, transfer do
 	sameDay := transfer.Arrival().Equal(transfer.DepartureDate)
 	end(text.departs, transfer.DepartureDate, transfer.DepartureTime, sameDay)
 	end(text.arrives, transfer.Arrival(), transfer.ArrivalTime, sameDay)
-	travelers := report.Trip.Travelers
-	if transfer.ActualCost != nil {
-		tags = append(tags, pill{text: money(transfer.ActualCostTotal(travelers), report.Trip.Currency)})
-	} else if transfer.PlannedCost != nil {
-		tags = append(tags, pill{text: money(transfer.PlannedCostTotal(travelers), report.Trip.Currency)})
-	}
 	doc.pills(tags, x, width)
 	if transfer.NotesMD != "" {
 		doc.inColumn(x, width, func() { writeMarkdown(doc, transfer.NotesMD) })
@@ -884,12 +961,14 @@ func writeJournalTransfer(doc *document, text labels, report Report, transfer do
 }
 
 // writeStay writes where the night was spent as the end of the day's chapter:
-// the stay's name, the journey that reached it, its kind, dates and cost, and
-// its notes.
-func writeStay(doc *document, text labels, report Report, stay domain.Stay, arriving *domain.Leg) {
+// the stay's name, the journey that reached it, its kind and dates, and
+// the pictures and the story of the night - or the stay's notes while nobody
+// told one.
+func writeStay(doc *document, text labels, report Report, stay domain.Stay, arriving *domain.Leg, story string,
+	photos []Photo) error {
 	pdf := doc.pdf
-	doc.keepTogether(28)
 	x, width := marginLeft+journalPadding, contentWidth-2*journalPadding
+	doc.keepTogether(28 + firstPhotoNeeds(photos, width))
 	doc.beginCard(marginLeft, contentWidth)
 	doc.label(text.endOfDay, x, pdf.GetY(), 7.5, accentColor)
 	pdf.SetY(pdf.GetY() + 5.5)
@@ -907,9 +986,6 @@ func writeStay(doc *document, text labels, report Report, stay domain.Stay, arri
 	}
 	tags = append(tags, pill{text: fmt.Sprintf("%s %s %s %s",
 		text.checkIn, text.date(stay.CheckInDate), text.checkOut, text.date(stay.CheckOutDate))})
-	if amount := amountOf(stay.ActualCost, stay.PlannedCost); amount != nil {
-		tags = append(tags, pill{text: money(*amount, report.Trip.Currency)})
-	}
 	doc.pills(tags, x, width)
 	if stay.Address != "" {
 		pdf.SetFont(fontFamily, "", sizeSmall)
@@ -919,20 +995,25 @@ func writeStay(doc *document, text labels, report Report, stay domain.Stay, arri
 		doc.ink(inkColor)
 		pdf.Ln(1.5)
 	}
-	if stay.NotesMD != "" {
-		doc.inColumn(x, width, func() { writeMarkdown(doc, stay.NotesMD) })
+	if err := doc.photoBlock(photos, x, width); err != nil {
+		return err
+	}
+	if story == "" {
+		story = stay.NotesMD
+	}
+	if story != "" {
+		doc.inColumn(x, width, func() { writeMarkdown(doc, story) })
 	}
 	doc.endCard()
+	return nil
 }
 
-// writeClosing writes the pages the journal ends with: the words the report
-// closes on, the costs that hang on no place, and what was spent against what
-// was planned. A report with none of them ends with its last day.
+// writeClosing writes the page the journal ends with: the words the report
+// closes on. The money is the budget's, which the journal leaves out, so a
+// report without closing words ends with its last day.
 func writeClosing(doc *document, text labels, report Report) {
-	totals := report.Totals
 	summary := report.Content.Document.SummaryMD
-	hasCosts := totals.PlannedCost != 0 || totals.ActualCost != 0
-	if summary == "" && len(report.Content.Expenses) == 0 && !hasCosts {
+	if summary == "" {
 		return
 	}
 	pdf := doc.pdf
@@ -942,55 +1023,33 @@ func writeClosing(doc *document, text labels, report Report) {
 	pdf.SetY(pdf.GetY() + 7)
 	doc.display(text.closingPage, marginLeft, contentWidth, 24, inkColor)
 	pdf.Ln(4)
-	if summary != "" {
-		writeMarkdown(doc, summary)
-		pdf.Ln(journalGap)
-	}
-
-	if hasCosts {
-		writeStats(doc, []stat{
-			{money(totals.PlannedCost, report.Trip.Currency), text.plannedCost},
-			{money(totals.ActualCost, report.Trip.Currency), text.actualCost},
-			{signed(totals.Difference) + " " + report.Trip.Currency, text.difference},
-		})
-	}
-
-	var lines [][2]string
-	for _, expense := range report.Content.Expenses {
-		amount := amountOf(expense.Actual, expense.Planned)
-		if amount == nil {
-			continue
-		}
-		name := expense.Note
-		if name == "" {
-			name = text.categories[string(expense.Category)]
-		}
-		lines = append(lines, [2]string{name, money(*amount, report.Trip.Currency)})
-	}
-	if len(lines) == 0 {
-		return
-	}
-	x, width := marginLeft+journalPadding, contentWidth-2*journalPadding
-	doc.keepTogether(14 + lineHeight*float64(min(len(lines), 4)))
-	doc.beginCard(marginLeft, contentWidth)
-	doc.label(text.expenses, x, pdf.GetY(), 7.5, accentColor)
-	pdf.SetY(pdf.GetY() + 6)
-	for _, line := range lines {
-		pdf.SetFont(fontFamily, "", sizeBody)
-		pdf.SetX(x)
-		pdf.CellFormat(width*0.7, lineHeight, line[0], "", 0, "L", false, 0, "")
-		pdf.SetFont(fontFamily, "B", sizeBody)
-		pdf.CellFormat(width*0.3, lineHeight, line[1], "", 1, "R", false, 0, "")
-	}
-	doc.endCard()
+	writeMarkdown(doc, summary)
 }
 
-// trackNote says how far a recording went, how long it took when its points
-// carry time, and, when the file had heights, how much it climbed and descended.
-func trackNote(text labels, track *domain.Track) string {
+// trackNote says how far a line went, how long it took and, when the file had
+// heights, how much it climbed and descended. How long is the recording's own
+// time when its points carry one; a line without times - the plan's route the
+// report was copied with - takes the activity's own times when both are known,
+// and is otherwise estimated from its slopes at its own speed or the trip's.
+func trackNote(text labels, track *domain.Track, place domain.Item, tripSpeed float64) string {
 	note := fmt.Sprintf(text.track, text.trackDistanceOf(track.DistanceM))
-	if elapsed := track.Elapsed(); elapsed != nil {
+	switch elapsed := track.Elapsed(); {
+	case elapsed != nil:
 		note += separator + fmt.Sprintf(text.trackTime, elapsedClock(*elapsed))
+	case place.ActualTime != nil && place.ActualEndTime != nil && *place.ActualTime != *place.ActualEndTime:
+		minutes := int(*place.ActualEndTime - *place.ActualTime)
+		if minutes < 0 {
+			minutes += 24 * 60
+		}
+		note += separator + fmt.Sprintf(text.trackTime, text.duration(minutes*60))
+	default:
+		speed := tripSpeed
+		if track.SpeedKmh != nil {
+			speed = *track.SpeedKmh
+		}
+		if walking := track.WalkingTime(speed); walking > 0 {
+			note += separator + fmt.Sprintf(text.trackEstimate, text.duration(int(walking.Seconds())))
+		}
 	}
 	if track.AscentM != nil && track.DescentM != nil {
 		note += separator + fmt.Sprintf(text.climb, text.heightOf(*track.AscentM), text.heightOf(*track.DescentM))
@@ -1111,15 +1170,6 @@ func money(amount domain.Money, currency string) string {
 		return amount.String()
 	}
 	return amount.String() + " " + currency
-}
-
-// signed writes a difference with its sign, so a report that came in under what
-// was planned says so at a glance.
-func signed(amount domain.Money) string {
-	if amount > 0 {
-		return "+" + amount.String()
-	}
-	return amount.String()
 }
 
 // The plan's document writes its journeys and bookings as plain lines rather

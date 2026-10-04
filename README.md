@@ -53,7 +53,7 @@ docker compose pull
 docker compose up -d
 ```
 
-Database migrations are applied automatically when the backend starts. Set `TRIPVAULT_VERSION` in `.env` to a release such as `1.8.0` to decide when upgrades happen instead of following `latest`. Take a backup before upgrading: an archive cannot be restored into a build older than the one that wrote it.
+Database migrations are applied automatically when the backend starts. Set `TRIPVAULT_VERSION` in `.env` to a release such as `1.9.0` to decide when upgrades happen instead of following `latest`. Take a backup before upgrading: an archive cannot be restored into a build older than the one that wrote it.
 
 ## Documentation
 

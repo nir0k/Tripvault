@@ -739,6 +739,35 @@ func OrderByActualTime(places []Item) []uuid.UUID {
 	return order
 }
 
+// IsNight - reports whether an element is the evening mark of a day, where the
+// coming night is spent. In a report it carries the story of that night.
+//
+// Returns:
+//   - true for the evening stay mark.
+func (i Item) IsNight() bool {
+	return i.Kind == ItemStayAnchor && i.Anchor == AnchorEvening
+}
+
+// NormalizeNightStory - checks the story of a night told at the end of a day of
+// a report.
+//
+// Arguments:
+//   - kind: the kind of the document the night belongs to.
+//   - story: the story, in Markdown.
+//
+// Returns:
+//   - the story to store.
+//   - a validation error on a plan, which tells no stories, or for a story too long.
+func NormalizeNightStory(kind DocumentKind, story string) (string, error) {
+	if kind != DocumentReport {
+		return "", reportOnly("story_md")
+	}
+	if err := checkLength("story_md", story, maxMarkdownLength); err != nil {
+		return "", err
+	}
+	return story, nil
+}
+
 // WithoutVisit - makes a copy of a place of a report for another visit: the
 // place itself - what it is, where, what it costs in the plan - without the
 // record of the visit it was copied from. A café visited twice has a story, a
@@ -789,10 +818,10 @@ type DocumentContent struct {
 
 // ForShareLink - returns the content as a read-only link shows it: without
 // the booking references and contacts of the stays, transfers and places, and
-// without who pays a place's cost and who shares it. Those are the travellers'
-// own business, like the files attached to places, which a link never reads
-// either; the costs themselves stay. The content it is called on is left as it
-// was.
+// without who pays a place's or a stop's cost and who shares it. Those are the
+// travellers' own business, like the files attached to places, which a link
+// never reads either; the costs themselves stay. The content it is called on
+// is left as it was.
 //
 // Returns:
 //   - a copy with those fields emptied.
@@ -812,6 +841,16 @@ func (c DocumentContent) ForShareLink() DocumentContent {
 		c.Items[index].PaidBy = nil
 		c.Items[index].CostSplit = SplitNone
 		c.Items[index].CostShares = nil
+	}
+	c.Tracks = slices.Clone(c.Tracks)
+	for index := range c.Tracks {
+		stops := slices.Clone(c.Tracks[index].Stops)
+		for position := range stops {
+			stops[position].PaidBy = nil
+			stops[position].CostSplit = SplitNone
+			stops[position].CostShares = nil
+		}
+		c.Tracks[index].Stops = stops
 	}
 	return c
 }

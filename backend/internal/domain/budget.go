@@ -2,6 +2,7 @@ package domain
 
 import (
 	"math"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,7 +29,9 @@ type BudgetEntryKind string
 
 // Budget entry kinds.
 const (
-	BudgetPlace    BudgetEntryKind = "place"
+	BudgetPlace BudgetEntryKind = "place"
+	// BudgetStop is a stop along the line of an activity, listed in its day.
+	BudgetStop     BudgetEntryKind = "stop"
 	BudgetStay     BudgetEntryKind = "stay"
 	BudgetTransfer BudgetEntryKind = "transfer"
 	BudgetLeg      BudgetEntryKind = "leg"
@@ -191,6 +194,10 @@ func BuildBudget(trip Trip, content DocumentContent) Budget {
 				budget.Entries = append(budget.Entries, entry)
 				addEntry(&budget, categories, &total, entry)
 			}
+			for _, entry := range stopEntries(item, content.Tracks, travelers, report) {
+				budget.Entries = append(budget.Entries, entry)
+				addEntry(&budget, categories, &total, entry)
+			}
 		}
 		for _, leg := range append([]*Leg{OpeningLeg(content.Legs, items)}, DayLegs(content.Legs, items)...) {
 			if entry, ok := legEntry(leg, content.Items, stays, &dayID, report); ok {
@@ -239,9 +246,14 @@ func BuildBudget(trip Trip, content DocumentContent) Budget {
 			budget.Entries = append(budget.Entries, entry)
 			addEntry(&budget, categories, nil, entry)
 		}
+		for _, entry := range stopEntries(item, content.Tracks, travelers, report) {
+			budget.Entries = append(budget.Entries, entry)
+			addEntry(&budget, categories, nil, entry)
+		}
 	}
 
-	budget.Balances, budget.Settlements = BuildBalances(content.Items, travelers, report)
+	budget.Balances, budget.Settlements = BuildBalances(append(slices.Clone(content.Items),
+		StopCostItems(content)...), travelers, report)
 
 	spent := budget.Planned
 	if report {
@@ -303,6 +315,19 @@ func placeEntry(item Item, travelers int, report bool) (BudgetEntry, bool) {
 		entry.Actual = &actual
 	}
 	return entry, true
+}
+
+// stopEntries turns the stops along an activity's line that carry a cost into
+// entries of the activity's day, listed after the activity itself.
+func stopEntries(activity Item, tracks []Track, travelers int, report bool) []BudgetEntry {
+	var entries []BudgetEntry
+	for _, stop := range StopsOf(tracks, activity.ID) {
+		if entry, ok := placeEntry(stop.CostItem(activity), travelers, report); ok {
+			entry.Kind = BudgetStop
+			entries = append(entries, entry)
+		}
+	}
+	return entries
 }
 
 // hasCost says whether something carries an amount the budget lists: a planned

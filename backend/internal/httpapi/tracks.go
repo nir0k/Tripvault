@@ -8,6 +8,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -101,6 +102,13 @@ func (s *Server) handleImportItemTrack(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.fillFromTrack(w, r, item, document, saved, parsed.Start) {
 		return
+	}
+	// The stops of the line it replaced are moved onto the new one.
+	if content, err := s.documents.Content(r.Context(), document.ID); err == nil {
+		if err := s.moveStops(r.Context(), domain.StopsOf(content.Tracks, item.ID), data); err != nil {
+			s.writeDomainError(w, r, "move stops", err)
+			return
+		}
 	}
 	s.writeDocument(w, r, http.StatusOK, document.ID)
 }
@@ -213,7 +221,7 @@ func (s *Server) handleGetTrackFile(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.documentFor(w, r, recorded.DocumentID, domain.ActionView); !ok {
 		return
 	}
-	s.writeTrackFile(w, r, recorded)
+	s.writeTrackFile(w, r, recorded, nil)
 }
 
 // handleSharedTrackFile sends the file a track was imported from to a read-only
@@ -233,7 +241,11 @@ func (s *Server) handleSharedTrackFile(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusNotFound, "not_found", "Resource not found")
 		return
 	}
-	s.writeTrackFile(w, r, recorded)
+	zones, ok := s.privacyZones(w, r, document.TripID)
+	if !ok {
+		return
+	}
+	s.writeTrackFile(w, r, recorded, zones)
 }
 
 // trackFor loads the track named in the path, without its file.
@@ -257,8 +269,11 @@ var trackMIME = map[string]string{
 }
 
 // writeTrackFile sends a track's file as a download under the name it was
-// uploaded with, or a name made from the format when it had none.
-func (s *Server) writeTrackFile(w http.ResponseWriter, r *http.Request, recorded domain.Track) {
+// uploaded with, or a name made from the format when it had none. A file that
+// passes through a circle in zones is written again as GPX without the points
+// inside it (track.Outside), under the same name ending in ".gpx".
+func (s *Server) writeTrackFile(w http.ResponseWriter, r *http.Request, recorded domain.Track,
+	zones domain.PrivacyZones) {
 	file, err := s.documents.TrackFile(r.Context(), recorded.ID)
 	if err != nil {
 		s.writeDomainError(w, r, "get track file", err)
@@ -267,6 +282,17 @@ func (s *Server) writeTrackFile(w http.ResponseWriter, r *http.Request, recorded
 	name := file.Name
 	if strings.TrimSpace(name) == "" {
 		name = "track." + file.Format
+	}
+	if len(zones) > 0 {
+		trimmed, changed, err := track.Outside(file.Data, zones.Contains)
+		if err != nil {
+			s.internalError(w, r, "trim track file", err)
+			return
+		}
+		if changed {
+			file.Data, file.Format = trimmed, track.FormatGPX
+			name = strings.TrimSuffix(name, path.Ext(name)) + ".gpx"
+		}
 	}
 	w.Header().Set("Content-Type", trackMIME[file.Format])
 	w.Header().Set("Content-Length", strconv.Itoa(len(file.Data)))

@@ -1316,3 +1316,35 @@ func TestUniqueArchiveNames(t *testing.T) {
 		}
 	}
 }
+
+// TestOnlyANightTakesPictures checks the night a day of a report ends with
+// takes pictures like a place, while a morning mark and a plan's night do not.
+func TestOnlyANightTakesPictures(t *testing.T) {
+	s, trips, catalogue, _ := newMediaServer(domain.RoleEditor)
+	photo := uploadedIDs(t, upload(t, s, trips.trip.ID.String(), "a.png", picture(t, 10, 10), false))[0]
+	dayID := uuid.New()
+	docs := &fakeDocuments{
+		document: domain.Document{ID: uuid.New(), TripID: trips.trip.ID, Kind: domain.DocumentReport},
+		place:    domain.Item{ID: uuid.New(), Kind: domain.ItemPlace},
+	}
+	docs.anchor = domain.Item{ID: uuid.New(), DocumentID: docs.document.ID, DayID: &dayID,
+		Kind: domain.ItemStayAnchor, Anchor: domain.AnchorEvening}
+	s.documents = docs
+	catalogue.targets[docs.anchor.ID] = trips.trip.ID
+	link := func() int {
+		body := `{"target_type":"item","target_id":"` + docs.anchor.ID.String() + `","media_ids":["` + photo.ID + `"]}`
+		return send(s, http.MethodPut, "/api/v1/media-links", "good", body).Code
+	}
+
+	if code := link(); code != http.StatusNoContent {
+		t.Errorf("a report's night: %d", code)
+	}
+	docs.anchor.Anchor = domain.AnchorMorning
+	if code := link(); code != http.StatusUnprocessableEntity {
+		t.Errorf("a morning mark: %d", code)
+	}
+	docs.anchor.Anchor, docs.document.Kind = domain.AnchorEvening, domain.DocumentPlan
+	if code := link(); code != http.StatusUnprocessableEntity {
+		t.Errorf("a plan's night: %d", code)
+	}
+}

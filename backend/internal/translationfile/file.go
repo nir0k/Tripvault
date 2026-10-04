@@ -78,14 +78,29 @@ type Day struct {
 	Highlight *Text     `yaml:"highlight,omitempty"`
 	Places    []Place   `yaml:"places,omitempty"`
 	Journeys  []Journey `yaml:"journeys,omitempty"`
+	Night     *Night    `yaml:"night,omitempty"`
 }
 
-// Place is a place or an activity of a day.
+// Night is the story of the night the day ends with, told at its stay.
+type Night struct {
+	ID    string `yaml:"id"`
+	Story *Text  `yaml:"story,omitempty"`
+}
+
+// Place is a place or an activity of a day, with the stops along its line.
 type Place struct {
 	ID          string `yaml:"id"`
 	Name        *Text  `yaml:"name,omitempty"`
 	Description *Text  `yaml:"description,omitempty"`
 	Story       *Text  `yaml:"story,omitempty"`
+	Stops       []Stop `yaml:"stops,omitempty"`
+}
+
+// Stop is a stop along the line of an activity.
+type Stop struct {
+	ID   string `yaml:"id"`
+	Name *Text  `yaml:"name,omitempty"`
+	Note *Text  `yaml:"note,omitempty"`
 }
 
 // Journey is the note of the journey between two elements of a day; Between
@@ -193,12 +208,23 @@ func Build(trip domain.TripSummary, content domain.DocumentContent, language str
 			if !item.Kind.IsVisit() {
 				continue
 			}
-			entry.Places = append(entry.Places, Place{
+			place := Place{
 				ID:          item.ID.String(),
 				Name:        text(domain.TranslateItem, item.ID, "name", item.Name),
 				Description: text(domain.TranslateItem, item.ID, "description_md", item.DescriptionMD),
 				Story:       text(domain.TranslateItem, item.ID, "story_md", item.StoryMD),
-			})
+			}
+			for _, stop := range domain.StopsOf(content.Tracks, item.ID) {
+				if stop.Name == "" && stop.NoteMD == "" {
+					continue
+				}
+				place.Stops = append(place.Stops, Stop{
+					ID:   stop.ID.String(),
+					Name: text(domain.TranslateStop, stop.ID, "name", stop.Name),
+					Note: text(domain.TranslateStop, stop.ID, "note_md", stop.NoteMD),
+				})
+			}
+			entry.Places = append(entry.Places, place)
 		}
 		legs := domain.DayLegs(content.Legs, items)
 		if opening := domain.OpeningLeg(content.Legs, items); opening != nil {
@@ -214,6 +240,12 @@ func Build(trip domain.TripSummary, content domain.DocumentContent, language str
 					domain.ItemLabel(everything[leg.ToItemID], stays),
 				Note: text(domain.TranslateLeg, leg.ID, "note", leg.Note),
 			})
+		}
+		for _, item := range items {
+			if item.IsNight() && item.StoryMD != "" {
+				entry.Night = &Night{ID: item.ID.String(),
+					Story: text(domain.TranslateItem, item.ID, "story_md", item.StoryMD)}
+			}
 		}
 		file.Days = append(file.Days, entry)
 	}
@@ -281,12 +313,17 @@ func Read(data []byte, trip domain.TripSummary, content domain.DocumentContent, 
 	}
 
 	known := make(map[uuid.UUID]domain.TranslationTarget)
+	// nights are the evening stay marks, whose story alone is translated.
+	nights := make(map[uuid.UUID]bool)
 	for _, day := range content.Days {
 		known[day.ID] = domain.TranslateDay
 	}
 	for _, item := range content.Items {
 		if item.Kind.IsVisit() {
 			known[item.ID] = domain.TranslateItem
+		}
+		if item.IsNight() {
+			nights[item.ID] = true
 		}
 	}
 	for _, leg := range content.Legs {
@@ -297,6 +334,11 @@ func Read(data []byte, trip domain.TripSummary, content domain.DocumentContent, 
 	}
 	for _, transfer := range content.Transfers {
 		known[transfer.ID] = domain.TranslateTransfer
+	}
+	for _, line := range content.Tracks {
+		for _, stop := range line.Stops {
+			known[stop.ID] = domain.TranslateStop
+		}
 	}
 
 	var result Result
@@ -334,10 +376,23 @@ func Read(data []byte, trip domain.TripSummary, content domain.DocumentContent, 
 				add(domain.TranslateItem, id, "description_md", place.Description)
 				add(domain.TranslateItem, id, "story_md", place.Story)
 			}
+			for _, stop := range place.Stops {
+				if id, ok := element(stop.ID, domain.TranslateStop); ok {
+					add(domain.TranslateStop, id, "name", stop.Name)
+					add(domain.TranslateStop, id, "note_md", stop.Note)
+				}
+			}
 		}
 		for _, journey := range day.Journeys {
 			if id, ok := element(journey.ID, domain.TranslateLeg); ok {
 				add(domain.TranslateLeg, id, "note", journey.Note)
+			}
+		}
+		if day.Night != nil {
+			if id, err := uuid.Parse(day.Night.ID); err == nil && nights[id] {
+				add(domain.TranslateItem, id, "story_md", day.Night.Story)
+			} else {
+				result.Skipped++
 			}
 		}
 	}

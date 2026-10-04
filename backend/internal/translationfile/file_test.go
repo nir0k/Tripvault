@@ -10,7 +10,8 @@ import (
 	"github.com/nir0k/tripvault/backend/internal/domain"
 )
 
-// report builds a small report: one day with a place, a journey and a stay.
+// report builds a small report: one day with a place, a journey, a stay and
+// the story of the night spent there.
 func report() (domain.TripSummary, domain.DocumentContent) {
 	dayID, first, second, stayID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	trip := domain.TripSummary{Trip: domain.Trip{ID: uuid.New(), Title: "Iceland", Summary: "Four days",
@@ -23,8 +24,12 @@ func report() (domain.TripSummary, domain.DocumentContent) {
 			{ID: first, DayID: &dayID, Position: 0, Kind: domain.ItemPlace, Name: "Harbour",
 				StoryMD: "Boats.\n\n- one\n- two"},
 			{ID: second, DayID: &dayID, Position: 1, Kind: domain.ItemPlace, Name: "Museum"},
+			{ID: uuid.New(), DayID: &dayID, Position: 2, Kind: domain.ItemStayAnchor, Anchor: domain.AnchorEvening,
+				StayID: &stayID, StoryMD: "Aurora"},
 		},
-		Legs:  []domain.Leg{{ID: uuid.New(), DayID: dayID, FromItemID: first, ToItemID: second, Note: "Bus 12"}},
+		Legs: []domain.Leg{{ID: uuid.New(), DayID: dayID, FromItemID: first, ToItemID: second, Note: "Bus 12"}},
+		Tracks: []domain.Track{{ID: uuid.New(), ItemID: first,
+			Stops: []domain.Stop{{ID: uuid.New(), ItemID: first, Kind: domain.StopFood, Name: "Kiosk"}}}},
 		Stays: []domain.Stay{{ID: stayID, Name: "Guesthouse"}},
 		Translations: []domain.Translation{
 			{Target: domain.TranslateItem, TargetID: first, Field: "name", Lang: "ru", Value: "Гавань"},
@@ -48,6 +53,8 @@ func TestBuildWritesTheWordsOfAReport(t *testing.T) {
 		"original: Harbour", "translation: Гавань",
 		"between: Harbour → Museum", "original: Bus 12",
 		"original: Guesthouse",
+		"night:\n", "original: Aurora",
+		"stops:\n", "original: Kiosk",
 		"original: |-\n", "- one\n",
 	} {
 		if !strings.Contains(file, want) {
@@ -71,10 +78,14 @@ func TestReadBringsTheTranslationsBack(t *testing.T) {
 	filled := strings.Replace(string(data), "translation: Гавань", "translation: Порт", 1)
 	filled = strings.Replace(filled, "original: Museum\n          translation: \"\"",
 		"original: Museum\n          translation: Музей", 1)
+	filled = strings.Replace(filled, "original: Kiosk\n              translation: \"\"",
+		"original: Kiosk\n              translation: Ларёк", 1)
+	filled = strings.Replace(filled, "original: Aurora\n        translation: \"\"",
+		"original: Aurora\n        translation: Сияние", 1)
 
 	// The museum is deleted after the file was written.
-	museum := content.Items[1].ID
-	content.Items = content.Items[:1]
+	museum, night := content.Items[1].ID, content.Items[2].ID
+	content.Items = []domain.Item{content.Items[0], content.Items[2]}
 	result, err := Read([]byte(filled), trip, content, "ru")
 	if err != nil {
 		t.Fatalf("read: %v", err)
@@ -83,14 +94,28 @@ func TestReadBringsTheTranslationsBack(t *testing.T) {
 		t.Errorf("skipped %d, want 1", result.Skipped)
 	}
 	values := map[string]string{}
+	nightRead := false
 	for _, translation := range result.Translations {
 		if translation.TargetID == museum {
 			t.Error("a deleted element was translated")
+		}
+		if translation.TargetID == night {
+			if translation.Field != "story_md" || translation.Value != "Сияние" {
+				t.Errorf("night: %+v", translation)
+			}
+			nightRead = true
+			continue
 		}
 		values[string(translation.Target)+"."+translation.Field] = translation.Value
 	}
 	if values["item.name"] != "Порт" || values["trip.title"] != "Исландия" || values["leg.note"] != "" {
 		t.Errorf("translations: %v", values)
+	}
+	if values["stop.name"] != "Ларёк" {
+		t.Errorf("the stop's name was not read back: %v", values)
+	}
+	if !nightRead {
+		t.Error("the story of the night was not read back")
 	}
 	if _, ok := values["document.intro_md"]; !ok {
 		t.Error("the introduction was not read back")
