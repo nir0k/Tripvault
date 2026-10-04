@@ -57,6 +57,13 @@ tags:
       to a trip: every member of a trip tags it in their own way, a viewer
       included, and nobody sees another's tags. A trip lists the reader's tags
       on it in `tags`.
+  - name: Themes
+    description: |
+      Colour themes the administrator uploads for everybody on the instance.
+      A theme is a file of palettes: a light one, a dark one or both, each
+      naming every colour of the interface. A person chooses a theme in
+      `theme_id` of their profile and keeps choosing light, dark or auto in
+      `theme`; a theme with one palette is shown in it whatever that says.
   - name: Documents
     description: |
       A trip's plan and report: days, places, stays and stay marks. Every
@@ -1037,6 +1044,28 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /api/v1/themes:
+    get:
+      tags: [Themes]
+      summary: List the instance's themes
+      description: Every theme of the instance by name, with its palettes, to choose one from.
+      operationId: listThemes
+      responses:
+        "200":
+          description: The themes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/InstanceTheme"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /api/v1/ideas:
     get:
@@ -4230,6 +4259,93 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /api/v1/admin/themes:
+    post:
+      tags: [Themes]
+      summary: Upload a theme
+      description: |
+        The body is the theme file itself. Every colour value is a hexadecimal
+        colour or a CSS colour function and nothing else, because it goes into
+        the page's style sheet as it is. A name another theme has, in any case,
+        answers `409 already_exists`.
+      operationId: createTheme
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ThemeFile"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstanceTheme"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/admin/themes/{themeID}:
+    put:
+      tags: [Themes]
+      summary: Replace a theme with a new file
+      description: |
+        The theme takes the new file's name and palettes and keeps its
+        identifier, so the people reading the interface in it see the new
+        colours without choosing again.
+      operationId: replaceTheme
+      parameters:
+        - $ref: "#/components/parameters/ThemeID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ThemeFile"
+      responses:
+        "200":
+          description: Replaced.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstanceTheme"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      tags: [Themes]
+      summary: Delete a theme
+      description: The people reading the interface in it go back to the built-in theme.
+      operationId: deleteTheme
+      parameters:
+        - $ref: "#/components/parameters/ThemeID"
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v1/admin/backup-configs:
     get:
       tags: [Backups]
@@ -5192,6 +5308,13 @@ components:
       schema:
         type: string
         format: uuid
+    ThemeID:
+      name: themeID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     SessionID:
       name: sessionID
       in: path
@@ -5991,7 +6114,7 @@ components:
     User:
       type: object
       required: [id, email, display_name, is_admin, is_active, must_change_password, email_notifications,
-                 email_verified, delete_after, locale, theme,
+                 email_verified, delete_after, locale, theme, theme_id,
                  units, date_format, time_format, default_currency, has_avatar, avatar_updated_at,
                  last_login_at, created_at]
       properties:
@@ -6025,6 +6148,10 @@ components:
         theme:
           type: string
           enum: [light, dark, auto]
+        theme_id:
+          type: [string, "null"]
+          format: uuid
+          description: The instance's theme the person reads the interface in; null for the built-in one.
         units:
           type: string
           enum: [km, mi]
@@ -6082,6 +6209,10 @@ components:
         theme:
           type: string
           enum: [light, dark, auto]
+        theme_id:
+          type: [string, "null"]
+          format: uuid
+          description: A theme of the instance; null goes back to the built-in one.
         units:
           type: string
           enum: [km, mi]
@@ -6857,6 +6988,79 @@ components:
           type: string
         color:
           $ref: "#/components/schemas/TagColor"
+    ThemePalette:
+      type: object
+      description: |
+        Every colour of the interface, named without the `--color-` prefix of
+        its variable, as a hexadecimal colour or a CSS colour function.
+      additionalProperties: false
+      required: [base-100, base-200, base-300, base-content, primary, primary-content, secondary,
+                 secondary-content, accent, accent-content, neutral, neutral-content, info, info-content,
+                 success, success-content, warning, warning-content, error, error-content]
+      properties:
+        base-100: {type: string}
+        base-200: {type: string}
+        base-300: {type: string}
+        base-content: {type: string}
+        primary: {type: string}
+        primary-content: {type: string}
+        secondary: {type: string}
+        secondary-content: {type: string}
+        accent: {type: string}
+        accent-content: {type: string}
+        neutral: {type: string}
+        neutral-content: {type: string}
+        info: {type: string}
+        info-content: {type: string}
+        success: {type: string}
+        success-content: {type: string}
+        warning: {type: string}
+        warning-content: {type: string}
+        error: {type: string}
+        error-content: {type: string}
+
+    ThemeFile:
+      type: object
+      description: The theme file an administrator uploads; at least one of the palettes is set.
+      additionalProperties: false
+      required: [format, name]
+      properties:
+        format:
+          type: integer
+          enum: [1]
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+        light:
+          $ref: "#/components/schemas/ThemePalette"
+        dark:
+          $ref: "#/components/schemas/ThemePalette"
+
+    InstanceTheme:
+      type: object
+      required: [id, name, light, dark, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        light:
+          oneOf:
+            - $ref: "#/components/schemas/ThemePalette"
+            - type: "null"
+        dark:
+          oneOf:
+            - $ref: "#/components/schemas/ThemePalette"
+            - type: "null"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
     Tag:
       type: object
       required: [id, name, color, trip_count, idea_count, created_at]

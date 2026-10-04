@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/nir0k/tripvault/backend/internal/domain"
 	"github.com/nir0k/tripvault/backend/internal/mailer"
 )
@@ -19,14 +21,17 @@ func (s *Server) handleGetMe(w http.ResponseWriter, r *http.Request) {
 // the theme switch and the language picker can each change their own setting
 // without sending - and overwriting - the other.
 type updateMeRequest struct {
-	DisplayName        *string `json:"display_name"`
-	Locale             *string `json:"locale"`
-	Theme              *string `json:"theme"`
-	Units              *string `json:"units"`
-	DateFormat         *string `json:"date_format"`
-	TimeFormat         *string `json:"time_format"`
-	DefaultCurrency    *string `json:"default_currency"`
-	EmailNotifications *bool   `json:"email_notifications"`
+	DisplayName *string `json:"display_name"`
+	Locale      *string `json:"locale"`
+	Theme       *string `json:"theme"`
+	// ThemeID chooses a theme of the instance; null goes back to the
+	// built-in one.
+	ThemeID            optional[string] `json:"theme_id"`
+	Units              *string          `json:"units"`
+	DateFormat         *string          `json:"date_format"`
+	TimeFormat         *string          `json:"time_format"`
+	DefaultCurrency    *string          `json:"default_currency"`
+	EmailNotifications *bool            `json:"email_notifications"`
 }
 
 // handleUpdateMe changes the signed-in account's own settings. They live on the
@@ -43,6 +48,7 @@ func (s *Server) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 		DisplayName:        user.DisplayName,
 		Locale:             user.Locale,
 		Theme:              user.Theme,
+		ThemeID:            user.ThemeID,
 		Units:              user.Units.OrDefault(),
 		DateFormat:         user.DateFormat.OrDefault(),
 		TimeFormat:         user.TimeFormat.OrDefault(),
@@ -57,6 +63,18 @@ func (s *Server) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Theme != nil {
 		profile.Theme = domain.Theme(strings.TrimSpace(*body.Theme))
+	}
+	if body.ThemeID.Set {
+		profile.ThemeID = nil
+		if !body.ThemeID.Null {
+			id, err := uuid.Parse(body.ThemeID.Value)
+			if err != nil {
+				s.writeDomainError(w, r, "validate profile",
+					domain.NewValidationError("theme_id", "invalid", "must be a theme identifier or null"))
+				return
+			}
+			profile.ThemeID = &id
+		}
 	}
 	if body.Units != nil {
 		profile.Units = domain.Units(strings.TrimSpace(*body.Units))

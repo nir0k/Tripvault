@@ -3,7 +3,8 @@ import { computed, onMounted, reactive, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { deleteAccount, deleteAvatar, listSessions, revokeSession, setAvatar, updateMe } from '@/api/me'
-import type { DateFormat, SessionItem, TimeFormat, Units } from '@/api/types'
+import { listThemes } from '@/api/themes'
+import type { DateFormat, InstanceTheme, SessionItem, TimeFormat, Units } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import AvatarEditor from '@/components/AvatarEditor.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
@@ -11,6 +12,7 @@ import CurrencyMenu from '@/components/CurrencyMenu.vue'
 import HomeZoneCard from '@/components/HomeZoneCard.vue'
 import LanguageSelect from '@/components/LanguageSelect.vue'
 import PasswordChangeForm from '@/components/PasswordChangeForm.vue'
+import ThemePicker from '@/components/ThemePicker.vue'
 import ThemeSelect from '@/components/ThemeSelect.vue'
 import UserAvatar from '@/components/UserAvatar.vue'
 import { useSessionStore } from '@/stores/session'
@@ -36,6 +38,11 @@ const deletePassword = ref('')
 const deleteError = ref('')
 const passwordMessage = ref('')
 const avatarError = ref('')
+
+// themes are the instance's colour themes; while there are none, there is
+// nothing to choose and the card is not shown.
+const themes = ref<InstanceTheme[]>([])
+const themeError = ref('')
 
 const sessions = ref<SessionItem[]>([])
 const sessionsError = ref('')
@@ -182,7 +189,19 @@ async function removeAccount(): Promise<void> {
   }
 }
 
-onMounted(loadSessions)
+// loadThemes reads the instance's colour themes to choose from.
+async function loadThemes(): Promise<void> {
+  try {
+    themes.value = await listThemes()
+  } catch (err) {
+    themeError.value = errorMessage(err, t, te)
+  }
+}
+
+onMounted(() => {
+  void loadSessions()
+  void loadThemes()
+})
 </script>
 
 <template>
@@ -322,6 +341,15 @@ onMounted(loadSessions)
               <span>{{ t(`preferences.timeFormats.${format}`) }}</span>
             </label>
           </fieldset>
+        </div>
+      </div>
+
+      <div v-if="themes.length || themeError" class="card border border-base-300 bg-base-100 lg:col-span-2">
+        <div class="card-body gap-3">
+          <h2 class="card-title">{{ t('themes.colourTheme') }}</h2>
+          <p class="text-sm text-base-content/70">{{ t('themes.profileHint') }}</p>
+          <p v-if="themeError" role="alert" class="text-sm text-error">{{ themeError }}</p>
+          <ThemePicker :themes="themes" @error="themeError = errorMessage($event, t, te)" />
         </div>
       </div>
 

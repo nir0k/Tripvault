@@ -5,6 +5,8 @@ export interface ProfileChanges {
   display_name?: string
   locale?: string
   theme?: Theme
+  /** A theme of the instance; null goes back to the built-in one. */
+  theme_id?: string | null
   units?: Units
   date_format?: DateFormat
   time_format?: TimeFormat

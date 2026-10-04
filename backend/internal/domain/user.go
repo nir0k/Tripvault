@@ -47,10 +47,13 @@ type User struct {
 	EmailUnverifiedSince *time.Time
 	Locale               string
 	Theme                Theme
-	Units                Units
-	DateFormat           DateFormat
-	TimeFormat           TimeFormat
-	DefaultCurrency      string
+	// ThemeID is the colour theme of the instance the person reads the
+	// interface in, nil for the built-in one.
+	ThemeID         *uuid.UUID
+	Units           Units
+	DateFormat      DateFormat
+	TimeFormat      TimeFormat
+	DefaultCurrency string
 	// AvatarKey is where the account's picture lives in the media store, empty
 	// when it wears none; AvatarUpdatedAt is when it last changed, which is what
 	// makes a browser fetch the new one.
@@ -328,6 +331,7 @@ type Profile struct {
 	DisplayName        string
 	Locale             string
 	Theme              Theme
+	ThemeID            *uuid.UUID
 	Units              Units
 	DateFormat         DateFormat
 	TimeFormat         TimeFormat

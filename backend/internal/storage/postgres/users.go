@@ -32,7 +32,7 @@ func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
 
 // userColumns is the shared select list, kept in step with scanUser.
 const userColumns = `u.id, u.email, u.display_name, u.password_hash, u.is_admin, u.is_active,
-	u.must_change_password, u.email_notifications, u.email_unverified_since, coalesce(u.locale, ''), u.theme, u.units, u.date_format, u.time_format,
+	u.must_change_password, u.email_notifications, u.email_unverified_since, coalesce(u.locale, ''), u.theme, u.theme_id, u.units, u.date_format, u.time_format,
 	u.default_currency, u.avatar_key, u.avatar_updated_at, u.last_login_at, u.created_at, u.updated_at,
 	u.home_lat, u.home_lng, u.home_radius_m, u.zone_lat, u.zone_lng`
 
@@ -42,7 +42,7 @@ func scanUser(row pgx.Row) (domain.User, error) {
 	var homeLat, homeLng, zoneLat, zoneLng *float64
 	var radius *int
 	err := row.Scan(&u.ID, &u.Email, &u.DisplayName, &u.PasswordHash, &u.IsAdmin, &u.IsActive,
-		&u.MustChangePassword, &u.EmailNotifications, &u.EmailUnverifiedSince, &u.Locale, &u.Theme, &u.Units, &u.DateFormat, &u.TimeFormat,
+		&u.MustChangePassword, &u.EmailNotifications, &u.EmailUnverifiedSince, &u.Locale, &u.Theme, &u.ThemeID, &u.Units, &u.DateFormat, &u.TimeFormat,
 		&u.DefaultCurrency, &u.AvatarKey, &u.AvatarUpdatedAt, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt,
 		&homeLat, &homeLng, &radius, &zoneLat, &zoneLng)
 	// The table keeps the five set together, so one of them stands for all.
@@ -212,16 +212,22 @@ func (r *UserRepository) RecordLogin(ctx context.Context, id uuid.UUID, at time.
 // Returns:
 //   - the stored account.
 //   - domain.ErrNotFound when no such account exists.
+//   - a *domain.ValidationError on theme_id when the instance has no such theme.
 func (r *UserRepository) UpdateProfile(ctx context.Context, id uuid.UUID, profile domain.Profile) (domain.User, error) {
-	return oneUser(r.pool.QueryRow(ctx,
+	user, err := oneUser(r.pool.QueryRow(ctx,
 		`UPDATE users AS u
 		 SET display_name = $2, locale = nullif($3, ''), theme = $4, units = $5,
 		     date_format = $6, time_format = $7, default_currency = $8,
-		     email_notifications = $9, updated_at = now()
+		     email_notifications = $9, theme_id = $10, updated_at = now()
 		 WHERE u.id = $1
 		 RETURNING `+userColumns,
 		id, profile.DisplayName, profile.Locale, profile.Theme, profile.Units,
-		profile.DateFormat, profile.TimeFormat, profile.DefaultCurrency, profile.EmailNotifications), "update profile")
+		profile.DateFormat, profile.TimeFormat, profile.DefaultCurrency, profile.EmailNotifications,
+		profile.ThemeID), "update profile")
+	if isForeignKeyViolation(err) {
+		return domain.User{}, domain.NewValidationError("theme_id", "not_found", "no such theme")
+	}
+	return user, err
 }
 
 // SetHome - stores where an account's owner lives and the circle hidden around
@@ -547,6 +553,16 @@ func revokeAllSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
 
 // uniqueViolationCode is PostgreSQL's SQLSTATE for a unique constraint failure.
 const uniqueViolationCode = "23505"
+
+// foreignKeyViolationCode is PostgreSQL's SQLSTATE for a reference to a row
+// that does not exist.
+const foreignKeyViolationCode = "23503"
+
+// isForeignKeyViolation reports whether err is a foreign key violation.
+func isForeignKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == foreignKeyViolationCode
+}
 
 // isUniqueViolation reports whether an error came from a unique constraint, so
 // a duplicate can be reported as a conflict rather than an internal failure.

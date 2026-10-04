@@ -55,6 +55,7 @@ const adminItems = computed<NavItem[]>(() =>
     ? [
         { name: 'admin-users', label: t('nav.users'), icon: 'users' },
         { name: 'admin-backups', label: t('nav.backups'), icon: 'archive' },
+        { name: 'admin-themes', label: t('nav.themes'), icon: 'swatch' },
         { name: 'admin-status', label: t('nav.status'), icon: 'status' },
       ]
     : [],

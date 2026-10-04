@@ -20,14 +20,17 @@
 
 /* The palette follows the logo: warm orange for primary actions. Colours used
    for text on the page background (error, success, info) are dark enough in the
-   light theme, and light enough in the dark one, for WCAG AA contrast. */
+   light theme, and light enough in the dark one, for WCAG AA contrast. base-300
+   is above all the colour of borders and dividers, so in the light theme it
+   keeps about 1.4:1 against base-100: any lighter and the edges of cards and
+   the line under the top bar fade into the page. */
 @plugin "daisyui/theme" {
   name: "light";
   default: true;
   color-scheme: light;
   --color-base-100: oklch(100% 0 0);
   --color-base-200: oklch(98% 0.003 60);
-  --color-base-300: oklch(94% 0.006 60);
+  --color-base-300: oklch(88% 0.006 60);
   --color-base-content: oklch(21% 0.006 285.885);
   --color-primary: #c2410c;
   --color-primary-content: #ffffff;

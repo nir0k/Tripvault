@@ -48,6 +48,59 @@
       "brown": "Brown"
     }
   },
+  "themes": {
+    "title": "Colour themes",
+    "hint": "A theme is a JSON file of palettes: a light one, a dark one or both, each naming every colour of the interface as a hexadecimal colour or a CSS colour function. Download the template, change its colours and upload it; everybody can then choose the theme in their profile.",
+    "downloadTemplate": "Download template",
+    "templateName": "My theme",
+    "upload": "Upload theme",
+    "empty": "No themes yet. Everybody sees the built-in one.",
+    "uploaded": "Theme \"{name}\" uploaded.",
+    "replaced": "Theme \"{name}\" replaced. Its users see the new colours on their next page load.",
+    "updated": "Updated {time}",
+    "actions": "Actions for {name}",
+    "download": "Download file",
+    "replace": "Replace with a file",
+    "delete": "Delete",
+    "deleteQuestion": "Delete the theme \"{name}\"? Everybody who uses it goes back to the built-in theme.",
+    "notJson": "The file is not valid JSON.",
+    "nameTaken": "Another theme already has this name.",
+    "invalidFile": "The file is not accepted: {field} - {reason}",
+    "reasons": {
+      "required": "missing",
+      "unsupported": "not supported",
+      "invalid": "not a hexadecimal colour or a CSS colour function",
+      "too_long": "too long"
+    },
+    "colourTheme": "Colour theme",
+    "profileHint": "The colours the interface is shown in. A theme with a single palette is always shown in it, whatever the light or dark setting.",
+    "builtin": "Built-in",
+    "only": {
+      "light": "Light only",
+      "dark": "Dark only"
+    },
+    "locked": {
+      "light": "The colour theme has only a light palette.",
+      "dark": "The colour theme has only a dark palette."
+    },
+    "preview": {
+      "title": "Weekend in Lisbon",
+      "badge": "Plan",
+      "text": "Day 2: the castle and the old town.",
+      "muted": "3 places",
+      "primary": "Save",
+      "secondary": "Share",
+      "accent": "Accent",
+      "neutral": "Neutral",
+      "info": "Info",
+      "success": "Done",
+      "warning": "Warning",
+      "error": "Error",
+      "input": "Search a place",
+      "errorText": "Something went wrong",
+      "successText": "Saved"
+    }
+  },
   "nav": {
     "home": "Home",
     "main": "Main navigation",
@@ -63,7 +116,8 @@
     "searchPlaceholder": "Plan or report title",
     "searchEmpty": "Nothing found.",
     "backups": "Backups",
-    "ideas": "Ideas"
+    "ideas": "Ideas",
+    "themes": "Themes"
   },
   "preferences": {
     "language": "Language",

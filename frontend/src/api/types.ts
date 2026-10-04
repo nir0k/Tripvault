@@ -27,6 +27,8 @@ export interface User {
   /** Interface language; empty follows the browser. */
   locale: string
   theme: Theme
+  /** The instance's colour theme the person reads the interface in; null for the built-in one. */
+  theme_id: string | null
   /** How far this reader sees a distance in; everything is carried in metres. */
   units: Units
   /** Whether this reader sees the day or the month first. */
@@ -40,6 +42,35 @@ export interface User {
   avatar_updated_at: string | null
   last_login_at: string | null
   created_at: string
+}
+
+/** ThemeVariant is the light or the dark palette of a theme. */
+export type ThemeVariant = 'light' | 'dark'
+
+/**
+ * ThemePalette maps every colour of the interface, named without the
+ * "--color-" prefix of its variable, to a colour value.
+ */
+export type ThemePalette = Record<string, string>
+
+/** InstanceTheme is a colour theme the administrator uploaded for everybody. */
+export interface InstanceTheme {
+  id: string
+  name: string
+  /** The light palette; null when the theme has only a dark one. */
+  light: ThemePalette | null
+  /** The dark palette; null when the theme has only a light one. */
+  dark: ThemePalette | null
+  created_at: string
+  updated_at: string
+}
+
+/** ThemeFile is the theme file an administrator uploads and downloads. */
+export interface ThemeFile {
+  format: 1
+  name: string
+  light?: ThemePalette
+  dark?: ThemePalette
 }
 
 export interface AdminUser extends User {

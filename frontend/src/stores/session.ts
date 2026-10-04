@@ -3,10 +3,11 @@ import { computed, ref } from 'vue'
 import * as authApi from '@/api/auth'
 import { readRefreshToken, refreshSession } from '@/api/client'
 import * as meApi from '@/api/me'
-import type { DateFormat, Theme, TimeFormat, Units, User } from '@/api/types'
+import { listThemes } from '@/api/themes'
+import type { DateFormat, InstanceTheme, Theme, TimeFormat, Units, User } from '@/api/types'
 import { applyLocale, readStoredLocale, resolveLocale, storeLocale } from '@/i18n'
 import { applyDateFormat, applyTimeFormat } from '@/utils/display'
-import { applyTheme } from '@/utils/theme'
+import { applyCustomTheme, applyTheme } from '@/utils/theme'
 import { applyUnits } from '@/utils/units'
 
 /** useSessionStore holds the signed-in account and its interface preferences. */
@@ -27,9 +28,31 @@ export const useSessionStore = defineStore('session', () => {
     if (next) {
       applyLocale(resolveLocale(next.locale, readStoredLocale(), navigator.languages))
       applyTheme(next.theme)
+      void syncCustomTheme(next.theme_id)
       applyUnits(next.units)
       applyDateFormat(next.date_format)
       applyTimeFormat(next.time_format)
+    }
+  }
+
+  /**
+   * syncCustomTheme shows the instance's theme the account chose. The page
+   * keeps showing the copy this browser remembers until the palettes are
+   * read, so an administrator's new file reaches the person on the next load,
+   * and a theme deleted meanwhile gives way to the built-in one.
+   */
+  async function syncCustomTheme(themeId: string | null): Promise<void> {
+    if (!themeId) {
+      applyCustomTheme(null)
+      return
+    }
+    try {
+      const theme = (await listThemes()).find((item) => item.id === themeId)
+      if (user.value?.theme_id === themeId) {
+        applyCustomTheme(theme ?? null)
+      }
+    } catch {
+      // A temporary password or an outage leaves the remembered copy shown.
     }
   }
 
@@ -99,6 +122,17 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  /**
+   * setCustomTheme shows one of the instance's themes at once, or the
+   * built-in one for null, and saves the choice like the theme preference.
+   */
+  async function setCustomTheme(theme: InstanceTheme | null): Promise<void> {
+    applyCustomTheme(theme)
+    if (user.value && !user.value.must_change_password) {
+      user.value = await meApi.updateMe({ theme_id: theme?.id ?? null })
+    }
+  }
+
   /** setUnits switches the distance units at once and saves them like the theme. */
   async function setUnits(units: Units): Promise<void> {
     applyUnits(units)
@@ -125,7 +159,7 @@ export const useSessionStore = defineStore('session', () => {
 
   return {
     user, signedIn, isAdmin, mustChangePassword,
-    setUser, restore, login, logout, forget, reload, setLocale, setTheme, setUnits,
+    setUser, restore, login, logout, forget, reload, setLocale, setTheme, setCustomTheme, setUnits,
     setDateFormat, setTimeFormat,
   }
 })

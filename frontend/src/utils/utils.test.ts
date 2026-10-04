@@ -16,7 +16,7 @@ import { mediaLinkUpdates } from '@/utils/mediaLinks'
 import { decodePolyline, nearestOnLine } from '@/utils/polyline'
 import { generatePassword } from '@/utils/password'
 import { exifSegment, withExif } from '@/utils/picture'
-import { resolveTheme } from '@/utils/theme'
+import { onlyVariant, paletteStyle, resolveTheme, resolveVariant, themeFile, themeFilename } from '@/utils/theme'
 import { countryFlag, emptyFilter, filterFromQuery, filterIdeas, filterToQuery, formatDays, formatRange, monthRanges, otherCurrencies, seasonalIdeas } from '@/utils/ideas'
 import { DEFAULT_SPEED, MAX_SPEED, MIN_SPEED, SLIDER_STEPS, SPEED_STOPS, positionOf, speedAt, stopPosition, stopSeconds, toblerFactor, walkingSeconds } from '@/utils/trackTime'
 import {
@@ -28,6 +28,40 @@ describe('resolveTheme', () => {
     expect(resolveTheme('auto', true)).toBe('dark')
     expect(resolveTheme('auto', false)).toBe('light')
     expect(resolveTheme('light', true)).toBe('light')
+  })
+})
+
+describe('resolveVariant', () => {
+  const palette = { primary: '#123456' }
+
+  it('shows a theme with one palette in it, whatever the preference', () => {
+    expect(onlyVariant({ light: null, dark: palette })).toBe('dark')
+    expect(resolveVariant('light', false, { light: null, dark: palette })).toBe('dark')
+    expect(resolveVariant('dark', true, { light: palette, dark: null })).toBe('light')
+  })
+
+  it('leaves a theme with both palettes, and no theme, to the preference', () => {
+    expect(onlyVariant({ light: palette, dark: palette })).toBeNull()
+    expect(resolveVariant('auto', true, { light: palette, dark: palette })).toBe('dark')
+    expect(resolveVariant('light', true, null)).toBe('light')
+  })
+})
+
+describe('theme files', () => {
+  it('turns a palette into the variables of a style', () => {
+    expect(paletteStyle({ primary: '#123456', unknown: '#000' })).toEqual({ '--color-primary': '#123456' })
+    expect(paletteStyle(null)).toEqual({})
+  })
+
+  it('writes a theme back as its file, without the palette it lacks', () => {
+    const theme = { id: 'x', name: 'Night', light: null, dark: { primary: '#000' }, created_at: '', updated_at: '' }
+    expect(themeFile(theme)).toEqual({ format: 1, name: 'Night', dark: { primary: '#000' } })
+  })
+
+  it('names the file after the theme', () => {
+    expect(themeFilename('Deep Forest!')).toBe('deep-forest.theme.json')
+    expect(themeFilename('Тёмный лес')).toBe('тёмный-лес.theme.json')
+    expect(themeFilename('!!!')).toBe('theme.theme.json')
   })
 })
 

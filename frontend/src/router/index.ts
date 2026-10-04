@@ -165,6 +165,12 @@ export const router = createRouter({
       meta: { admin: true },
     },
     {
+      path: '/admin/themes',
+      name: 'admin-themes',
+      component: () => import('@/views/admin/AdminThemesView.vue'),
+      meta: { admin: true },
+    },
+    {
       path: '/admin/status',
       name: 'admin-status',
       component: () => import('@/views/admin/AdminStatusView.vue'),

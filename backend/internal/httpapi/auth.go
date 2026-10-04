@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/nir0k/tripvault/backend/internal/auth"
 	"github.com/nir0k/tripvault/backend/internal/domain"
 )
@@ -23,14 +25,17 @@ type userResponse struct {
 	// EmailVerified is false for a self-registered account still waiting for
 	// its address to be confirmed, and DeleteAfter is when it will be deleted
 	// unless it is confirmed first.
-	EmailVerified   bool       `json:"email_verified"`
-	DeleteAfter     *time.Time `json:"delete_after"`
-	Locale          string     `json:"locale"`
-	Theme           string     `json:"theme"`
-	Units           string     `json:"units"`
-	DateFormat      string     `json:"date_format"`
-	TimeFormat      string     `json:"time_format"`
-	DefaultCurrency string     `json:"default_currency"`
+	EmailVerified bool       `json:"email_verified"`
+	DeleteAfter   *time.Time `json:"delete_after"`
+	Locale        string     `json:"locale"`
+	Theme         string     `json:"theme"`
+	// ThemeID is the instance's theme the person chose, null for the
+	// built-in one.
+	ThemeID         *string `json:"theme_id"`
+	Units           string  `json:"units"`
+	DateFormat      string  `json:"date_format"`
+	TimeFormat      string  `json:"time_format"`
+	DefaultCurrency string  `json:"default_currency"`
 	// HasAvatar says whether the account wears a picture, and AvatarUpdatedAt
 	// when it last changed: the bytes are fetched separately, and this is what
 	// tells a client to fetch them again.
@@ -59,6 +64,7 @@ func newUserResponse(user domain.User) userResponse {
 		EmailNotifications: user.EmailNotifications,
 		Locale:             user.Locale,
 		Theme:              string(user.Theme),
+		ThemeID:            themeIDString(user.ThemeID),
 		Units:              string(user.Units.OrDefault()),
 		DateFormat:         string(user.DateFormat.OrDefault()),
 		TimeFormat:         string(user.TimeFormat.OrDefault()),
@@ -68,6 +74,15 @@ func newUserResponse(user domain.User) userResponse {
 		LastLoginAt:        user.LastLoginAt,
 		CreatedAt:          user.CreatedAt,
 	}
+}
+
+// themeIDString renders a chosen theme's identifier, nil for none.
+func themeIDString(id *uuid.UUID) *string {
+	if id == nil {
+		return nil
+	}
+	value := id.String()
+	return &value
 }
 
 // sessionResponse is what a client receives after signing in or refreshing.

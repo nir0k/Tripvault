@@ -313,6 +313,7 @@ func serve() error {
 		Sessions:           sessions,
 		Trips:              trips,
 		Tags:               postgres.NewTagRepository(pool),
+		Themes:             postgres.NewThemeRepository(pool),
 		Packing:            postgres.NewPackingRepository(pool),
 		Ideas:              postgres.NewIdeaRepository(pool),
 		Documents:          documents,

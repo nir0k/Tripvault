@@ -148,6 +148,10 @@ services:
 | `TRIPVAULT_DB_MAX_CONNS`, `TRIPVAULT_DB_MIN_CONNS` | `10`, `1` | The database connection pool. |
 | `TRIPVAULT_HTTP_READ_TIMEOUT`, `TRIPVAULT_HTTP_WRITE_TIMEOUT`, `TRIPVAULT_HTTP_IDLE_TIMEOUT`, `TRIPVAULT_HTTP_SHUTDOWN_TIMEOUT` | `15s`, `60s`, `120s`, `20s` | HTTP server timeouts. |
 
+## Colour themes
+
+An administrator can add colour themes for everybody on the instance under Administration → Themes. No setting is involved: themes live in the database and travel in every backup. A theme is a JSON file with a light palette, a dark one or both; the page offers a template to start from and previews every theme. The file format and what each colour is for are described in [themes.md](themes.md).
+
 ## Reverse proxy and TLS
 
 The web port is published on `127.0.0.1` so that nothing reaches Tripvault except through a proxy that terminates TLS: a reverse proxy on the host, or a tunnel such as Cloudflare Tunnel. The proxy must:

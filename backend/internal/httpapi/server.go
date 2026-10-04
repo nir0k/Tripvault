@@ -254,6 +254,8 @@ type Dependencies struct {
 	Documents DocumentStore
 	// Tags are every person's own tags.
 	Tags TagStore
+	// Themes are the colour themes the administrator uploaded for the instance.
+	Themes ThemeStore
 	// Packing is the list of what to take on a plan's trip.
 	Packing PackingStore
 	// Ideas are every person's own ideas of where to go.
@@ -332,6 +334,7 @@ type Server struct {
 	trips          TripStore
 	documents      DocumentStore
 	tags           TagStore
+	themes         ThemeStore
 	packing        PackingStore
 	ideas          IdeaStore
 	media          MediaStore
@@ -438,6 +441,7 @@ func NewServer(opts Options, logger *slog.Logger, deps Dependencies) *Server {
 		trips:              deps.Trips,
 		documents:          deps.Documents,
 		tags:               deps.Tags,
+		themes:             deps.Themes,
 		packing:            deps.Packing,
 		ideas:              deps.Ideas,
 		media:              deps.Media,
@@ -600,6 +604,8 @@ func (s *Server) routes() http.Handler {
 				member.Get("/geo/reverse", s.handleGeoReverse)
 				member.Get("/geo/parse-link", s.handleParseLink)
 
+				member.Get("/themes", s.handleListThemes)
+
 				member.Get("/tags", s.handleListTags)
 				member.Post("/tags", s.handleCreateTag)
 				member.Patch("/tags/{tagID}", s.handleUpdateTag)
@@ -721,6 +727,9 @@ func (s *Server) routes() http.Handler {
 					admin.Post("/admin/mail/test", s.handleTestMail)
 					admin.Patch("/admin/registration", s.handleUpdateRegistration)
 					admin.Get("/admin/previews", s.handlePreviewStatus)
+					admin.Post("/admin/themes", s.handleCreateTheme)
+					admin.Put("/admin/themes/{themeID}", s.handleReplaceTheme)
+					admin.Delete("/admin/themes/{themeID}", s.handleDeleteTheme)
 
 					// Backups copy the whole service, so they are the
 					// administrator's business alone. A build whose backup

@@ -53,12 +53,13 @@ docker compose pull
 docker compose up -d
 ```
 
-Database migrations are applied automatically when the backend starts. Set `TRIPVAULT_VERSION` in `.env` to a release such as `1.9.0` to decide when upgrades happen instead of following `latest`. Take a backup before upgrading: an archive cannot be restored into a build older than the one that wrote it.
+Database migrations are applied automatically when the backend starts. Set `TRIPVAULT_VERSION` in `.env` to a release such as `1.10.0` to decide when upgrades happen instead of following `latest`. Take a backup before upgrading: an archive cannot be restored into a build older than the one that wrote it.
 
 ## Documentation
 
 - [Deployment](docs/deployment.md) - configuration, reverse proxy, map tiles, routing and place search, volumes, security.
 - [Backups and restore](docs/backups.md) - destinations, schedules, encryption, restoring from the interface or the command line.
+- [Colour themes](docs/themes.md) - the theme file and what each of its colours is for.
 - [Development](docs/development.md) - building from source, tests, the test stand, migrations and releases.
 - The API reference is served by every instance at `/docs`, and the OpenAPI document at `/openapi.yaml`.
 

@@ -7,11 +7,13 @@ import { router } from './router'
 import { useSessionStore } from './stores/session'
 import './style.css'
 import { applyDateFormat, applyTimeFormat, readStoredDateFormat, readStoredTimeFormat } from './utils/display'
-import { applyTheme, readStoredTheme } from './utils/theme'
+import { applyCustomTheme, applyTheme, readStoredCustomTheme, readStoredTheme } from './utils/theme'
 import { applyUnits, readStoredUnits } from './utils/units'
 
 // The last theme used on this browser is shown before anything loads, so the
-// page does not flash light and then turn dark.
+// page does not flash light and then turn dark, nor in the built-in colours
+// and then in the instance's theme the person chose.
+applyCustomTheme(readStoredCustomTheme())
 applyTheme(readStoredTheme())
 applyUnits(readStoredUnits())
 applyDateFormat(readStoredDateFormat())
