@@ -101,6 +101,16 @@ export function onSessionEnd(handler: () => void): void {
 // REFRESH_LOCK names the lock every tab of this origin takes to refresh.
 const REFRESH_LOCK = 'tripvault.refresh'
 
+// REFRESH_TIMEOUT_MS bounds the refresh request itself. After a computer
+// wakes up the browser may send it over a connection that died in its sleep,
+// which nothing closes for minutes; every request of the page waits behind
+// the refresh, so an unbounded one freezes the whole interface.
+const REFRESH_TIMEOUT_MS = 20_000
+
+// REFRESH_LOCK_TIMEOUT_MS bounds the wait for another tab's refresh: long
+// enough for its request and one retry with a replaced token.
+const REFRESH_LOCK_TIMEOUT_MS = 2 * REFRESH_TIMEOUT_MS + 5_000
+
 /**
  * refreshSession exchanges the stored refresh token for a new pair.
  *
@@ -115,7 +125,16 @@ export function refreshSession(): Promise<SessionResponse | null> {
   // Locks exist only in a secure context; over plain http inside a household
   // network the tabs go without, and exchangeRefreshToken copes on its own.
   const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined
-  refreshing = (locks ? locks.request(REFRESH_LOCK, exchangeRefreshToken) : exchangeRefreshToken())
+  // A wait for the lock that runs out fails like the network does: the session
+  // stays, and the next request tries again.
+  const exchange = locks
+    ? locks
+      .request(REFRESH_LOCK, { signal: AbortSignal.timeout(REFRESH_LOCK_TIMEOUT_MS) }, exchangeRefreshToken)
+      .catch((error: unknown) => {
+        throw error instanceof ApiError ? error : new ApiError(0, 'network_error', String(error))
+      })
+    : exchangeRefreshToken()
+  refreshing = exchange
     .finally(() => {
       refreshing = null
     })
@@ -134,7 +153,11 @@ async function exchangeRefreshToken(): Promise<SessionResponse | null> {
     return null
   }
   try {
-    const response = await axios.post<SessionResponse>('/api/v1/auth/refresh', { refresh_token: token })
+    const response = await axios.post<SessionResponse>(
+      '/api/v1/auth/refresh',
+      { refresh_token: token },
+      { timeout: REFRESH_TIMEOUT_MS },
+    )
     storeSession(response.data)
     return response.data
   } catch (error: unknown) {

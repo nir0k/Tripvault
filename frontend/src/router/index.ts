@@ -209,6 +209,37 @@ router.beforeEach(async (to) => {
   return true
 })
 
+// STALE_RELOAD_KEY remembers when this tab last reloaded for a missing page
+// file, so a page that fails for another reason does not reload forever.
+const STALE_RELOAD_KEY = 'tripvault.stale_reload'
+const STALE_RELOAD_INTERVAL_MS = 10_000
+
+// The browsers word a script that could not be fetched each their own way;
+// Vite adds its own message for a page's stylesheet.
+const STALE_CHUNK_ERROR =
+  /dynamically imported module|Importing a module script failed|error loading dynamically imported module|Unable to preload CSS/i
+
+// A tab opened before a new release still asks for the old release's page
+// files, which the server no longer has, and the navigation would fail
+// silently. The tab loads the address it was going to instead, which brings
+// the new release with it.
+router.onError((error: unknown, to) => {
+  if (!(error instanceof Error) || !STALE_CHUNK_ERROR.test(error.message)) {
+    return
+  }
+  try {
+    const last = Number(sessionStorage.getItem(STALE_RELOAD_KEY) ?? 0)
+    if (Date.now() - last < STALE_RELOAD_INTERVAL_MS) {
+      return
+    }
+    sessionStorage.setItem(STALE_RELOAD_KEY, String(Date.now()))
+  } catch {
+    // Without storage there is no guard against a loop, so no reload either.
+    return
+  }
+  window.location.assign(to.fullPath)
+})
+
 /** safeRedirect accepts only a path inside this application. */
 export function safeRedirect(value: unknown): string {
   return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//') ? value : '/'
