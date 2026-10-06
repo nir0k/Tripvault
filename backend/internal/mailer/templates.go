@@ -298,6 +298,91 @@ func TripMemberRemoved(language, tripTitle string) Content {
 		"У вас больше нет доступа к поездке «"+tripTitle+"» в Tripvault.")
 }
 
+// IdeasInvitationMail - renders an invitation to somebody's list of ideas.
+//
+// Arguments:
+//   - language: the invitee's locale; unsupported values fall back to English.
+//   - owner: the display name of the list's owner, who sends it.
+//   - link: the single-use invitation address.
+//
+// Returns:
+//   - translated plain-text and HTML content.
+func IdeasInvitationMail(language, owner, link string) Content {
+	if locale(language) == "ru" {
+		return linkContent("Приглашение к идеям: "+owner, "Здравствуйте!", owner+" приглашает вас к своему списку идей путешествий в Tripvault.", "Открыть приглашение", link, "Ссылка действует 7 дней и используется один раз.")
+	}
+	return linkContent("Invitation to the ideas of "+owner, "Hello!", owner+" invited you to their list of travel ideas in Tripvault.", "Open the invitation", link, "The link expires in 7 days and can be used once.")
+}
+
+// IdeasInvitationAccepted - renders a notification to the owner of a list of
+// ideas that an invited person joined it.
+//
+// Arguments:
+//   - language: the owner's locale.
+//   - name: the accepted account's display name.
+//
+// Returns:
+//   - translated notification content.
+func IdeasInvitationAccepted(language, name string) Content {
+	return translatedEvent(language,
+		"An invitation to your ideas was accepted", "Приглашение к вашим идеям принято",
+		name+" joined your list of ideas.",
+		"Пользователь "+name+" присоединился к вашему списку идей.")
+}
+
+// IdeasMemberAdded - renders a notification that a list of ideas was shared
+// with an existing account.
+//
+// Arguments:
+//   - language: the member's locale.
+//   - owner: the display name of the list's owner.
+//
+// Returns:
+//   - translated notification content.
+func IdeasMemberAdded(language, owner string) Content {
+	return translatedEvent(language,
+		owner+" shared their ideas with you", owner+" открыл вам доступ к своим идеям",
+		"You now have access to the travel ideas of "+owner+" in Tripvault.",
+		"Теперь у вас есть доступ к идеям путешествий пользователя "+owner+" в Tripvault.")
+}
+
+// IdeasMemberRoleChanged - renders a notification that a role on a list of
+// ideas changed.
+//
+// Arguments:
+//   - language: the member's locale.
+//   - owner: the display name of the list's owner.
+//   - role: the member's new editor or viewer role.
+//
+// Returns:
+//   - translated notification content.
+func IdeasMemberRoleChanged(language, owner string, role domain.TripRole) Content {
+	roleRU := "читатель"
+	if role == domain.RoleEditor {
+		roleRU = "редактор"
+	}
+	return translatedEvent(language,
+		"Your role on the ideas of "+owner+" changed", "Ваша роль в идеях пользователя "+owner+" изменена",
+		"Your role on the Tripvault ideas of "+owner+" is now "+string(role)+".",
+		"Ваша роль в идеях пользователя "+owner+" в Tripvault изменена: "+roleRU+".")
+}
+
+// IdeasMemberRemoved - renders a notification that access to a list of ideas
+// was withdrawn.
+//
+// Arguments:
+//   - language: the former member's locale.
+//   - owner: the display name of the list's owner.
+//
+// Returns:
+//   - translated notification content.
+func IdeasMemberRemoved(language, owner string) Content {
+	return translatedEvent(language,
+		"Access to the ideas of "+owner+" was removed", "Доступ к идеям пользователя "+owner+" закрыт",
+		"You no longer have access to the Tripvault ideas of "+owner+".",
+		"У вас больше нет доступа к идеям пользователя "+owner+" в Tripvault.")
+}
+
 // Message - maps translated content onto a newly identified queue message.
 //
 // Arguments:

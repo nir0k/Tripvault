@@ -199,7 +199,9 @@
       "accepted": "Accepted",
       "revoked": "Revoked",
       "expired": "Expired"
-    }
+    },
+    "ideasInvitationTitle": "Join a list of ideas",
+    "ideasInvitationFor": "See the travel ideas of {owner} as {role} with {email}."
   },
   "registration": {
     "createAccount": "Create an account",
@@ -517,7 +519,7 @@
       "amount_required": "Every share needs its amount.",
       "negative": "An amount must not be negative."
     },
-    "already_member": "This person already has access to the trip.",
+    "already_member": "This person already has access.",
     "days_would_be_removed": "The change removes days with content.",
     "geocoding_disabled": "Place search is not set up on this server.",
     "geocoding_limited": "Place search is busy. Try again in a minute.",
@@ -1720,7 +1722,8 @@
       "cost": "Cost",
       "transport": "Getting there",
       "visa": "Visa",
-      "tags": "Tags"
+      "tags": "Tags",
+      "changed": "Changed"
     },
     "anyCountry": "Any country",
     "filterMonths": "Good in any of these months",
@@ -1755,6 +1758,37 @@
     "expandResults": "Expand the results",
     "openPhoto": "Open photo {n}",
     "previousPhoto": "Previous photo",
-    "nextPhoto": "Next photo"
+    "nextPhoto": "Next photo",
+    "ownerFilter": "Whose ideas",
+    "mine": "Mine",
+    "listOf": "Ideas of {name}",
+    "inList": "List",
+    "createdBy": "Added by {name}, {date}",
+    "updatedBy": "Changed by {name}, {date}",
+    "deletedUser": "a deleted account",
+    "readOnly": "You can read this idea; its owner and editors change it.",
+    "sharing": {
+      "button": "Sharing",
+      "title": "Sharing your ideas",
+      "hint": "Your whole list of ideas is shared. A viewer reads every idea; an editor also adds, changes and deletes them. Only you decide who has access.",
+      "nobody": "Your ideas are not shared with anybody.",
+      "removeConfirm": "Stop sharing your ideas with {name}?",
+      "sharedWithMe": "Shared with you",
+      "leave": "Leave",
+      "leaveConfirm": "Leave the ideas of {name}? You will no longer see them."
+    },
+    "history": {
+      "button": "History",
+      "title": "History of changes",
+      "list": "List",
+      "empty": "No changes yet.",
+      "actions": {
+        "created": "Added",
+        "updated": "Changed",
+        "deleted": "Deleted",
+        "photo_added": "Photo added",
+        "photo_removed": "Photo removed"
+      }
+    }
   }
 }

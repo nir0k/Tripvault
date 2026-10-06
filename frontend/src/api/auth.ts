@@ -1,6 +1,8 @@
 import axios from 'axios'
 import { clearSession, readRefreshToken, storeSession, toApiError } from './client'
-import type { SessionResponse, TripInvitationPreview, User, UserInvitationPreview, VerificationSent } from './types'
+import type {
+  IdeaInvitationPreview, SessionResponse, TripInvitationPreview, User, UserInvitationPreview, VerificationSent,
+} from './types'
 
 /** login signs in and keeps the session's tokens. */
 export async function login(email: string, password: string): Promise<SessionResponse> {
@@ -114,6 +116,26 @@ export async function previewTripInvitation(token: string): Promise<TripInvitati
 export async function registerTripInvitation(token: string, displayName: string, password: string, locale: string): Promise<{ user: User; trip_id: string }> {
   try {
     return (await axios.post<{ user: User; trip_id: string }>('/api/v1/invitations/trip/register', {
+      token, display_name: displayName, password, locale,
+    })).data
+  } catch (error) {
+    throw toApiError(error)
+  }
+}
+
+/** previewIdeaInvitation describes the list of ideas and role offered by a token. */
+export async function previewIdeaInvitation(token: string): Promise<IdeaInvitationPreview> {
+  try {
+    return (await axios.post<IdeaInvitationPreview>('/api/v1/invitations/ideas/preview', { token })).data
+  } catch (error) {
+    throw toApiError(error)
+  }
+}
+
+/** registerIdeaInvitation creates an account and accepts its invitation to a list of ideas. */
+export async function registerIdeaInvitation(token: string, displayName: string, password: string, locale: string): Promise<{ user: User; owner_id: string }> {
+  try {
+    return (await axios.post<{ user: User; owner_id: string }>('/api/v1/invitations/ideas/register', {
       token, display_name: displayName, password, locale,
     })).data
   } catch (error) {

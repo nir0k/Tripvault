@@ -1285,11 +1285,18 @@ export interface IdeaTransport {
 }
 
 /**
- * Idea is somewhere the reader would like to go one day. It is the reader's
- * own, like a tag, and not a trip: a plan is made from it when the time comes.
+ * Idea is somewhere the reader would like to go one day. It is not a trip: a
+ * plan is made from it when the time comes. It belongs to its owner's list,
+ * which the owner may share; the reader's role says what they may do with it.
  */
 export interface Idea {
   id: string
+  /** The person whose list the idea is in, whoever wrote it. */
+  owner: TripUser
+  role: TripRole
+  /** Who wrote the idea and who changed it last; null once their account is deleted. */
+  created_by: TripUser | null
+  updated_by: TripUser | null
   title: string
   /** ISO 3166-1 alpha-2 codes, the main country first. */
   countries: string[]
@@ -1313,13 +1320,51 @@ export interface Idea {
   cost_min: string | null
   cost_max: string | null
   visa: VisaRequirement
+  /** The reader's own tags; the other members of the list never see them. */
   tags: TripTag[]
   created_at: string
   updated_at: string
 }
 
+/** IdeaList is a list of ideas the reader may open: their own, or one shared with them. */
+export interface IdeaList {
+  owner: TripUser
+  role: TripRole
+}
+
+/** IdeaMember is a person the reader's list of ideas is shared with. */
+export interface IdeaMember {
+  user: TripUser
+  role: MemberRole
+  created_at: string
+}
+
+/** IdeaAction is what a change of the history did to an idea. */
+export type IdeaAction = 'created' | 'updated' | 'deleted' | 'photo_added' | 'photo_removed'
+
+/** IdeaChange is one entry of a list's history: who did what to which idea, and when. */
+export interface IdeaChange {
+  id: string
+  /** Null once the idea is deleted. */
+  idea_id: string | null
+  /** The title the idea had then. */
+  idea_title: string
+  /** Null once the account is deleted. */
+  user: TripUser | null
+  action: IdeaAction
+  created_at: string
+}
+
+/** IdeaInvitationPreview is the list of ideas an invitation offers. */
+export interface IdeaInvitationPreview {
+  owner_name: string
+  email: string
+  role: MemberRole
+  expires_at: string
+}
+
 /** IdeaFields are the fields an idea is saved with, all of them at once. */
 export type IdeaFields = Omit<
-  Idea, 'id' | 'photos' | 'transport_min' | 'transport_max' | 'cost_min' | 'cost_max' | 'tags' | 'created_at'
-  | 'updated_at'
+  Idea, 'id' | 'owner' | 'role' | 'created_by' | 'updated_by' | 'photos' | 'transport_min' | 'transport_max'
+  | 'cost_min' | 'cost_max' | 'tags' | 'created_at' | 'updated_at'
 >

@@ -3,7 +3,8 @@ import { computed, onBeforeUnmount, ref, useTemplateRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { addIdeaPhoto, createIdea, deleteIdeaPhoto, updateIdea } from '@/api/ideas'
 import {
-  IDEA_COSTS, VISA_REQUIREMENTS, type Idea, type IdeaCost, type IdeaFields, type TravelMode, type VisaRequirement,
+  IDEA_COSTS, VISA_REQUIREMENTS, type Idea, type IdeaCost, type IdeaFields, type IdeaList, type TravelMode,
+  type VisaRequirement,
 } from '@/api/types'
 import AmountInput from '@/components/AmountInput.vue'
 import AppIcon from '@/components/AppIcon.vue'
@@ -27,8 +28,13 @@ import { shrinkPicture } from '@/utils/picture'
 // time, roughly what the rest costs, and up to ten photos. The form saves
 // every field at once, then takes away the photos removed and uploads the new
 // ones, each shrunk first as a trip's are; the tags are put on from the idea's
-// page.
+// page. A new idea goes into the reader's own list, or into a list shared
+// with them that they edit, chosen at the top of the form.
 
+const props = withDefaults(defineProps<{
+  /** The lists a new idea may go into: the reader's own and the ones they edit. */
+  lists?: IdeaList[]
+}>(), { lists: () => [] })
 const emit = defineEmits<{ saved: [idea: Idea] }>()
 
 const { t, te } = useI18n()
@@ -36,6 +42,8 @@ const session = useSessionStore()
 
 const dialog = useTemplateRef<HTMLDialogElement>('dialog')
 const editing = ref<Idea | null>(null)
+// ownerId is the list a new idea goes into; empty means the reader's own.
+const ownerId = ref('')
 const busy = ref(false)
 const error = ref('')
 
@@ -142,9 +150,13 @@ function emptyForm(): IdeaForm {
   }
 }
 
-/** open shows the form for a new idea, or filled with one to change. */
-function open(idea: Idea | null = null): void {
+/**
+ * open shows the form for a new idea, going into the list of owner - the
+ * reader's own when it is left out - or filled with one to change.
+ */
+function open(idea: Idea | null = null, owner = ''): void {
   editing.value = idea
+  ownerId.value = owner || session.user?.id || ''
   error.value = ''
   form.value = idea
     ? {
@@ -239,7 +251,9 @@ async function submit(): Promise<void> {
   busy.value = true
   error.value = ''
   try {
-    let saved = editing.value ? await updateIdea(editing.value.id, fields()) : await createIdea(fields())
+    let saved = editing.value
+      ? await updateIdea(editing.value.id, fields())
+      : await createIdea(fields(), ownerId.value !== session.user?.id ? ownerId.value : undefined)
     editing.value = saved
     const keptIds = new Set(kept.value.map((photo) => photo.id))
     for (const photo of saved.photos.filter((item) => !keptIds.has(item.id))) {
@@ -268,6 +282,15 @@ defineExpose({ open })
   <dialog ref="dialog" class="modal modal-top sm:modal-middle">
     <form class="modal-box flex max-w-2xl flex-col gap-4" @submit.prevent="submit">
       <h2 class="text-lg font-bold">{{ editing ? t('ideas.editTitle') : t('ideas.newTitle') }}</h2>
+
+      <label v-if="!editing && props.lists.length > 1" class="floating-label">
+        <span>{{ t('ideas.inList') }}</span>
+        <select v-model="ownerId" class="select w-full">
+          <option v-for="list in props.lists" :key="list.owner.id" :value="list.owner.id">
+            {{ list.role === 'owner' ? t('ideas.mine') : t('ideas.listOf', { name: list.owner.display_name }) }}
+          </option>
+        </select>
+      </label>
 
       <label class="floating-label">
         <span>{{ t('ideas.title') }}</span>

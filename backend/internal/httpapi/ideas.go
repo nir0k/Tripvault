@@ -14,21 +14,30 @@ import (
 	"github.com/nir0k/tripvault/backend/internal/media"
 )
 
-// A person's ideas: somewhere they would like to go one day. They are the
-// person's own, like their tags, so every request reads and writes only the
-// reader's ideas, and somebody else's reads as missing. The list comes whole:
-// a person keeps tens of ideas, and the interface filters them itself.
+// A person's ideas: somewhere they would like to go one day. A person's ideas
+// are one list, which its owner may share: a viewer reads it, an editor also
+// adds, changes and deletes its ideas. Every request reads the reader's role
+// from the database, and an idea of a list not shared with the reader reads as
+// missing. The ideas come whole - the reader's own and those shared with them -
+// since a person keeps tens of ideas, and the interface filters them itself.
 
-// IdeaStore is the persistence of people's ideas.
+// IdeaStore is the persistence of people's lists of ideas.
 type IdeaStore interface {
-	List(ctx context.Context, ownerID uuid.UUID) ([]domain.Idea, error)
-	Get(ctx context.Context, ownerID, id uuid.UUID) (domain.Idea, error)
-	Create(ctx context.Context, idea domain.Idea) error
-	Update(ctx context.Context, idea domain.Idea) error
-	Delete(ctx context.Context, ownerID, id uuid.UUID) ([]string, error)
-	SetTags(ctx context.Context, ownerID, id uuid.UUID, tagIDs []uuid.UUID) error
-	AddPhoto(ctx context.Context, ownerID uuid.UUID, photo domain.IdeaPhoto) error
-	DeletePhoto(ctx context.Context, ownerID, ideaID, photoID uuid.UUID) (domain.IdeaPhoto, error)
+	List(ctx context.Context, readerID uuid.UUID) ([]domain.Idea, error)
+	Get(ctx context.Context, readerID, id uuid.UUID) (domain.Idea, error)
+	Lists(ctx context.Context, readerID uuid.UUID) ([]domain.IdeaList, error)
+	ListRole(ctx context.Context, readerID, ownerID uuid.UUID) (domain.TripRole, error)
+	Create(ctx context.Context, actorID uuid.UUID, idea domain.Idea) error
+	Update(ctx context.Context, actorID uuid.UUID, idea domain.Idea) error
+	Delete(ctx context.Context, actorID, id uuid.UUID) ([]string, error)
+	SetTags(ctx context.Context, readerID, id uuid.UUID, tagIDs []uuid.UUID) error
+	AddPhoto(ctx context.Context, actorID uuid.UUID, photo domain.IdeaPhoto) error
+	DeletePhoto(ctx context.Context, actorID, ideaID, photoID uuid.UUID) (domain.IdeaPhoto, error)
+	History(ctx context.Context, ownerID uuid.UUID, ideaID *uuid.UUID) ([]domain.IdeaChange, error)
+	Members(ctx context.Context, ownerID uuid.UUID) ([]domain.IdeaMember, error)
+	AddMember(ctx context.Context, ownerID, userID uuid.UUID, role domain.TripRole) (domain.IdeaMember, error)
+	UpdateMember(ctx context.Context, ownerID, userID uuid.UUID, role domain.TripRole) (domain.IdeaMember, error)
+	RemoveMember(ctx context.Context, ownerID, userID uuid.UUID) error
 }
 
 // ideaCostsBody are an idea's rough costs besides getting there, as decimal
@@ -62,9 +71,17 @@ type ideaPhotoResponse struct {
 	Height int    `json:"height"`
 }
 
-// ideaResponse is an idea as its owner reads it.
+// ideaResponse is an idea as a member of its list reads it.
 type ideaResponse struct {
-	ID            string              `json:"id"`
+	ID string `json:"id"`
+	// Owner is the person whose list the idea is in, Role what the reader may
+	// do with it: owner, editor or viewer.
+	Owner tripUserResponse `json:"owner"`
+	Role  string           `json:"role"`
+	// CreatedBy and UpdatedBy are who wrote the idea and who changed it last;
+	// null once their account is deleted.
+	CreatedBy     *tripUserResponse   `json:"created_by"`
+	UpdatedBy     *tripUserResponse   `json:"updated_by"`
 	Title         string              `json:"title"`
 	Countries     []string            `json:"countries"`
 	Places        []ideaPlaceBody     `json:"places"`
@@ -86,10 +103,20 @@ type ideaResponse struct {
 	Visa         string  `json:"visa"`
 	// Photos are the idea's pictures in their order, each served by
 	// /ideas/{ideaID}/photos/{photoID}.
-	Photos    []ideaPhotoResponse `json:"photos"`
-	Tags      []tripTagResponse   `json:"tags"`
-	CreatedAt time.Time           `json:"created_at"`
-	UpdatedAt time.Time           `json:"updated_at"`
+	Photos []ideaPhotoResponse `json:"photos"`
+	// Tags are the reader's own tags on the idea.
+	Tags      []tripTagResponse `json:"tags"`
+	CreatedAt time.Time         `json:"created_at"`
+	UpdatedAt time.Time         `json:"updated_at"`
+}
+
+// optionalUser maps a person a record may name onto the wire, or null.
+func optionalUser(user *domain.TripUser) *tripUserResponse {
+	if user == nil {
+		return nil
+	}
+	response := newTripUserResponse(*user)
+	return &response
 }
 
 // newIdeaResponse maps an idea onto the wire, every list present even empty.
@@ -122,7 +149,8 @@ func newIdeaResponse(idea domain.Idea) ideaResponse {
 	transportMin, transportMax := idea.TransportRange()
 	costMin, costMax := idea.TotalRange()
 	return ideaResponse{
-		ID: idea.ID.String(), Title: idea.Title, Countries: countries, Places: places, Photos: photos,
+		ID: idea.ID.String(), Owner: newTripUserResponse(idea.Owner), Role: string(idea.Role),
+		CreatedBy: optionalUser(idea.CreatedBy), UpdatedBy: optionalUser(idea.UpdatedBy), Title: idea.Title, Countries: countries, Places: places, Photos: photos,
 		Months: months, DaysMin: idea.DaysMin, DaysMax: idea.DaysMax, DaysIdeal: idea.DaysIdeal,
 		DescriptionMD: idea.DescriptionMD, Currency: idea.Currency,
 		Costs: ideaCostsBody{
@@ -152,12 +180,12 @@ type ideaRequest struct {
 }
 
 // ideaFrom reads a request into a normalised idea. A currency left empty is
-// the owner's own.
+// the default currency of the person writing it.
 //
 // Arguments:
 //   - body: the idea as sent.
 //   - idea: the idea it goes into, with its identifier and owner set.
-//   - currency: the owner's default currency.
+//   - currency: the writer's default currency.
 //
 // Returns:
 //   - the normalised idea.
@@ -201,7 +229,7 @@ func ideaFrom(body ideaRequest, idea domain.Idea, currency string) (domain.Idea,
 	return idea.Normalize()
 }
 
-// writeIdea answers with one of the reader's ideas as stored.
+// writeIdea answers with an idea as the reader reads it.
 func (s *Server) writeIdea(w http.ResponseWriter, r *http.Request, status int, id uuid.UUID) {
 	idea, err := s.ideas.Get(r.Context(), principalFrom(r.Context()).user.ID, id)
 	if err != nil {
@@ -211,7 +239,28 @@ func (s *Server) writeIdea(w http.ResponseWriter, r *http.Request, status int, i
 	writeJSON(w, s.logger, status, newIdeaResponse(idea))
 }
 
-// handleListIdeas returns every idea of the reader, the last changed first.
+// ideaFor loads the idea named in the path on behalf of the reader and checks
+// their role allows the action: reading for any member of its list, changing
+// for its owner and its editors. It writes the error response itself.
+func (s *Server) ideaFor(w http.ResponseWriter, r *http.Request, action domain.TripAction) (domain.Idea, bool) {
+	id, ok := s.pathUUID(w, r, "ideaID")
+	if !ok {
+		return domain.Idea{}, false
+	}
+	idea, err := s.ideas.Get(r.Context(), principalFrom(r.Context()).user.ID, id)
+	if err != nil {
+		s.writeDomainError(w, r, "get idea", err)
+		return domain.Idea{}, false
+	}
+	if !idea.Role.Can(action) {
+		s.writeDomainError(w, r, "check idea role", domain.ErrForbidden)
+		return domain.Idea{}, false
+	}
+	return idea, true
+}
+
+// handleListIdeas returns every idea the reader may open - their own and
+// those of the lists shared with them - the last changed first.
 func (s *Server) handleListIdeas(w http.ResponseWriter, r *http.Request) {
 	ideas, err := s.ideas.List(r.Context(), principalFrom(r.Context()).user.ID)
 	if err != nil {
@@ -225,37 +274,64 @@ func (s *Server) handleListIdeas(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.logger, http.StatusOK, listResponse[ideaResponse]{Items: items})
 }
 
-// handleGetIdea returns one of the reader's ideas.
+// handleGetIdea returns one idea the reader may open.
 func (s *Server) handleGetIdea(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.pathUUID(w, r, "ideaID")
+	idea, ok := s.ideaFor(w, r, domain.ActionView)
 	if !ok {
 		return
 	}
-	s.writeIdea(w, r, http.StatusOK, id)
+	writeJSON(w, s.logger, http.StatusOK, newIdeaResponse(idea))
 }
 
-// handleCreateIdea adds an idea to the reader's list.
+// createIdeaRequest is a new idea and the list it goes into: the reader's own
+// unless owner_id names a list the reader edits.
+type createIdeaRequest struct {
+	ideaRequest
+	OwnerID string `json:"owner_id"`
+}
+
+// handleCreateIdea adds an idea to the reader's list, or to a list they edit.
 func (s *Server) handleCreateIdea(w http.ResponseWriter, r *http.Request) {
-	var body ideaRequest
+	var body createIdeaRequest
 	if !s.decodeJSON(w, r, &body) {
 		return
 	}
 	user := principalFrom(r.Context()).user
-	idea, err := ideaFrom(body, domain.Idea{ID: uuid.Must(uuid.NewV7()), OwnerID: user.ID}, user.DefaultCurrency)
+	ownerID := user.ID
+	if body.OwnerID != "" {
+		parsed, err := uuid.Parse(body.OwnerID)
+		if err != nil {
+			s.writeDomainError(w, r, "validate idea",
+				domain.NewValidationError("owner_id", "unknown_list", "no such list of ideas"))
+			return
+		}
+		ownerID = parsed
+	}
+	role, err := s.ideas.ListRole(r.Context(), user.ID, ownerID)
+	if err != nil {
+		s.writeDomainError(w, r, "check idea list role", err)
+		return
+	}
+	if !role.Can(domain.ActionEdit) {
+		s.writeDomainError(w, r, "check idea list role", domain.ErrForbidden)
+		return
+	}
+	idea, err := ideaFrom(body.ideaRequest, domain.Idea{ID: uuid.Must(uuid.NewV7()), OwnerID: ownerID},
+		user.DefaultCurrency)
 	if err != nil {
 		s.writeDomainError(w, r, "validate idea", err)
 		return
 	}
-	if err := s.ideas.Create(r.Context(), idea); err != nil {
+	if err := s.ideas.Create(r.Context(), user.ID, idea); err != nil {
 		s.writeDomainError(w, r, "create idea", err)
 		return
 	}
 	s.writeIdea(w, r, http.StatusCreated, idea.ID)
 }
 
-// handleUpdateIdea saves every field of one of the reader's ideas.
+// handleUpdateIdea saves every field of an idea the reader may change.
 func (s *Server) handleUpdateIdea(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.pathUUID(w, r, "ideaID")
+	current, ok := s.ideaFor(w, r, domain.ActionEdit)
 	if !ok {
 		return
 	}
@@ -264,25 +340,25 @@ func (s *Server) handleUpdateIdea(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := principalFrom(r.Context()).user
-	idea, err := ideaFrom(body, domain.Idea{ID: id, OwnerID: user.ID}, user.DefaultCurrency)
+	idea, err := ideaFrom(body, domain.Idea{ID: current.ID, OwnerID: current.OwnerID}, user.DefaultCurrency)
 	if err != nil {
 		s.writeDomainError(w, r, "validate idea", err)
 		return
 	}
-	if err := s.ideas.Update(r.Context(), idea); err != nil {
+	if err := s.ideas.Update(r.Context(), user.ID, idea); err != nil {
 		s.writeDomainError(w, r, "update idea", err)
 		return
 	}
-	s.writeIdea(w, r, http.StatusOK, id)
+	s.writeIdea(w, r, http.StatusOK, idea.ID)
 }
 
-// handleDeleteIdea removes one of the reader's ideas.
+// handleDeleteIdea removes an idea the reader may change, whoever wrote it.
 func (s *Server) handleDeleteIdea(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.pathUUID(w, r, "ideaID")
+	idea, ok := s.ideaFor(w, r, domain.ActionEdit)
 	if !ok {
 		return
 	}
-	keys, err := s.ideas.Delete(r.Context(), principalFrom(r.Context()).user.ID, id)
+	keys, err := s.ideas.Delete(r.Context(), principalFrom(r.Context()).user.ID, idea.ID)
 	if err != nil {
 		s.writeDomainError(w, r, "delete idea", err)
 		return
@@ -293,7 +369,8 @@ func (s *Server) handleDeleteIdea(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleSetIdeaTags replaces the reader's tags on one of their ideas.
+// handleSetIdeaTags replaces the reader's own tags on an idea they may open; a
+// viewer tags too, since nobody else sees the tags.
 func (s *Server) handleSetIdeaTags(w http.ResponseWriter, r *http.Request) {
 	id, ok := s.pathUUID(w, r, "ideaID")
 	if !ok {
@@ -327,14 +404,15 @@ func ideaPhotoKey(ideaID, photoID uuid.UUID, suffix string) string {
 	return "ideas/" + ideaID.String() + "/" + photoID.String() + suffix + ".jpg"
 }
 
-// handleAddIdeaPhoto renders an uploaded picture into a photo of one of the
-// reader's ideas and its preview, both without the camera's metadata, and adds
-// it at the end of the idea's photos. An idea keeps at most ten.
+// handleAddIdeaPhoto renders an uploaded picture into a photo of an idea the
+// reader may change and its preview, both without the camera's metadata, and
+// adds it at the end of the idea's photos. An idea keeps at most ten.
 func (s *Server) handleAddIdeaPhoto(w http.ResponseWriter, r *http.Request) {
-	ideaID, ok := s.pathUUID(w, r, "ideaID")
+	idea, ok := s.ideaFor(w, r, domain.ActionEdit)
 	if !ok {
 		return
 	}
+	ideaID := idea.ID
 	if s.mediaFiles == nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, "unavailable", "File storage is not configured")
 		return
@@ -386,19 +464,14 @@ func (s *Server) handleAddIdeaPhoto(w http.ResponseWriter, r *http.Request) {
 	s.writeIdea(w, r, http.StatusCreated, ideaID)
 }
 
-// ideaPhotoFor finds a photo of one of the reader's ideas named in the path.
+// ideaPhotoFor finds a photo, named in the path, of an idea the reader may open.
 func (s *Server) ideaPhotoFor(w http.ResponseWriter, r *http.Request) (domain.IdeaPhoto, bool) {
-	ideaID, ok := s.pathUUID(w, r, "ideaID")
+	idea, ok := s.ideaFor(w, r, domain.ActionView)
 	if !ok {
 		return domain.IdeaPhoto{}, false
 	}
 	photoID, ok := s.pathUUID(w, r, "photoID")
 	if !ok {
-		return domain.IdeaPhoto{}, false
-	}
-	idea, err := s.ideas.Get(r.Context(), principalFrom(r.Context()).user.ID, ideaID)
-	if err != nil {
-		s.writeDomainError(w, r, "get idea", err)
 		return domain.IdeaPhoto{}, false
 	}
 	for _, photo := range idea.Photos {
@@ -410,7 +483,7 @@ func (s *Server) ideaPhotoFor(w http.ResponseWriter, r *http.Request) (domain.Id
 	return domain.IdeaPhoto{}, false
 }
 
-// handleGetIdeaPhoto serves a photo of one of the reader's ideas, or its
+// handleGetIdeaPhoto serves a photo of an idea the reader may open, or its
 // preview with ?size=preview. The bytes under a photo never change, so the
 // photo's identifier is its ETag; it is still checked against the reader on
 // every request.
@@ -448,12 +521,13 @@ func (s *Server) handleGetIdeaPhoto(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleDeleteIdeaPhoto removes a photo of one of the reader's ideas with its files.
+// handleDeleteIdeaPhoto removes a photo of an idea the reader may change with its files.
 func (s *Server) handleDeleteIdeaPhoto(w http.ResponseWriter, r *http.Request) {
-	ideaID, ok := s.pathUUID(w, r, "ideaID")
+	idea, ok := s.ideaFor(w, r, domain.ActionEdit)
 	if !ok {
 		return
 	}
+	ideaID := idea.ID
 	photoID, ok := s.pathUUID(w, r, "photoID")
 	if !ok {
 		return

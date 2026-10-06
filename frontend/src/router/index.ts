@@ -67,6 +67,13 @@ export const router = createRouter({
       meta: { public: true, bare: true },
     },
     {
+      path: '/invite/ideas',
+      name: 'ideas-invitation',
+      component: () => import('@/views/InvitationView.vue'),
+      props: { kind: 'ideas' },
+      meta: { public: true, bare: true },
+    },
+    {
       // A read-only link: https://<host>/s#token=<token>. The fragment never
       // reaches the server, so the address itself carries no credential into a log.
       // The link opens the same pages a member reads - the document and its

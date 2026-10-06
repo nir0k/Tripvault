@@ -350,10 +350,12 @@ func avatarTime(key string, at time.Time) time.Time {
 }
 
 // Delete - removes an account with everything only it holds: the trips it owns,
-// their documents, costs and files, its ideas with their photographs, its
-// memberships of other people's trips and its sessions. The ideas go through
-// the cascade from the account. The photographs it uploaded into somebody else's trip stay
-// there; only the record of who added them is forgotten.
+// their documents, costs and files, its list of ideas with their photographs -
+// the ideas its editors wrote in it included - its memberships of other
+// people's trips and lists of ideas, and its sessions. The ideas go through
+// the cascade from the account. The photographs it uploaded into somebody
+// else's trip and the ideas it wrote in somebody else's list stay there; only
+// the record of who added them is forgotten.
 //
 // Arguments:
 //   - ctx: context bounding the transaction.

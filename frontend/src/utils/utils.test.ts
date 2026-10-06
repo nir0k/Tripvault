@@ -798,7 +798,8 @@ describe('ideas', () => {
   // idea builds an idea with only what a test cares about.
   function idea(fields: Partial<Idea>): Idea {
     return {
-      id: fields.title ?? 'x', title: 'x', countries: [], places: [], photos: [], months: [],
+      id: fields.title ?? 'x', owner: { id: 'me', display_name: 'Me', email: 'me@example.com' }, role: 'owner',
+      created_by: null, updated_by: null, title: 'x', countries: [], places: [], photos: [], months: [],
       days_min: null, days_max: null, days_ideal: null, description_md: '', currency: 'EUR',
       costs: { stay: null, food: null, other: null }, transports: [], transport_min: null, transport_max: null,
       cost_min: null, cost_max: null, visa: 'not_needed', tags: [], created_at: '', updated_at: '2026-01-01T00:00:00Z',
@@ -813,7 +814,8 @@ describe('ideas', () => {
     idea({ title: 'Baltic tour', countries: ['EE', 'LV', 'LT'], months: [5, 9], days_ideal: 10, cost_min: '900.00',
       transports: [{ modes: ['train'], cost: null, minutes: 600 }], updated_at: '2026-03-01T00:00:00Z' }),
     idea({ title: 'Tokyo', countries: ['JP'], months: [4], days_min: 12, days_max: 20, currency: 'JPY',
-      cost_min: '300000.00', visa: 'on_arrival', description_md: 'Cherry **blossom**' }),
+      cost_min: '300000.00', visa: 'on_arrival', description_md: 'Cherry **blossom**', role: 'viewer',
+      owner: { id: 'anna', display_name: 'Anna', email: 'anna@example.com' } }),
   ]
   const titles = (list: Idea[]): string[] => list.map((item) => item.title)
 
@@ -829,6 +831,7 @@ describe('ideas', () => {
     expect(titles(filterIdeas(ideas, { ...base, maxCost: 1000 }, 'en'))).toEqual(['Baltic tour'])
     expect(titles(filterIdeas(ideas, { ...base, tags: ['t1'] }, 'en'))).toEqual(['Westfjords'])
     expect(titles(filterIdeas(ideas, { ...base, visas: ['on_arrival'] }, 'en'))).toEqual(['Tokyo'])
+    expect(titles(filterIdeas(ideas, { ...base, owners: ['anna'] }, 'en'))).toEqual(['Tokyo'])
     expect(titles(filterIdeas(ideas, { ...base, modes: ['train', 'flight'] }, 'en'))).toEqual(['Baltic tour', 'Westfjords'])
     expect(otherCurrencies(ideas, { ...base, maxCost: 1000 }, 'en')).toBe(1)
   })
@@ -844,7 +847,7 @@ describe('ideas', () => {
 
   it('keeps the filter in the address and reads it back', () => {
     const filter = { ...emptyFilter('EUR'), query: 'fjord', countries: ['IS'], months: [6, 7], days: [5, 9] as [number, number],
-      maxCost: 900, currency: 'USD', visas: ['needed' as const], modes: ['car' as const],
+      maxCost: 900, currency: 'USD', owners: ['anna'], visas: ['needed' as const], modes: ['car' as const],
       sort: 'cost' as const, desc: true }
     const query = filterToQuery(filter, 'EUR')
     expect(filterFromQuery(query as Record<string, string>, 'EUR')).toEqual(filter)

@@ -1,5 +1,9 @@
 {
-  "_about": "The administrator's ideas, chosen so every filter of the list has something to tell apart; two of them carry photographs.",
+  "_about": "The administrator's ideas, chosen so every filter of the list has something to tell apart; two of them carry photographs. The list is shared with the editor, who wrote one of the ideas in it, and with the viewer, who only reads it.",
+  "shared_with": [
+    "editor",
+    "viewer"
+  ],
   "tags": {
     "city": "violet",
     "mountains": "sky",
@@ -252,7 +256,8 @@
       ],
       "tags": [
         "city"
-      ]
+      ],
+      "author": "editor"
     }
   ]
 }

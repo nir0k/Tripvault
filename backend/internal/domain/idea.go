@@ -10,10 +10,14 @@ import (
 )
 
 // An idea is somewhere a person would like to go one day: where it is, when it
-// is best, how long it takes and roughly what it costs. It is the person's own,
-// like a tag - nobody else sees it - and it is not a trip: it has no days, no
-// members and no pictures. When the time comes a plan is made from it, and the
-// idea stays, since one idea may be travelled more than once.
+// is best, how long it takes and roughly what it costs. It is not a trip: it
+// has no days and no gallery. When the time comes a plan is made from it, and
+// the idea stays, since one idea may be travelled more than once.
+//
+// A person's ideas are one list, which its owner may share as a whole: a
+// viewer reads every idea of it, an editor also adds, changes and deletes
+// them. An idea an editor adds is still the owner's. Every change is written
+// down with who made it, so the list tells who wrote and changed what.
 
 // Limits of an idea.
 const (
@@ -91,9 +95,18 @@ type IdeaPhoto struct {
 
 // Idea is somewhere a person would like to go.
 type Idea struct {
-	ID      uuid.UUID
+	ID uuid.UUID
+	// OwnerID is the person whose list the idea belongs to, whoever wrote it.
 	OwnerID uuid.UUID
-	Title   string
+	// Owner is that person, as the reader sees them.
+	Owner TripUser
+	// Role is what the reader may do with the idea: owner, editor or viewer.
+	Role TripRole
+	// CreatedBy and UpdatedBy are who wrote the idea and who changed it last;
+	// nil once their account is deleted.
+	CreatedBy *TripUser
+	UpdatedBy *TripUser
+	Title     string
 	// Countries are ISO 3166-1 alpha-2 codes: a tour of several countries
 	// names them all.
 	Countries []string
@@ -115,7 +128,8 @@ type Idea struct {
 	Transports []IdeaTransport
 	// Photos are the idea's pictures, in their order.
 	Photos []IdeaPhoto
-	// Tags are the owner's own tags on the idea.
+	// Tags are the reader's own tags on the idea: a tag is one person's word,
+	// so the other members of the list never see it.
 	Tags      []TripTag
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -328,4 +342,46 @@ func normalizeIdeaTransports(transports []IdeaTransport) ([]IdeaTransport, error
 		normalized = append(normalized, transport)
 	}
 	return normalized, nil
+}
+
+// IdeaList is a list of ideas a person may open: their own, or one shared
+// with them, with what they may do with it.
+type IdeaList struct {
+	Owner TripUser
+	Role  TripRole
+}
+
+// IdeaMember is a person a list of ideas is shared with.
+type IdeaMember struct {
+	OwnerID   uuid.UUID
+	User      TripUser
+	Role      TripRole
+	CreatedAt time.Time
+}
+
+// IdeaAction is what a change did to an idea.
+type IdeaAction string
+
+// Changes of an idea, as its list's history names them. A tag is not among
+// them: tags are the reader's own and change nothing others see.
+const (
+	IdeaCreated      IdeaAction = "created"
+	IdeaUpdated      IdeaAction = "updated"
+	IdeaDeleted      IdeaAction = "deleted"
+	IdeaPhotoAdded   IdeaAction = "photo_added"
+	IdeaPhotoRemoved IdeaAction = "photo_removed"
+)
+
+// IdeaChange is one entry of a list's history: who did what to which idea,
+// and when. The idea's title is the one it had then, so a deleted idea is
+// still named.
+type IdeaChange struct {
+	ID        uuid.UUID
+	OwnerID   uuid.UUID
+	IdeaID    *uuid.UUID
+	IdeaTitle string
+	// User is who made the change; nil once their account is deleted.
+	User      *TripUser
+	Action    IdeaAction
+	CreatedAt time.Time
 }

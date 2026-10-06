@@ -55,7 +55,7 @@ docker compose down       # stop and destroy all of its state
 
 ### Examples
 
-Once the backend is healthy, the one-shot `tripvault-seed` service (`tests/seed/seed.py`, Python's standard library only) loads the fixtures in `tests/seed/fixtures` through the public REST API: a trip that was travelled and written up into a report, a plan still being planned, and a few ideas with their tags, together with photographs, tracks and attachments.
+Once the backend is healthy, the one-shot `tripvault-seed` service (`tests/seed/seed.py`, Python's standard library only) loads the fixtures in `tests/seed/fixtures` through the public REST API: a trip that was travelled and written up into a report, a plan still being planned, and a few ideas with their tags in a list shared with the example accounts, together with photographs, tracks and attachments.
 
 - The administrator is `TRIPVAULT_ADMIN_EMAIL` with `TRIPVAULT_ADMIN_PASSWORD` from `tests/.env`.
 - `editor@example.com` and `viewer@example.com` share a password printed in the seed's log: `docker compose logs tripvault-seed`.

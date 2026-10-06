@@ -19,56 +19,115 @@ import (
 	"github.com/nir0k/tripvault/backend/internal/media"
 )
 
-// fakeIdeas keeps ideas in memory, each read only by its owner, as the
-// repository does.
+// fakeIdeas keeps ideas in memory, each read only by its owner and the
+// members of the owner's list, as the repository does.
 type fakeIdeas struct {
-	ideas []domain.Idea
-	tags  map[uuid.UUID][]uuid.UUID
+	ideas   []domain.Idea
+	tags    map[uuid.UUID][]uuid.UUID
+	members map[uuid.UUID]map[uuid.UUID]domain.TripRole
+	changes []domain.IdeaChange
 }
 
-// find returns the index of an owner's idea, or -1.
-func (f *fakeIdeas) find(ownerID, id uuid.UUID) int {
-	return slices.IndexFunc(f.ideas, func(idea domain.Idea) bool { return idea.ID == id && idea.OwnerID == ownerID })
+// role tells what a reader may do with an owner's list, empty for nothing.
+func (f *fakeIdeas) role(readerID, ownerID uuid.UUID) domain.TripRole {
+	if readerID == ownerID {
+		return domain.RoleOwner
+	}
+	return f.members[ownerID][readerID]
 }
 
-// List returns the owner's ideas.
-func (f *fakeIdeas) List(_ context.Context, ownerID uuid.UUID) ([]domain.Idea, error) {
-	var owned []domain.Idea
+// find returns the index of an idea the reader may open, or -1.
+func (f *fakeIdeas) find(readerID, id uuid.UUID) int {
+	return slices.IndexFunc(f.ideas, func(idea domain.Idea) bool {
+		return idea.ID == id && f.role(readerID, idea.OwnerID) != ""
+	})
+}
+
+// editable returns the index of an idea the actor may change, or -1.
+func (f *fakeIdeas) editable(actorID, id uuid.UUID) int {
+	index := f.find(actorID, id)
+	if index >= 0 && !f.role(actorID, f.ideas[index].OwnerID).Can(domain.ActionEdit) {
+		return -1
+	}
+	return index
+}
+
+// log records a change of an idea.
+func (f *fakeIdeas) log(idea domain.Idea, actorID uuid.UUID, action domain.IdeaAction) {
+	id := idea.ID
+	f.changes = append(f.changes, domain.IdeaChange{ID: uuid.New(), OwnerID: idea.OwnerID, IdeaID: &id,
+		IdeaTitle: idea.Title, User: &domain.TripUser{ID: actorID}, Action: action})
+}
+
+// List returns the ideas the reader may open, with the reader's role.
+func (f *fakeIdeas) List(_ context.Context, readerID uuid.UUID) ([]domain.Idea, error) {
+	var shown []domain.Idea
 	for _, idea := range f.ideas {
-		if idea.OwnerID == ownerID {
-			owned = append(owned, idea)
+		if role := f.role(readerID, idea.OwnerID); role != "" {
+			idea.Role = role
+			shown = append(shown, idea)
 		}
 	}
-	return owned, nil
+	return shown, nil
 }
 
-// Get returns one of the owner's ideas.
-func (f *fakeIdeas) Get(_ context.Context, ownerID, id uuid.UUID) (domain.Idea, error) {
-	if index := f.find(ownerID, id); index >= 0 {
-		return f.ideas[index], nil
+// Get returns an idea the reader may open, with the reader's role.
+func (f *fakeIdeas) Get(_ context.Context, readerID, id uuid.UUID) (domain.Idea, error) {
+	if index := f.find(readerID, id); index >= 0 {
+		idea := f.ideas[index]
+		idea.Role = f.role(readerID, idea.OwnerID)
+		return idea, nil
 	}
 	return domain.Idea{}, domain.ErrNotFound
 }
 
-// Create stores an idea.
-func (f *fakeIdeas) Create(_ context.Context, idea domain.Idea) error {
+// Lists returns the reader's own list and the ones shared with them.
+func (f *fakeIdeas) Lists(_ context.Context, readerID uuid.UUID) ([]domain.IdeaList, error) {
+	lists := []domain.IdeaList{{Owner: domain.TripUser{ID: readerID}, Role: domain.RoleOwner}}
+	for ownerID, members := range f.members {
+		if role, ok := members[readerID]; ok {
+			lists = append(lists, domain.IdeaList{Owner: domain.TripUser{ID: ownerID}, Role: role})
+		}
+	}
+	return lists, nil
+}
+
+// ListRole returns the reader's role on a list.
+func (f *fakeIdeas) ListRole(_ context.Context, readerID, ownerID uuid.UUID) (domain.TripRole, error) {
+	if role := f.role(readerID, ownerID); role != "" {
+		return role, nil
+	}
+	return "", domain.ErrNotFound
+}
+
+// Create stores an idea written by the actor.
+func (f *fakeIdeas) Create(_ context.Context, actorID uuid.UUID, idea domain.Idea) error {
+	if !f.role(actorID, idea.OwnerID).Can(domain.ActionEdit) {
+		return domain.ErrNotFound
+	}
+	idea.CreatedBy = &domain.TripUser{ID: actorID}
+	idea.UpdatedBy = idea.CreatedBy
 	f.ideas = append(f.ideas, idea)
+	f.log(idea, actorID, domain.IdeaCreated)
 	return nil
 }
 
-// Update replaces one of the owner's ideas.
-func (f *fakeIdeas) Update(_ context.Context, idea domain.Idea) error {
-	index := f.find(idea.OwnerID, idea.ID)
+// Update replaces an idea the actor may change.
+func (f *fakeIdeas) Update(_ context.Context, actorID uuid.UUID, idea domain.Idea) error {
+	index := f.editable(actorID, idea.ID)
 	if index < 0 {
 		return domain.ErrNotFound
 	}
+	idea.CreatedBy = f.ideas[index].CreatedBy
+	idea.UpdatedBy = &domain.TripUser{ID: actorID}
 	f.ideas[index] = idea
+	f.log(idea, actorID, domain.IdeaUpdated)
 	return nil
 }
 
-// Delete removes one of the owner's ideas and names its photos' files.
-func (f *fakeIdeas) Delete(_ context.Context, ownerID, id uuid.UUID) ([]string, error) {
-	index := f.find(ownerID, id)
+// Delete removes an idea the actor may change and names its photos' files.
+func (f *fakeIdeas) Delete(_ context.Context, actorID, id uuid.UUID) ([]string, error) {
+	index := f.editable(actorID, id)
 	if index < 0 {
 		return nil, domain.ErrNotFound
 	}
@@ -76,13 +135,14 @@ func (f *fakeIdeas) Delete(_ context.Context, ownerID, id uuid.UUID) ([]string, 
 	for _, photo := range f.ideas[index].Photos {
 		keys = append(keys, photo.Key, photo.ThumbKey)
 	}
+	f.log(f.ideas[index], actorID, domain.IdeaDeleted)
 	f.ideas = slices.Delete(f.ideas, index, index+1)
 	return keys, nil
 }
 
-// AddPhoto puts a photo at the end of one of the owner's ideas, ten at most.
-func (f *fakeIdeas) AddPhoto(_ context.Context, ownerID uuid.UUID, photo domain.IdeaPhoto) error {
-	index := f.find(ownerID, photo.IdeaID)
+// AddPhoto puts a photo at the end of an idea the actor may change, ten at most.
+func (f *fakeIdeas) AddPhoto(_ context.Context, actorID uuid.UUID, photo domain.IdeaPhoto) error {
+	index := f.editable(actorID, photo.IdeaID)
 	if index < 0 {
 		return domain.ErrNotFound
 	}
@@ -93,9 +153,9 @@ func (f *fakeIdeas) AddPhoto(_ context.Context, ownerID uuid.UUID, photo domain.
 	return nil
 }
 
-// DeletePhoto removes a photo of one of the owner's ideas.
-func (f *fakeIdeas) DeletePhoto(_ context.Context, ownerID, ideaID, photoID uuid.UUID) (domain.IdeaPhoto, error) {
-	index := f.find(ownerID, ideaID)
+// DeletePhoto removes a photo of an idea the actor may change.
+func (f *fakeIdeas) DeletePhoto(_ context.Context, actorID, ideaID, photoID uuid.UUID) (domain.IdeaPhoto, error) {
+	index := f.editable(actorID, ideaID)
 	if index < 0 {
 		return domain.IdeaPhoto{}, domain.ErrNotFound
 	}
@@ -109,15 +169,68 @@ func (f *fakeIdeas) DeletePhoto(_ context.Context, ownerID, ideaID, photoID uuid
 	return photo, nil
 }
 
-// SetTags records the tags of one of the owner's ideas.
-func (f *fakeIdeas) SetTags(_ context.Context, ownerID, id uuid.UUID, tagIDs []uuid.UUID) error {
-	if f.find(ownerID, id) < 0 {
+// SetTags records the tags of an idea the reader may open.
+func (f *fakeIdeas) SetTags(_ context.Context, readerID, id uuid.UUID, tagIDs []uuid.UUID) error {
+	if f.find(readerID, id) < 0 {
 		return domain.ErrNotFound
 	}
 	if f.tags == nil {
 		f.tags = map[uuid.UUID][]uuid.UUID{}
 	}
 	f.tags[id] = tagIDs
+	return nil
+}
+
+// History returns the changes of a list, or of one idea of it.
+func (f *fakeIdeas) History(_ context.Context, ownerID uuid.UUID, ideaID *uuid.UUID) ([]domain.IdeaChange, error) {
+	var changes []domain.IdeaChange
+	for _, change := range f.changes {
+		if change.OwnerID == ownerID && (ideaID == nil || *change.IdeaID == *ideaID) {
+			changes = append(changes, change)
+		}
+	}
+	return changes, nil
+}
+
+// Members returns the members of an owner's list.
+func (f *fakeIdeas) Members(_ context.Context, ownerID uuid.UUID) ([]domain.IdeaMember, error) {
+	var members []domain.IdeaMember
+	for userID, role := range f.members[ownerID] {
+		members = append(members, domain.IdeaMember{OwnerID: ownerID, User: domain.TripUser{ID: userID}, Role: role})
+	}
+	return members, nil
+}
+
+// AddMember shares an owner's list with a person.
+func (f *fakeIdeas) AddMember(_ context.Context, ownerID, userID uuid.UUID, role domain.TripRole) (domain.IdeaMember, error) {
+	if f.role(userID, ownerID) != "" {
+		return domain.IdeaMember{}, domain.ErrAlreadyMember
+	}
+	if f.members == nil {
+		f.members = map[uuid.UUID]map[uuid.UUID]domain.TripRole{}
+	}
+	if f.members[ownerID] == nil {
+		f.members[ownerID] = map[uuid.UUID]domain.TripRole{}
+	}
+	f.members[ownerID][userID] = role
+	return domain.IdeaMember{OwnerID: ownerID, User: domain.TripUser{ID: userID}, Role: role}, nil
+}
+
+// UpdateMember changes a member's role.
+func (f *fakeIdeas) UpdateMember(_ context.Context, ownerID, userID uuid.UUID, role domain.TripRole) (domain.IdeaMember, error) {
+	if _, ok := f.members[ownerID][userID]; !ok {
+		return domain.IdeaMember{}, domain.ErrNotFound
+	}
+	f.members[ownerID][userID] = role
+	return domain.IdeaMember{OwnerID: ownerID, User: domain.TripUser{ID: userID}, Role: role}, nil
+}
+
+// RemoveMember takes a member off a list.
+func (f *fakeIdeas) RemoveMember(_ context.Context, ownerID, userID uuid.UUID) error {
+	if _, ok := f.members[ownerID][userID]; !ok {
+		return domain.ErrNotFound
+	}
+	delete(f.members[ownerID], userID)
 	return nil
 }
 
@@ -293,5 +406,111 @@ func TestIdeaPhotosOverHTTP(t *testing.T) {
 	}
 	if _, err := files.Open(t.Context(), kept.Key); !errors.Is(err, media.ErrNotFound) {
 		t.Errorf("the photo of a deleted idea is still on disk: %v", err)
+	}
+}
+
+// TestSharedIdeasOverHTTP checks the owner of a list of ideas shares it: a
+// viewer reads it and its history but changes nothing, an editor adds an idea
+// to it and changes and deletes the owner's, a person it is not shared with
+// finds nothing, and only the owner decides who is a member.
+func TestSharedIdeasOverHTTP(t *testing.T) {
+	ideas := &fakeIdeas{}
+	owner := domain.User{ID: uuid.New(), IsActive: true, DefaultCurrency: "EUR"}
+	editor := domain.User{ID: uuid.New(), IsActive: true, DefaultCurrency: "EUR"}
+	viewer := domain.User{ID: uuid.New(), IsActive: true, DefaultCurrency: "EUR"}
+	stranger := domain.User{ID: uuid.New(), IsActive: true, DefaultCurrency: "EUR"}
+	signedIn := &fakeAuth{user: owner}
+	s := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+		Auth: signedIn, Users: fakeUsers{}, Ideas: ideas,
+	})
+	as := func(user domain.User, method, path, body string) *httptest.ResponseRecorder {
+		signedIn.user = user
+		return send(s, method, path, "good", body)
+	}
+
+	idea := decodeIdea(t, as(owner, http.MethodPost, "/api/v1/ideas", `{"title":"Lofoten"}`).Body.Bytes())
+	path := "/api/v1/ideas/" + idea.ID
+	for user, role := range map[domain.User]string{editor: "editor", viewer: "viewer"} {
+		if recorder := as(owner, http.MethodPost, "/api/v1/ideas/members", `{"user_id":"`+user.ID.String()+`","role":"`+role+`"}`); recorder.Code != http.StatusCreated {
+			t.Fatalf("share with the %s: %d %s", role, recorder.Code, recorder.Body.String())
+		}
+	}
+	if recorder := as(owner, http.MethodPost, "/api/v1/ideas/members", `{"user_id":"`+viewer.ID.String()+`","role":"editor"}`); recorder.Code != http.StatusConflict {
+		t.Errorf("share twice: %d", recorder.Code)
+	}
+
+	// The viewer reads the idea and the history, and changes nothing.
+	if read := as(viewer, http.MethodGet, path, ""); read.Code != http.StatusOK || decodeIdea(t, read.Body.Bytes()).Role != "viewer" {
+		t.Errorf("the viewer reads: %d %s", read.Code, read.Body.String())
+	}
+	for _, request := range [][3]string{{http.MethodPut, path, `{"title":"Mine now"}`}, {http.MethodDelete, path, ""},
+		{http.MethodPost, "/api/v1/ideas", `{"title":"X","owner_id":"` + owner.ID.String() + `"}`}} {
+		if recorder := as(viewer, request[0], request[1], request[2]); recorder.Code != http.StatusForbidden {
+			t.Errorf("the viewer %s %s: %d", request[0], request[1], recorder.Code)
+		}
+	}
+	if recorder := as(viewer, http.MethodPut, path+"/tags", `{"tag_ids":[]}`); recorder.Code != http.StatusOK {
+		t.Errorf("the viewer tags: %d", recorder.Code)
+	}
+	if recorder := as(viewer, http.MethodPost, "/api/v1/ideas/members", `{"user_id":"`+stranger.ID.String()+`","role":"viewer"}`); recorder.Code != http.StatusCreated {
+		t.Errorf("the viewer shares their own list: %d", recorder.Code)
+	}
+	if len(ideas.members[owner.ID]) != 2 {
+		t.Errorf("a viewer changed the owner's members: %+v", ideas.members[owner.ID])
+	}
+
+	// The editor adds an idea to the owner's list and changes the owner's.
+	added := as(editor, http.MethodPost, "/api/v1/ideas", `{"title":"Senja","owner_id":"`+owner.ID.String()+`"}`)
+	if added.Code != http.StatusCreated {
+		t.Fatalf("the editor adds: %d %s", added.Code, added.Body.String())
+	}
+	if created := decodeIdea(t, added.Body.Bytes()); created.Role != "editor" || created.CreatedBy == nil ||
+		created.CreatedBy.ID != editor.ID.String() || ideas.ideas[1].OwnerID != owner.ID {
+		t.Errorf("the editor's idea: %+v", created)
+	}
+	if recorder := as(editor, http.MethodPut, path, `{"title":"Lofoten in winter"}`); recorder.Code != http.StatusOK ||
+		decodeIdea(t, recorder.Body.Bytes()).UpdatedBy.ID != editor.ID.String() {
+		t.Errorf("the editor changes: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if recorder := as(editor, http.MethodPost, "/api/v1/ideas/members", `{"user_id":"`+stranger.ID.String()+`","role":"viewer"}`); recorder.Code != http.StatusCreated ||
+		ideas.members[owner.ID][stranger.ID] != "" {
+		t.Errorf("an editor shared the owner's list: %d", recorder.Code)
+	}
+
+	// A person the list is not shared with finds nothing of it.
+	other := domain.User{ID: uuid.New(), IsActive: true, DefaultCurrency: "EUR"}
+	for _, request := range [][2]string{{http.MethodGet, path}, {http.MethodDelete, path},
+		{http.MethodGet, "/api/v1/ideas/history?owner_id=" + owner.ID.String()}} {
+		if recorder := as(other, request[0], request[1], ""); recorder.Code != http.StatusNotFound {
+			t.Errorf("a stranger %s %s: %d", request[0], request[1], recorder.Code)
+		}
+	}
+	var list listResponse[ideaResponse]
+	if err := json.Unmarshal(as(other, http.MethodGet, "/api/v1/ideas", "").Body.Bytes(), &list); err != nil || len(list.Items) != 0 {
+		t.Errorf("a stranger lists %+v: %v", list.Items, err)
+	}
+
+	var history listResponse[ideaChangeResponse]
+	recorder := as(viewer, http.MethodGet, "/api/v1/ideas/history?idea_id="+idea.ID, "")
+	if err := json.Unmarshal(recorder.Body.Bytes(), &history); err != nil || len(history.Items) != 2 ||
+		history.Items[1].Action != "updated" || history.Items[1].User.ID != editor.ID.String() {
+		t.Errorf("the idea's history: %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	if recorder := as(editor, http.MethodDelete, path, ""); recorder.Code != http.StatusNoContent {
+		t.Errorf("the editor deletes the owner's idea: %d", recorder.Code)
+	}
+	// The viewer leaves, and the list is theirs no more.
+	if recorder := as(viewer, http.MethodDelete, "/api/v1/ideas/lists/"+owner.ID.String(), ""); recorder.Code != http.StatusNoContent {
+		t.Errorf("the viewer leaves: %d", recorder.Code)
+	}
+	if recorder := as(viewer, http.MethodGet, "/api/v1/ideas/"+ideas.ideas[0].ID.String(), ""); recorder.Code != http.StatusNotFound {
+		t.Errorf("a former viewer reads: %d", recorder.Code)
+	}
+	if recorder := as(owner, http.MethodDelete, "/api/v1/ideas/members/"+editor.ID.String(), ""); recorder.Code != http.StatusNoContent {
+		t.Errorf("the owner removes the editor: %d", recorder.Code)
+	}
+	if recorder := as(editor, http.MethodPut, "/api/v1/ideas/"+ideas.ideas[0].ID.String(), `{"title":"Back"}`); recorder.Code != http.StatusNotFound {
+		t.Errorf("a former editor changes: %d", recorder.Code)
 	}
 }

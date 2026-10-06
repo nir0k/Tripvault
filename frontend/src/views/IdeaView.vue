@@ -2,19 +2,20 @@
 import { computed, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { deleteIdea, getIdea, listIdeas, setIdeaTags } from '@/api/ideas'
-import { IDEA_COSTS, type Idea } from '@/api/types'
+import { deleteIdea, getIdea, ideaHistory, listIdeas, setIdeaTags } from '@/api/ideas'
+import { IDEA_COSTS, type Idea, type IdeaChange } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import { TRAVEL_MODE_ICONS } from '@/components/icons'
 import IdeaDialog from '@/components/ideas/IdeaDialog.vue'
+import IdeaHistory from '@/components/ideas/IdeaHistory.vue'
 import IdeaPicture from '@/components/ideas/IdeaPicture.vue'
 import IdeaResults from '@/components/ideas/IdeaResults.vue'
 import MarkdownText from '@/components/MarkdownText.vue'
 import TagsPicker from '@/components/TagsPicker.vue'
 import TripCreateDialog from '@/components/TripCreateDialog.vue'
 import { errorMessage } from '@/utils/errors'
-import { formatMoney } from '@/utils/format'
+import { formatDateTime, formatMoney } from '@/utils/format'
 import { useSessionStore } from '@/stores/session'
 import {
   activeFilters, countryFlag, countryName, filterFromQuery, filterIdeas, formatDays, formatMonths, formatRange,
@@ -24,8 +25,10 @@ import { formatDuration } from '@/utils/plan'
 // One idea read in full: where and when, how long, the ways of getting there
 // with their costs and times, whether a visa is needed, what the trip roughly
 // costs - from the cheapest way of getting there to the dearest - and the
-// description. From here it is changed, tagged, deleted, or made into a plan
-// once the time comes; the idea stays after that.
+// description, with who added it and who changed it last. From here it is
+// changed or deleted by the owner and the editors of its list, tagged by any
+// reader with their own tags, or made into a plan once the time comes; the
+// idea stays after that. Its history is read on demand.
 const props = defineProps<{ ideaId: string }>()
 
 const { t, te, locale } = useI18n()
@@ -39,15 +42,44 @@ const editor = useTemplateRef<InstanceType<typeof IdeaDialog>>('editor')
 const creator = useTemplateRef<InstanceType<typeof TripCreateDialog>>('creator')
 const confirmDialog = useTemplateRef<InstanceType<typeof ConfirmDialog>>('confirmDialog')
 
-// load reads the idea named in the address.
+// load reads the idea named in the address; its history is read again when
+// it is opened next.
 async function load(): Promise<void> {
   error.value = ''
+  history.value = null
+  showHistory.value = false
   try {
     idea.value = await getIdea(props.ideaId)
   } catch (err) {
     error.value = errorMessage(err, t, te)
   }
 }
+
+const canEdit = computed(() => idea.value !== null && idea.value.role !== 'viewer')
+const isMine = computed(() => idea.value?.owner.id === session.user?.id)
+
+// authorLine reads who did something to the idea and when, a deleted account
+// named as such.
+function authorLine(key: 'createdBy' | 'updatedBy', name: string | undefined, at: string): string {
+  return t(`ideas.${key}`, { name: name ?? t('ideas.deletedUser'), date: formatDateTime(at, locale.value) })
+}
+
+// The history is read the first time it is opened.
+const history = ref<IdeaChange[] | null>(null)
+const showHistory = ref(false)
+const historyError = ref('')
+async function toggleHistory(): Promise<void> {
+  showHistory.value = !showHistory.value
+  if (showHistory.value && history.value === null && idea.value) {
+    historyError.value = ''
+    try {
+      history.value = await ideaHistory({ ideaId: idea.value.id })
+    } catch (err) {
+      historyError.value = errorMessage(err, t, te)
+    }
+  }
+}
+
 watch(() => props.ideaId, load, { immediate: true })
 
 // When the idea was opened from a search or a filter, the rest of what they
@@ -132,6 +164,13 @@ async function saveTags(ids: string[]): Promise<void> {
   }
 }
 
+// saved shows the idea as it was saved, its history to be read again.
+function saved(value: Idea): void {
+  idea.value = value
+  history.value = null
+  showHistory.value = false
+}
+
 // makePlan opens the form of a new plan filled from the idea, its budget the
 // dearest the trip may come to.
 function makePlan(): void {
@@ -200,6 +239,10 @@ async function remove(): Promise<void> {
         <header class="flex flex-wrap items-start justify-between gap-3">
           <div class="min-w-0 space-y-1">
             <h1 class="text-2xl font-bold break-words">{{ idea.title }}</h1>
+            <p v-if="!isMine" class="text-sm text-base-content/70">
+              <AppIcon name="users" class="me-1 inline size-4! opacity-60" />{{ t('ideas.listOf', { name: idea.owner.display_name }) }}
+              <span class="badge badge-ghost badge-sm ms-1">{{ t(`trips.roles.${idea.role}`) }}</span>
+            </p>
             <p v-if="idea.countries.length > 0">
               <span v-for="(code, index) in idea.countries" :key="code">
                 {{ index > 0 ? ', ' : '' }}<span aria-hidden="true">{{ countryFlag(code) }}</span> {{ countryName(code, locale) }}
@@ -225,13 +268,15 @@ async function remove(): Promise<void> {
               <AppIcon name="plan" />
               {{ t('ideas.makePlan') }}
             </button>
-            <button type="button" class="btn btn-sm btn-hover-outline" @click="editor?.open(idea)">
-              <AppIcon name="pencil" />
-              {{ t('ideas.edit') }}
-            </button>
-            <button type="button" class="btn btn-ghost btn-sm text-error" :aria-label="t('ideas.delete')" :title="t('ideas.delete')" @click="remove">
-              <AppIcon name="trash" />
-            </button>
+            <template v-if="canEdit">
+              <button type="button" class="btn btn-sm btn-hover-outline" @click="editor?.open(idea)">
+                <AppIcon name="pencil" />
+                {{ t('ideas.edit') }}
+              </button>
+              <button type="button" class="btn btn-ghost btn-sm text-error" :aria-label="t('ideas.delete')" :title="t('ideas.delete')" @click="remove">
+                <AppIcon name="trash" />
+              </button>
+            </template>
           </div>
         </header>
 
@@ -318,9 +363,28 @@ async function remove(): Promise<void> {
             <MarkdownText :source="idea.description_md" />
           </div>
         </div>
+
+        <footer class="flex flex-col gap-2 text-sm text-base-content/70">
+          <p v-if="!canEdit">{{ t('ideas.readOnly') }}</p>
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span>{{ authorLine('createdBy', idea.created_by?.display_name, idea.created_at) }}</span>
+            <span v-if="idea.updated_at !== idea.created_at">{{ authorLine('updatedBy', idea.updated_by?.display_name, idea.updated_at) }}</span>
+            <button type="button" class="btn btn-ghost btn-xs" :aria-expanded="showHistory" @click="toggleHistory">
+              <AppIcon name="clock" />
+              {{ t('ideas.history.button') }}
+            </button>
+          </div>
+          <div v-if="showHistory" class="card border border-base-300 bg-base-100">
+            <div class="card-body p-4">
+              <p v-if="historyError" role="alert" class="text-error">{{ historyError }}</p>
+              <div v-else-if="history === null" class="flex justify-center"><span class="loading loading-spinner"></span></div>
+              <IdeaHistory v-else :changes="history" />
+            </div>
+          </div>
+        </footer>
       </template>
 
-      <IdeaDialog ref="editor" @saved="(saved) => (idea = saved)" />
+      <IdeaDialog ref="editor" @saved="saved" />
       <TripCreateDialog ref="creator" />
       <ConfirmDialog ref="confirmDialog" />
 

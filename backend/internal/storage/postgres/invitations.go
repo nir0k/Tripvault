@@ -604,3 +604,258 @@ func lockTripInvitation(ctx context.Context, tx pgx.Tx, tokenHash []byte, now ti
 func equalEmail(left, right string) bool {
 	return strings.EqualFold(strings.TrimSpace(left), strings.TrimSpace(right))
 }
+
+// ideaInvitationColumns is the select list of an invitation to a list of
+// ideas, kept in step with scanIdeaInvitation; i is the invitation and o its owner.
+const ideaInvitationColumns = `i.id, i.owner_id, o.display_name, i.email, i.role, i.expires_at, i.accepted_by,
+	i.accepted_at, i.revoked_at, i.created_at`
+
+// scanIdeaInvitation reads one invitation to a list of ideas.
+func scanIdeaInvitation(row interface{ Scan(...any) error }) (domain.IdeaInvitation, error) {
+	var item domain.IdeaInvitation
+	err := row.Scan(&item.ID, &item.OwnerID, &item.OwnerName, &item.Email, &item.Role, &item.ExpiresAt,
+		&item.AcceptedBy, &item.AcceptedAt, &item.RevokedAt, &item.CreatedAt)
+	return item, err
+}
+
+// CreateIdeaInvitation - stores an invitation to a list of ideas and its
+// message atomically.
+//
+// Arguments:
+//   - ctx: context bounding the transaction.
+//   - invitation: the offered role and lifecycle metadata.
+//   - tokenHash: digest of the credential sent by email.
+//   - message: the rendered invitation message.
+//
+// Returns:
+//   - domain.ErrAlreadyMember when the address is the owner's or a member's.
+//   - domain.ErrAlreadyExists when an open invitation already exists.
+//   - another error when the invitation and message cannot be committed.
+func (r *InvitationRepository) CreateIdeaInvitation(ctx context.Context, invitation domain.IdeaInvitation,
+	tokenHash []byte, message domain.MailMessage) error {
+	return pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+		var alreadyMember bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS (
+			   SELECT 1 FROM users u WHERE u.id = $1 AND lower(u.email) = lower($2)
+			   UNION ALL
+			   SELECT 1 FROM idea_members m JOIN users u ON u.id = m.user_id
+			   WHERE m.owner_id = $1 AND lower(u.email) = lower($2)
+			 )`, invitation.OwnerID, invitation.Email).Scan(&alreadyMember); err != nil {
+			return fmt.Errorf("check invited idea member: %w", err)
+		}
+		if alreadyMember {
+			return domain.ErrAlreadyMember
+		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE idea_invitations SET revoked_at = now()
+			 WHERE owner_id = $1 AND lower(email) = lower($2) AND accepted_at IS NULL
+			   AND revoked_at IS NULL AND expires_at <= now()`, invitation.OwnerID, invitation.Email); err != nil {
+			return fmt.Errorf("close expired idea invitations: %w", err)
+		}
+		_, err := tx.Exec(ctx,
+			`INSERT INTO idea_invitations (id, owner_id, email, role, token_hash, expires_at)
+			 VALUES ($1, $2, $3, $4, $5, $6)`, invitation.ID, invitation.OwnerID,
+			invitation.Email, invitation.Role, tokenHash, invitation.ExpiresAt)
+		if isUniqueViolation(err) {
+			return domain.ErrAlreadyExists
+		}
+		if err != nil {
+			return fmt.Errorf("create idea invitation: %w", err)
+		}
+		return enqueueMailTx(ctx, tx, message)
+	})
+}
+
+// IdeaInvitations - lists the invitations to a person's list of ideas, newest first.
+//
+// Arguments:
+//   - ctx: context bounding the query.
+//   - ownerID: the owner of the list.
+//
+// Returns:
+//   - all invitations without their credential hashes.
+//   - an error if they cannot be read.
+func (r *InvitationRepository) IdeaInvitations(ctx context.Context, ownerID uuid.UUID) ([]domain.IdeaInvitation, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+ideaInvitationColumns+`
+		 FROM idea_invitations i JOIN users o ON o.id = i.owner_id
+		 WHERE i.owner_id = $1 ORDER BY i.created_at DESC`, ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("list idea invitations: %w", err)
+	}
+	items, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (domain.IdeaInvitation, error) {
+		return scanIdeaInvitation(row)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read idea invitations: %w", err)
+	}
+	return items, nil
+}
+
+// IdeaInvitationByToken - reads what an invitation to a list of ideas offers.
+//
+// Arguments:
+//   - ctx: context bounding the query.
+//   - tokenHash: digest of the presented credential.
+//
+// Returns:
+//   - the invitation with its owner's name.
+//   - domain.ErrNotFound for an unknown credential.
+func (r *InvitationRepository) IdeaInvitationByToken(ctx context.Context, tokenHash []byte) (domain.IdeaInvitation, error) {
+	item, err := scanIdeaInvitation(r.pool.QueryRow(ctx,
+		`SELECT `+ideaInvitationColumns+`
+		 FROM idea_invitations i JOIN users o ON o.id = i.owner_id WHERE i.token_hash = $1`, tokenHash))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return item, domain.ErrNotFound
+	}
+	if err != nil {
+		return item, fmt.Errorf("read idea invitation: %w", err)
+	}
+	return item, nil
+}
+
+// RevokeIdeaInvitation - withdraws an open invitation to a person's list of ideas.
+//
+// Arguments:
+//   - ctx: context bounding the statement.
+//   - ownerID: the owner of the list, who must own the invitation.
+//   - id: the invitation to withdraw.
+//   - now: the reference time used to reject expired invitations.
+//
+// Returns:
+//   - domain.ErrNotFound when the invitation is absent or no longer open.
+//   - another error when the change cannot be stored.
+func (r *InvitationRepository) RevokeIdeaInvitation(ctx context.Context, ownerID, id uuid.UUID, now time.Time) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE idea_invitations SET revoked_at = $3
+		 WHERE id = $1 AND owner_id = $2 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > $3`,
+		id, ownerID, now)
+	if err != nil {
+		return fmt.Errorf("revoke idea invitation: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
+// AcceptIdeaInvitation - adds an existing account to a list of ideas and
+// consumes the invitation.
+//
+// Arguments:
+//   - ctx: context bounding the transaction.
+//   - tokenHash: digest of the presented credential.
+//   - user: the signed-in account claiming the invitation.
+//   - now: the reference time used to check expiry and record acceptance.
+//
+// Returns:
+//   - the invitation as it was accepted.
+//   - domain.ErrTokenInvalid when the invitation cannot be redeemed.
+//   - domain.ErrForbidden when the account email does not match.
+//   - domain.ErrAlreadyMember when the account has the list already.
+func (r *InvitationRepository) AcceptIdeaInvitation(ctx context.Context, tokenHash []byte, user domain.User,
+	now time.Time) (domain.IdeaInvitation, error) {
+	var invitation domain.IdeaInvitation
+	err := pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+		var err error
+		if invitation, err = lockIdeaInvitation(ctx, tx, tokenHash, now); err != nil {
+			return err
+		}
+		if !user.IsActive || !equalEmail(user.Email, invitation.Email) {
+			return domain.ErrForbidden
+		}
+		if invitation.OwnerID == user.ID {
+			return domain.ErrAlreadyMember
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO idea_members (owner_id, user_id, role) VALUES ($1, $2, $3)`,
+			invitation.OwnerID, user.ID, invitation.Role); err != nil {
+			if isUniqueViolation(err) {
+				return domain.ErrAlreadyMember
+			}
+			return fmt.Errorf("add invited idea member: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE idea_invitations SET accepted_by = $2, accepted_at = $3 WHERE id = $1`,
+			invitation.ID, user.ID, now); err != nil {
+			return fmt.Errorf("accept idea invitation: %w", err)
+		}
+		return nil
+	})
+	return invitation, err
+}
+
+// RegisterIdeaInvitation - creates an account and accepts its invitation to a
+// list of ideas atomically.
+//
+// Arguments:
+//   - ctx: context bounding the transaction.
+//   - tokenHash: digest of the presented credential.
+//   - user: the validated profile and hashed password for the new account.
+//   - now: the reference time used to check expiry and record acceptance.
+//
+// Returns:
+//   - the newly created account.
+//   - the invitation as it was accepted.
+//   - domain.ErrTokenInvalid when the invitation cannot be redeemed.
+//   - domain.ErrAlreadyExists when its email already has an account.
+func (r *InvitationRepository) RegisterIdeaInvitation(ctx context.Context, tokenHash []byte, user domain.User,
+	now time.Time) (domain.User, domain.IdeaInvitation, error) {
+	var created domain.User
+	var invitation domain.IdeaInvitation
+	err := pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+		var err error
+		if invitation, err = lockIdeaInvitation(ctx, tx, tokenHash, now); err != nil {
+			return err
+		}
+		if err := dropUnverifiedTx(ctx, tx, invitation.Email); err != nil {
+			return err
+		}
+		created, err = scanUser(tx.QueryRow(ctx,
+			`INSERT INTO users AS u
+			 (id, email, display_name, password_hash, is_admin, is_active, must_change_password,
+			  email_notifications, locale, theme, units, default_currency)
+			 VALUES ($1, $2, $3, $4, false, true, false, true, nullif($5, ''), $6, $7, $8)
+			 RETURNING `+userColumns,
+			user.ID, invitation.Email, user.DisplayName, user.PasswordHash, user.Locale,
+			user.Theme, user.Units, user.DefaultCurrency))
+		if isUniqueViolation(err) {
+			return domain.ErrAlreadyExists
+		}
+		if err != nil {
+			return fmt.Errorf("create idea invitee: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO idea_members (owner_id, user_id, role) VALUES ($1, $2, $3)`,
+			invitation.OwnerID, created.ID, invitation.Role); err != nil {
+			return fmt.Errorf("add registered idea invitee: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE idea_invitations SET accepted_by = $2, accepted_at = $3 WHERE id = $1`,
+			invitation.ID, created.ID, now); err != nil {
+			return fmt.Errorf("accept registered idea invitation: %w", err)
+		}
+		return nil
+	})
+	return created, invitation, err
+}
+
+// lockIdeaInvitation reads a usable invitation to a list of ideas for an
+// accepting transaction.
+func lockIdeaInvitation(ctx context.Context, tx pgx.Tx, tokenHash []byte, now time.Time) (domain.IdeaInvitation, error) {
+	item, err := scanIdeaInvitation(tx.QueryRow(ctx,
+		`SELECT `+ideaInvitationColumns+`
+		 FROM idea_invitations i JOIN users o ON o.id = i.owner_id
+		 WHERE i.token_hash = $1 FOR UPDATE OF i`, tokenHash))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return item, domain.ErrTokenInvalid
+	}
+	if err != nil {
+		return item, fmt.Errorf("lock idea invitation: %w", err)
+	}
+	if !item.Redeemable(now) {
+		return item, domain.ErrTokenInvalid
+	}
+	return item, nil
+}

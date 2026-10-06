@@ -485,17 +485,29 @@ def write_trip(admin, name, people, tags):
     log(f"created {trip['title']!r}")
 
 
-def write_ideas(admin, tags):
-    """Create the administrator's ideas with their photographs and the tags they
-    wear, each tag once across the ideas and the trips."""
+def write_ideas(admin, tags, people, password):
+    """Share the administrator's list of ideas with the editor and the viewer,
+    then create its ideas with their photographs and the tags they wear, each
+    tag once across the ideas and the trips. An idea with an author is written
+    into the administrator's list by that account, as an editor would."""
     fixture = load("ideas.json")
+    for role in fixture.get("shared_with", []):
+        request("POST", "/ideas/members", admin, {"user_id": people[role], "role": role})
+    authors = {"owner": admin}
     for idea in fixture["ideas"]:
-        created = request("POST", "/ideas", admin, without(idea, "tags", "photos"))
+        role = idea.get("author", "owner")
+        if role not in authors:
+            emails = {account["role"]: account["email"] for account in load("accounts.json")["accounts"]}
+            authors[role] = login(emails[role], password)
+        body = without(idea, "tags", "photos", "author")
+        if role != "owner":
+            body["owner_id"] = people["owner"]
+        created = request("POST", "/ideas", authors[role], body)
         for photo in idea.get("photos", []):
-            upload(f"/ideas/{created['id']}/photos", admin, photo, fixture_file("photos", photo))
+            upload(f"/ideas/{created['id']}/photos", authors[role], photo, fixture_file("photos", photo))
         ids = [tag_id(admin, tags, name, fixture["tags"].get(name)) for name in idea.get("tags", [])]
         request("PUT", f"/ideas/{created['id']}/tags", admin, {"tag_ids": ids})
-    log(f"created {len(fixture['ideas'])} ideas")
+    log(f"created {len(fixture['ideas'])} ideas, shared with {', '.join(fixture.get('shared_with', [])) or 'nobody'}")
 
 
 def main():
@@ -513,7 +525,7 @@ def main():
     tags = {}
     for name in ("iceland.json", "lisbon.json"):
         write_trip(admin, name, people, tags)
-    write_ideas(admin, tags)
+    write_ideas(admin, tags, people, password)
     log(f"done: sign in as editor@example.com or viewer@example.com with the password {password!r}")
 
 

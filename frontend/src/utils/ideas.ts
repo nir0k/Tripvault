@@ -2,8 +2,9 @@ import type { LocationQuery, LocationQueryRaw } from 'vue-router'
 import type { Idea, TravelMode, VisaRequirement } from '@/api/types'
 import { TRAVEL_MODES, VISA_REQUIREMENTS } from '@/api/types'
 
-// Helpers of the reader's ideas: the countries they are in, and the filter the
-// list is narrowed by. The whole list is in the browser, so filtering is a
+// Helpers of the ideas the reader may open - their own and those of the lists
+// shared with them: the countries they are in, and the filter the list is
+// narrowed by. The whole list is in the browser, so filtering is a
 // function of it, and the filter lives in the address, so a narrowed list can
 // be opened again or kept as a bookmark.
 
@@ -61,6 +62,8 @@ export interface IdeaFilter {
   currency: string
   /** Ideas wearing any of these tags. */
   tags: string[]
+  /** Ideas of any of these people's lists, by the owner's identifier. */
+  owners: string[]
   visas: VisaRequirement[]
   /** Ideas reached by any of these ways, alone or mixed. */
   modes: TravelMode[]
@@ -72,7 +75,7 @@ export interface IdeaFilter {
 /** emptyFilter narrows nothing, comparing costs in the reader's currency and showing the last changed first. */
 export function emptyFilter(currency: string): IdeaFilter {
   return {
-    query: '', countries: [], months: [], days: null, maxCost: null, currency, tags: [],
+    query: '', countries: [], months: [], days: null, maxCost: null, currency, tags: [], owners: [],
     visas: [], modes: [], sort: 'updated', desc: true,
   }
 }
@@ -80,7 +83,8 @@ export function emptyFilter(currency: string): IdeaFilter {
 /** activeFilters counts the filters that narrow the list, the search and the order left out. */
 export function activeFilters(filter: IdeaFilter): number {
   return [filter.countries.length > 0, filter.months.length > 0, filter.days !== null, filter.maxCost !== null,
-    filter.tags.length > 0, filter.visas.length > 0, filter.modes.length > 0].filter(Boolean).length
+    filter.tags.length > 0, filter.owners.length > 0, filter.visas.length > 0, filter.modes.length > 0]
+    .filter(Boolean).length
 }
 
 /**
@@ -136,6 +140,9 @@ function matchesIdea(idea: Idea, filter: IdeaFilter, locale: string): boolean {
     }
   }
   if (filter.tags.length > 0 && !idea.tags.some((tag) => filter.tags.includes(tag.id))) {
+    return false
+  }
+  if (filter.owners.length > 0 && !filter.owners.includes(idea.owner.id)) {
     return false
   }
   if (filter.visas.length > 0 && !filter.visas.includes(idea.visa)) {
@@ -217,6 +224,7 @@ export function filterFromQuery(query: LocationQuery, currency: string): IdeaFil
     filter.currency = cur.toUpperCase()
   }
   filter.tags = list(query.tag)
+  filter.owners = list(query.owner)
   filter.visas = list(query.visa).filter((visa): visa is VisaRequirement => VISA_REQUIREMENTS.includes(visa as VisaRequirement))
   filter.modes = list(query.mode).filter((mode): mode is TravelMode => TRAVEL_MODES.includes(mode as TravelMode))
   const [sort] = list(query.sort)
@@ -243,6 +251,7 @@ export function filterToQuery(filter: IdeaFilter, currency: string): LocationQue
   query.cost = filter.maxCost === null ? undefined : String(filter.maxCost)
   query.cur = filter.currency !== currency ? filter.currency : undefined
   query.tag = join(filter.tags)
+  query.owner = join(filter.owners)
   query.visa = join(filter.visas)
   query.mode = join(filter.modes)
   query.sort = filter.sort !== 'updated' ? filter.sort : undefined

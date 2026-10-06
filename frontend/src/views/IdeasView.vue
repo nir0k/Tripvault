@@ -2,29 +2,35 @@
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { listIdeas } from '@/api/ideas'
-import { VISA_REQUIREMENTS, type Idea, type TravelMode, type TripTag, type VisaRequirement } from '@/api/types'
+import { ideaHistory, listIdeaLists, listIdeas } from '@/api/ideas'
+import {
+  VISA_REQUIREMENTS, type Idea, type IdeaChange, type IdeaList, type TravelMode, type TripTag, type VisaRequirement,
+} from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import { TRAVEL_MODE_ICONS } from '@/components/icons'
 import CountrySelect from '@/components/ideas/CountrySelect.vue'
 import DaysRangeSlider from '@/components/ideas/DaysRangeSlider.vue'
 import IdeaDialog from '@/components/ideas/IdeaDialog.vue'
+import IdeaHistory from '@/components/ideas/IdeaHistory.vue'
+import IdeasSharingDialog from '@/components/ideas/IdeasSharingDialog.vue'
 import IdeaPicture from '@/components/ideas/IdeaPicture.vue'
 import MonthPicker from '@/components/ideas/MonthPicker.vue'
 import TagPill from '@/components/TagPill.vue'
 import { useSessionStore } from '@/stores/session'
 import { errorMessage } from '@/utils/errors'
-import { formatMoney } from '@/utils/format'
+import { formatDateTime, formatMoney } from '@/utils/format'
 import {
   IDEA_TRAVEL_MODES, MAX_IDEA_DAYS, activeFilters, countryFlag, countryName, emptyFilter, filterFromQuery,
   filterIdeas, filterToQuery, formatDays, formatMonths, formatRange, otherCurrencies, type IdeaFilter, type IdeaSort,
 } from '@/utils/ideas'
 
-// The reader's ideas of where to go, as a table narrowed by any of their
-// fields and ordered by a click on a column's heading, the last changed first
-// until one is clicked. The whole list is read
-// once and filtered here as the filter changes; the filter is kept in the
-// address, so a narrowed list can be opened again.
+// The ideas of where to go the reader may open - their own and those of the
+// lists shared with them - as a table narrowed by any of their fields and
+// ordered by a click on a column's heading, the last changed first until one
+// is clicked. The whole list is read once and filtered here as the filter
+// changes; the filter is kept in the address, so a narrowed list can be opened
+// again. From here the reader shares their own list and reads the history of
+// any list they may open.
 
 const { t, te, locale } = useI18n()
 const route = useRoute()
@@ -35,6 +41,11 @@ const ideas = ref<Idea[]>([])
 const loaded = ref(false)
 const error = ref('')
 const creator = useTemplateRef<InstanceType<typeof IdeaDialog>>('creator')
+const sharing = useTemplateRef<InstanceType<typeof IdeasSharingDialog>>('sharing')
+const historyDialog = useTemplateRef<HTMLDialogElement>('historyDialog')
+// lists are the reader's own list first, then the ones shared with them.
+const lists = ref<IdeaList[]>([])
+const editableLists = computed(() => lists.value.filter((list) => list.role !== 'viewer'))
 const showFilters = ref(false)
 
 // The reader's own currency is what costs are compared in unless the filter names another.
@@ -145,11 +156,13 @@ function modes(idea: Idea): TravelMode[] {
   return IDEA_TRAVEL_MODES.filter((mode) => idea.transports.some((transport) => transport.modes.includes(mode)))
 }
 
-// load reads the reader's ideas.
+// load reads the ideas and the lists the reader may open.
 async function load(): Promise<void> {
   error.value = ''
   try {
-    ideas.value = await listIdeas()
+    const [loadedIdeas, loadedLists] = await Promise.all([listIdeas(), listIdeaLists()])
+    ideas.value = loadedIdeas
+    lists.value = loadedLists
   } catch (err) {
     error.value = errorMessage(err, t, te)
   } finally {
@@ -157,6 +170,49 @@ async function load(): Promise<void> {
   }
 }
 onMounted(load)
+
+// isMine says whether an idea is in the reader's own list.
+function isMine(idea: Idea): boolean {
+  return idea.owner.id === session.user?.id
+}
+
+// newIdeaList is the list a new idea goes into: the one the filter narrows to
+// when the reader edits it, otherwise their own.
+const newIdeaList = computed(() => {
+  const [only] = filter.value.owners
+  return filter.value.owners.length === 1 && editableLists.value.some((list) => list.owner.id === only)
+    ? only
+    : session.user?.id
+})
+
+// The history of one list at a time: the one the filter narrows to, or the reader's own.
+const historyOwner = ref('')
+const history = ref<IdeaChange[]>([])
+const historyError = ref('')
+const historyLoading = ref(false)
+async function loadHistory(): Promise<void> {
+  historyError.value = ''
+  historyLoading.value = true
+  try {
+    history.value = await ideaHistory({ ownerId: historyOwner.value })
+  } catch (err) {
+    historyError.value = errorMessage(err, t, te)
+  } finally {
+    historyLoading.value = false
+  }
+}
+function openHistory(): void {
+  const [only] = filter.value.owners
+  historyOwner.value = filter.value.owners.length === 1 && only ? only : (session.user?.id ?? '')
+  history.value = []
+  historyDialog.value?.showModal()
+  void loadHistory()
+}
+
+// listName reads a list by its owner: the reader's own as "Mine".
+function listName(list: IdeaList): string {
+  return list.role === 'owner' ? t('ideas.mine') : t('ideas.listOf', { name: list.owner.display_name })
+}
 
 // created opens a new idea's page once it is saved.
 async function created(idea: Idea): Promise<void> {
@@ -166,6 +222,7 @@ async function created(idea: Idea): Promise<void> {
 const COLUMNS: { key: string; sort?: IdeaSort }[] = [
   { key: 'title', sort: 'title' }, { key: 'countries' }, { key: 'days', sort: 'days' },
   { key: 'cost', sort: 'cost' }, { key: 'transport' }, { key: 'visa' }, { key: 'tags' },
+  { key: 'changed', sort: 'updated' },
 ]
 </script>
 
@@ -173,10 +230,20 @@ const COLUMNS: { key: string; sort?: IdeaSort }[] = [
   <section class="space-y-4">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <h1 class="text-2xl font-bold">{{ t('ideas.titleList') }}</h1>
-      <button type="button" class="btn btn-primary" @click="creator?.open()">
-        <AppIcon name="plus" />
-        {{ t('ideas.new') }}
-      </button>
+      <div class="flex flex-wrap gap-2">
+        <button type="button" class="btn btn-hover-outline" @click="openHistory">
+          <AppIcon name="clock" />
+          {{ t('ideas.history.button') }}
+        </button>
+        <button type="button" class="btn btn-hover-outline" @click="sharing?.open()">
+          <AppIcon name="users" />
+          {{ t('ideas.sharing.button') }}
+        </button>
+        <button type="button" class="btn btn-primary" @click="creator?.open(null, newIdeaList)">
+          <AppIcon name="plus" />
+          {{ t('ideas.new') }}
+        </button>
+      </div>
     </div>
 
     <div class="flex flex-wrap items-center gap-2">
@@ -290,6 +357,22 @@ const COLUMNS: { key: string; sort?: IdeaSort }[] = [
             </button>
           </div>
         </div>
+        <div v-if="lists.length > 1" class="flex flex-col gap-1 md:col-span-2">
+          <span class="label">{{ t('ideas.ownerFilter') }}</span>
+          <div class="flex flex-wrap gap-1">
+            <button
+              v-for="list in lists"
+              :key="list.owner.id"
+              type="button"
+              class="btn btn-xs"
+              :class="filter.owners.includes(list.owner.id) ? 'btn-primary' : 'btn-ghost border-base-300'"
+              :aria-pressed="filter.owners.includes(list.owner.id)"
+              @click="change({ owners: toggle(filter.owners, list.owner.id) })"
+            >
+              {{ listName(list) }}
+            </button>
+          </div>
+        </div>
         <div v-if="tags.length > 0" class="flex flex-col gap-1 md:col-span-2">
           <span class="label">{{ t('ideas.tags') }}</span>
           <div class="flex flex-wrap gap-1">
@@ -357,7 +440,12 @@ const COLUMNS: { key: string; sort?: IdeaSort }[] = [
                     <span v-else class="flex size-10 shrink-0 items-center justify-center rounded-field bg-base-200" aria-hidden="true">
                       <AppIcon name="lightbulb" class="size-4! opacity-40" />
                     </span>
-                    {{ idea.title }}
+                    <span class="min-w-0">
+                      {{ idea.title }}
+                      <span v-if="!isMine(idea)" class="block text-xs font-normal text-base-content/60">
+                        {{ t('ideas.listOf', { name: idea.owner.display_name }) }}
+                      </span>
+                    </span>
                   </RouterLink>
                 </td>
                 <td class="min-w-32 max-w-56">
@@ -394,6 +482,10 @@ const COLUMNS: { key: string; sort?: IdeaSort }[] = [
                     <TagPill v-for="tag in idea.tags" :key="tag.id" :tag="tag" />
                   </span>
                 </td>
+                <td class="min-w-32">
+                  <p class="whitespace-nowrap">{{ idea.updated_by?.display_name ?? t('ideas.deletedUser') }}</p>
+                  <p class="text-xs whitespace-nowrap text-base-content/60">{{ formatDateTime(idea.updated_at, locale) }}</p>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -408,6 +500,28 @@ const COLUMNS: { key: string; sort?: IdeaSort }[] = [
       <p v-else class="text-sm text-base-content/70">{{ t('ideas.noneFound') }}</p>
     </template>
 
-    <IdeaDialog ref="creator" @saved="created" />
+    <IdeaDialog ref="creator" :lists="editableLists" @saved="created" />
+    <IdeasSharingDialog ref="sharing" @changed="load" />
+
+    <dialog ref="historyDialog" class="modal modal-top sm:modal-middle">
+      <div class="modal-box flex max-w-2xl flex-col gap-4">
+        <h2 class="text-lg font-bold">{{ t('ideas.history.title') }}</h2>
+        <label v-if="lists.length > 1" class="floating-label">
+          <span>{{ t('ideas.history.list') }}</span>
+          <select v-model="historyOwner" class="select w-full" @change="loadHistory">
+            <option v-for="list in lists" :key="list.owner.id" :value="list.owner.id">{{ listName(list) }}</option>
+          </select>
+        </label>
+        <p v-if="historyError" role="alert" class="text-sm text-error">{{ historyError }}</p>
+        <div v-else-if="historyLoading" class="flex justify-center py-4"><span class="loading loading-spinner"></span></div>
+        <div v-else class="max-h-[60dvh] overflow-y-auto">
+          <IdeaHistory :changes="history" with-titles />
+        </div>
+        <div class="modal-action">
+          <form method="dialog"><button type="submit" class="btn">{{ t('common.close') }}</button></form>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop"><button type="submit">{{ t('common.close') }}</button></form>
+    </dialog>
   </section>
 </template>

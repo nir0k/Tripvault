@@ -81,6 +81,21 @@ type TripInvitation struct {
 	CreatedAt  time.Time
 }
 
+// IdeaInvitation offers a role on one person's list of ideas to one email
+// address. Only the owner invites, so the owner is the one who sent it.
+type IdeaInvitation struct {
+	ID         uuid.UUID
+	OwnerID    uuid.UUID
+	OwnerName  string
+	Email      string
+	Role       TripRole
+	ExpiresAt  time.Time
+	AcceptedBy *uuid.UUID
+	AcceptedAt *time.Time
+	RevokedAt  *time.Time
+	CreatedAt  time.Time
+}
+
 // Redeemable - reports whether a user invitation can still be used.
 //
 // Arguments:
@@ -100,5 +115,16 @@ func (i UserInvitation) Redeemable(now time.Time) bool {
 // Returns:
 //   - true when the invitation is open and has not expired.
 func (i TripInvitation) Redeemable(now time.Time) bool {
+	return i.AcceptedAt == nil && i.RevokedAt == nil && now.Before(i.ExpiresAt)
+}
+
+// Redeemable - reports whether an invitation to a list of ideas can still be used.
+//
+// Arguments:
+//   - now: the reference time.
+//
+// Returns:
+//   - true when the invitation is open and has not expired.
+func (i IdeaInvitation) Redeemable(now time.Time) bool {
 	return i.AcceptedAt == nil && i.RevokedAt == nil && now.Before(i.ExpiresAt)
 }

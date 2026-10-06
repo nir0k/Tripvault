@@ -104,9 +104,13 @@ tags:
   - name: Ideas
     description: |
       A person's ideas of where to go one day: where, when it is best, how long
-      it takes and roughly what it costs. An idea is its owner's alone, like a
-      tag, and somebody else's reads as missing. The list comes whole, for the
-      interface to filter; a plan is made from an idea through `POST /trips`.
+      it takes and roughly what it costs. A person's ideas are one list, which
+      its owner may share whole: a viewer reads it, an editor also adds,
+      changes and deletes its ideas, and only the owner decides who is a
+      member. Every change is kept in the list's history with who made it. An
+      idea of a list not shared with the reader reads as missing. The ideas
+      come whole, the reader's own and the shared ones, for the interface to
+      filter; a plan is made from an idea through `POST /trips`.
   - name: Places
     description: Place search, reverse lookups and reading positions from map links.
   - name: Administration
@@ -1070,8 +1074,11 @@ paths:
   /api/v1/ideas:
     get:
       tags: [Ideas]
-      summary: List one's ideas
-      description: Every idea of the reader, the last changed first.
+      summary: List the ideas one may open
+      description: |
+        Every idea of the reader's own list and of the lists shared with them,
+        the last changed first. Each carries the reader's role on its list and
+        only the reader's own tags.
       operationId: listIdeas
       responses:
         "200":
@@ -1091,7 +1098,11 @@ paths:
     post:
       tags: [Ideas]
       summary: Add an idea
-      description: Without a currency the idea takes the reader's default one.
+      description: |
+        The idea goes into the reader's own list, or into the list of `owner_id`
+        when the reader edits it; a viewer of that list answers `403`, and a list
+        not shared with the reader `404`. Without a currency the idea takes the
+        reader's default one.
       operationId: createIdea
       requestBody:
         required: true
@@ -1110,6 +1121,244 @@ paths:
           $ref: "#/components/responses/InvalidRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/ideas/lists:
+    get:
+      tags: [Ideas]
+      summary: List the lists of ideas one may open
+      description: The reader's own list first, then the lists shared with them by their owners' names.
+      operationId: listIdeaLists
+      responses:
+        "200":
+          description: The lists.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/IdeaList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/ideas/lists/{ownerID}:
+    delete:
+      tags: [Ideas]
+      summary: Leave a list of ideas
+      description: Takes the reader off a list shared with them, with their tags on its ideas.
+      operationId: leaveIdeaList
+      parameters:
+        - name: ownerID
+          in: path
+          required: true
+          description: The owner of the list.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Left.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/ideas/members:
+    get:
+      tags: [Ideas]
+      summary: List the people one's ideas are shared with
+      description: The members of the reader's own list, by name.
+      operationId: listIdeaMembers
+      responses:
+        "200":
+          description: The members.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/IdeaMember"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Ideas]
+      summary: Share one's ideas with a person
+      description: |
+        A viewer reads every idea of the reader's list; an editor also adds,
+        changes and deletes them. Somebody who has the list already answers
+        `409 already_member`; an unknown or deactivated account answers `422`
+        with reason `unknown_user` or `inactive_user`.
+      operationId: addIdeaMember
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddTripMemberRequest"
+      responses:
+        "201":
+          description: Shared.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdeaMember"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /api/v1/ideas/members/{userID}:
+    patch:
+      tags: [Ideas]
+      summary: Change a member's role on one's ideas
+      operationId: updateIdeaMember
+      parameters:
+        - $ref: "#/components/parameters/UserID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTripMemberRequest"
+      responses:
+        "200":
+          description: The updated member.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdeaMember"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+    delete:
+      tags: [Ideas]
+      summary: Stop sharing one's ideas with a person
+      operationId: removeIdeaMember
+      parameters:
+        - $ref: "#/components/parameters/UserID"
+      responses:
+        "204":
+          description: Removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/ideas/invitations:
+    get:
+      tags: [Ideas]
+      summary: List the invitations to one's ideas
+      operationId: listIdeaInvitations
+      responses:
+        "200":
+          description: The reader's invitations without their tokens.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/TripInvitation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Ideas]
+      summary: Invite a person to one's ideas by email
+      description: Needs mail delivery; without it answers `409 mail_disabled`.
+      operationId: createIdeaInvitation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role, locale]
+              properties:
+                email: { type: string, format: email }
+                role: { type: string, enum: [editor, viewer] }
+                locale: { type: string, enum: [en, ru, ""] }
+      responses:
+        "201":
+          description: Invitation queued for delivery.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TripInvitation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /api/v1/ideas/invitations/{invitationID}:
+    delete:
+      tags: [Ideas]
+      summary: Revoke an invitation to one's ideas
+      operationId: revokeIdeaInvitation
+      parameters:
+        - $ref: "#/components/parameters/InvitationID"
+      responses:
+        "204": { description: Invitation revoked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/ideas/history:
+    get:
+      tags: [Ideas]
+      summary: Read the history of a list of ideas
+      description: |
+        Who added, changed and deleted the ideas of a list, and when, the
+        newest first and at most 200 entries: of one idea with `idea_id`,
+        otherwise of the list of `owner_id`, the reader's own when it is left
+        out. Every member of the list reads it. Tags are the reader's own and
+        are not part of it.
+      operationId: getIdeaHistory
+      parameters:
+        - name: idea_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: owner_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The changes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/IdeaChange"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "422":
           $ref: "#/components/responses/ValidationFailed"
 
@@ -1134,7 +1383,10 @@ paths:
     put:
       tags: [Ideas]
       summary: Save an idea
-      description: Every field is sent, as the form edits them all at once; the tags are set apart.
+      description: |
+        The owner and the editors of the idea's list only; a viewer answers
+        `403`. Every field is sent, as the form edits them all at once; the
+        tags are set apart.
       operationId: updateIdea
       parameters:
         - $ref: "#/components/parameters/IdeaID"
@@ -1155,6 +1407,8 @@ paths:
           $ref: "#/components/responses/InvalidRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "422":
@@ -1162,6 +1416,7 @@ paths:
     delete:
       tags: [Ideas]
       summary: Delete an idea
+      description: The owner and the editors of the idea's list, whoever wrote it; a viewer answers `403`.
       operationId: deleteIdea
       parameters:
         - $ref: "#/components/parameters/IdeaID"
@@ -1170,6 +1425,8 @@ paths:
           description: Deleted.
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -5119,6 +5376,85 @@ paths:
         "204": { description: Invitation revoked. }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/invitations/ideas/preview:
+    post:
+      tags: [Ideas]
+      summary: Preview an invitation to a list of ideas
+      operationId: previewIdeaInvitation
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InvitationToken" }
+      responses:
+        "200":
+          description: The access offered by the invitation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IdeaInvitationPreview" }
+        "410": { $ref: "#/components/responses/Error" }
+
+  /api/v1/invitations/ideas/register:
+    post:
+      tags: [Ideas]
+      summary: Register through an invitation to a list of ideas
+      description: Creates an account on this closed instance and shares the list with it in one transaction.
+      operationId: registerIdeaInvitation
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, display_name, password, locale]
+              properties:
+                token: { type: string }
+                display_name: { type: string, maxLength: 120 }
+                password: { type: string, format: password, minLength: 8 }
+                locale: { type: string, enum: [en, ru, ""] }
+      responses:
+        "201":
+          description: Account and membership created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user, owner_id]
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+                  owner_id: { type: string, format: uuid }
+        "409": { $ref: "#/components/responses/Error" }
+        "410": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /api/v1/invitations/ideas/accept:
+    post:
+      tags: [Ideas]
+      summary: Accept an invitation to a list of ideas
+      description: Adds the signed-in account when its email matches the invitation.
+      operationId: acceptIdeaInvitation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InvitationToken" }
+      responses:
+        "200":
+          description: Invitation accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [owner_id]
+                properties:
+                  owner_id: { type: string, format: uuid }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Error" }
+        "410": { $ref: "#/components/responses/Error" }
+
   /api/v1/trips/{tripID}/invitations:
     parameters:
       - $ref: "#/components/parameters/TripID"
@@ -5721,6 +6057,15 @@ components:
       properties:
         trip_id: { type: string, format: uuid }
         trip_title: { type: string }
+        email: { type: string, format: email }
+        role: { type: string, enum: [editor, viewer] }
+        expires_at: { type: string, format: date-time }
+
+    IdeaInvitationPreview:
+      type: object
+      required: [owner_name, email, role, expires_at]
+      properties:
+        owner_name: { type: string }
         email: { type: string, format: email }
         role: { type: string, enum: [editor, viewer] }
         expires_at: { type: string, format: date-time }
@@ -6898,15 +7243,39 @@ components:
           enum: [unknown, not_needed, needed, on_arrival]
           default: not_needed
           description: "`on_arrival` is a visa got online or at the border."
+        owner_id:
+          type: string
+          format: uuid
+          description: |
+            Only when an idea is added: the owner of a list the reader edits,
+            whose list the idea goes into. Left out, the reader's own; a save
+            refuses it.
     Idea:
       type: object
-      required: [id, title, countries, places, photos, months, days_min, days_max, days_ideal, description_md,
-                 currency, costs, transports, transport_min, transport_max, cost_min, cost_max, visa, tags,
-                 created_at, updated_at]
+      required: [id, owner, role, created_by, updated_by, title, countries, places, photos, months, days_min,
+                 days_max, days_ideal, description_md, currency, costs, transports, transport_min, transport_max,
+                 cost_min, cost_max, visa, tags, created_at, updated_at]
       properties:
         id:
           type: string
           format: uuid
+        owner:
+          $ref: "#/components/schemas/TripUser"
+          description: The person whose list the idea is in, whoever wrote it.
+        role:
+          type: string
+          enum: [owner, editor, viewer]
+          description: What the reader may do with the idea.
+        created_by:
+          description: Who wrote the idea; null once their account is deleted.
+          oneOf:
+            - $ref: "#/components/schemas/TripUser"
+            - type: "null"
+        updated_by:
+          description: Who changed the idea last; null once their account is deleted.
+          oneOf:
+            - $ref: "#/components/schemas/TripUser"
+            - type: "null"
         title:
           type: string
         countries:
@@ -6975,6 +7344,52 @@ components:
           type: string
           format: date-time
         updated_at:
+          type: string
+          format: date-time
+    IdeaList:
+      type: object
+      required: [owner, role]
+      properties:
+        owner:
+          $ref: "#/components/schemas/TripUser"
+        role:
+          type: string
+          enum: [owner, editor, viewer]
+    IdeaMember:
+      type: object
+      required: [user, role, created_at]
+      properties:
+        user:
+          $ref: "#/components/schemas/TripUser"
+        role:
+          type: string
+          enum: [editor, viewer]
+        created_at:
+          type: string
+          format: date-time
+    IdeaChange:
+      type: object
+      required: [id, idea_id, idea_title, user, action, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        idea_id:
+          type: [string, "null"]
+          format: uuid
+          description: Null once the idea is deleted.
+        idea_title:
+          type: string
+          description: The title the idea had when it was changed.
+        user:
+          description: Who made the change; null once their account is deleted.
+          oneOf:
+            - $ref: "#/components/schemas/TripUser"
+            - type: "null"
+        action:
+          type: string
+          enum: [created, updated, deleted, photo_added, photo_removed]
+        created_at:
           type: string
           format: date-time
     TripTag:

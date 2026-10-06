@@ -38,8 +38,8 @@ var (
 	ErrLastAdmin = errors.New("the service must keep at least one active administrator")
 	// ErrForbidden reports an action the reader's role on a trip does not allow.
 	ErrForbidden = errors.New("forbidden")
-	// ErrAlreadyMember reports adding a person who already has access to a trip.
-	ErrAlreadyMember = errors.New("the person already has access to the trip")
+	// ErrAlreadyMember reports adding a person who already has access to a trip or a list of ideas.
+	ErrAlreadyMember = errors.New("the person already has access")
 )
 
 // ValidationError reports input that violates a business rule. Field names the

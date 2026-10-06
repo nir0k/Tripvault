@@ -93,6 +93,12 @@ type InvitationStore interface {
 	RevokeTripInvitation(ctx context.Context, tripID, id uuid.UUID, now time.Time) error
 	AcceptTripInvitation(ctx context.Context, tokenHash []byte, user domain.User, now time.Time) (uuid.UUID, error)
 	RegisterTripInvitation(ctx context.Context, tokenHash []byte, user domain.User, now time.Time) (domain.User, uuid.UUID, error)
+	CreateIdeaInvitation(ctx context.Context, invitation domain.IdeaInvitation, tokenHash []byte, message domain.MailMessage) error
+	IdeaInvitations(ctx context.Context, ownerID uuid.UUID) ([]domain.IdeaInvitation, error)
+	IdeaInvitationByToken(ctx context.Context, tokenHash []byte) (domain.IdeaInvitation, error)
+	RevokeIdeaInvitation(ctx context.Context, ownerID, id uuid.UUID, now time.Time) error
+	AcceptIdeaInvitation(ctx context.Context, tokenHash []byte, user domain.User, now time.Time) (domain.IdeaInvitation, error)
+	RegisterIdeaInvitation(ctx context.Context, tokenHash []byte, user domain.User, now time.Time) (domain.User, domain.IdeaInvitation, error)
 }
 
 // RegistrationStore keeps self-registered accounts and the confirmations of their addresses.
@@ -558,6 +564,8 @@ func (s *Server) routes() http.Handler {
 		v1.Post("/invitations/user/accept", s.handleAcceptUserInvitation)
 		v1.Post("/invitations/trip/preview", s.handlePreviewTripInvitation)
 		v1.Post("/invitations/trip/register", s.handleRegisterTripInvitation)
+		v1.Post("/invitations/ideas/preview", s.handlePreviewIdeaInvitation)
+		v1.Post("/invitations/ideas/register", s.handleRegisterIdeaInvitation)
 
 		// Reading by a share link needs no account: the token in X-Share-Token
 		// is the whole credential, and it grants reading and nothing else.
@@ -600,6 +608,7 @@ func (s *Server) routes() http.Handler {
 
 				member.Get("/users/search", s.handleSearchUsers)
 				member.Post("/invitations/trip/accept", s.handleAcceptTripInvitation)
+				member.Post("/invitations/ideas/accept", s.handleAcceptIdeaInvitation)
 				member.Get("/geo/search", s.handleGeoSearch)
 				member.Get("/geo/reverse", s.handleGeoReverse)
 				member.Get("/geo/parse-link", s.handleParseLink)
@@ -614,6 +623,16 @@ func (s *Server) routes() http.Handler {
 
 				member.Get("/ideas", s.handleListIdeas)
 				member.Post("/ideas", s.handleCreateIdea)
+				member.Get("/ideas/lists", s.handleListIdeaLists)
+				member.Delete("/ideas/lists/{ownerID}", s.handleLeaveIdeaList)
+				member.Get("/ideas/members", s.handleListIdeaMembers)
+				member.Post("/ideas/members", s.handleAddIdeaMember)
+				member.Patch("/ideas/members/{userID}", s.handleUpdateIdeaMember)
+				member.Delete("/ideas/members/{userID}", s.handleRemoveIdeaMember)
+				member.Get("/ideas/invitations", s.handleListIdeaInvitations)
+				member.Post("/ideas/invitations", s.handleCreateIdeaInvitation)
+				member.Delete("/ideas/invitations/{invitationID}", s.handleRevokeIdeaInvitation)
+				member.Get("/ideas/history", s.handleIdeaHistory)
 				member.Get("/ideas/{ideaID}", s.handleGetIdea)
 				member.Put("/ideas/{ideaID}", s.handleUpdateIdea)
 				member.Delete("/ideas/{ideaID}", s.handleDeleteIdea)
