@@ -154,8 +154,7 @@ func Latest() (int64, error) {
 // Migrator - prepares and atomically activates schemas for a restore.
 //
 // The replacement is built at the archive version, loaded and upgraded under
-// an isolated search path before public is renamed during cutover. The legacy
-// Reset and UpTo methods remain for callers that do not support staging.
+// an isolated search path before public is renamed during cutover.
 type Migrator struct {
 	pool   *pgxpool.Pool
 	logger *slog.Logger

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useLocationSearch } from '@/composables/useLocationSearch'
 import { ApiError } from '@/api/client'
 import { getClientConfig } from '@/api/config'
-import { parseLink, reversePlace, searchPlaces } from '@/api/geo'
+import { parseLink, reversePlace } from '@/api/geo'
 import type { ClientConfig, GeoPlace } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import MapPicker from '@/components/MapPicker.vue'
@@ -40,16 +41,11 @@ const { t, te, locale } = useI18n()
 
 const config = ref<ClientConfig | null>(null)
 const query = ref('')
-const results = ref<GeoPlace[]>([])
-const searching = ref(false)
-const searched = ref(false)
 const link = ref('')
 const showMap = ref(false)
 const message = ref('')
 // The address came from a lookup and may be replaced by the next one.
 let addressIsLookedUp = false
-let searchTimer: ReturnType<typeof setTimeout> | undefined
-let generation = 0
 
 const geocodingEnabled = computed(() => config.value?.geocoding_enabled ?? false)
 const lat = computed(() => (model.value.lat.trim() === '' ? null : Number(model.value.lat.replace(',', '.'))))
@@ -62,40 +58,12 @@ onMounted(async () => {
     // Without the configuration the search and the map stay hidden.
   }
 })
-onBeforeUnmount(() => clearTimeout(searchTimer))
 
-// The search waits for a pause in typing, and shows only the newest answer.
-watch(query, (text) => {
-  clearTimeout(searchTimer)
-  generation++
-  results.value = []
-  searched.value = false
-  const trimmed = text.trim()
-  if (trimmed.length < 2 || !geocodingEnabled.value) {
-    searching.value = false
-    return
-  }
-  searching.value = true
-  searchTimer = setTimeout(async () => {
-    const current = ++generation
-    try {
-      const found = await searchPlaces(trimmed, locale.value, props.focus)
-      if (current === generation) {
-        results.value = found
-        message.value = ''
-      }
-    } catch (err) {
-      if (current === generation) {
-        message.value = errorMessage(err, t, te)
-      }
-    } finally {
-      if (current === generation) {
-        searching.value = false
-        searched.value = true
-      }
-    }
-  }, 350)
-})
+const { results, searching, searched } = useLocationSearch(query,
+  () => geocodingEnabled.value, () => props.focus,
+  (err) => { message.value = errorMessage(err, t, te) })
+watch(query, () => { message.value = '' })
+
 
 // setPosition stores a position with six decimals, about ten centimetres. The
 // model is written once per change: the parent's new value arrives only after
@@ -150,13 +118,15 @@ async function applyLink(): Promise<void> {
   }
   message.value = ''
   try {
-    const location = await parseLink(text)
-    setPosition(location.lat, location.lng)
+    const location = await parseLink(text, locale.value)
+    const replaceAddress = !model.value.address.trim() || addressIsLookedUp
+    setPosition(location.lat, location.lng, location.label && replaceAddress ? location.label : undefined)
+    if (location.label && replaceAddress) addressIsLookedUp = true
     if (location.name) {
-      emit('named', location.name, '')
+      emit('named', location.name, location.ref)
     }
     link.value = ''
-    await lookUpAddress(location)
+    if (!location.label) await lookUpAddress(location)
   } catch (err) {
     message.value = err instanceof ApiError && err.code === 'validation_failed'
       ? t('location.unrecognized')

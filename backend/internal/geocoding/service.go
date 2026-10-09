@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nir0k/tripvault/backend/internal/domain"
+	"github.com/nir0k/tripvault/backend/internal/requestwork"
 )
 
 // Cache stores geocoding answers shared by every user.
@@ -32,6 +33,8 @@ type Options struct {
 	PerMinute int
 	Daily     int
 	CacheTTL  time.Duration
+	// CacheNamespace distinguishes installations of the same provider.
+	CacheNamespace string
 }
 
 // Service answers searches from the cache or the provider, within limits. It
@@ -43,9 +46,12 @@ type Service struct {
 	opts     Options
 	logger   *slog.Logger
 	now      func() time.Time
+	work     requestwork.Group[[]Place]
 
-	mu     sync.Mutex
-	recent []time.Time
+	mu        sync.Mutex
+	recent    []time.Time
+	inflight  int
+	admission sync.Mutex
 }
 
 // NewService - creates the geocoding service.
@@ -89,7 +95,7 @@ func (s *Service) Search(ctx context.Context, query Query) ([]Place, error) {
 		focus = fmt.Sprintf("%.1f,%.1f", query.Focus.Lat, query.Focus.Lng)
 	}
 	text := strings.ToLower(strings.Join(strings.Fields(query.Text), " "))
-	return s.lookup(ctx, "search|"+text+"|"+query.Lang+"|"+focus, func(provider Provider) ([]Place, error) {
+	return s.lookup(ctx, "search|"+text+"|"+query.Lang+"|"+focus, func(ctx context.Context, provider Provider) ([]Place, error) {
 		return provider.Search(ctx, query)
 	})
 }
@@ -106,19 +112,19 @@ func (s *Service) Search(ctx context.Context, query Query) ([]Place, error) {
 //   - ErrDisabled, ErrRateLimited or ErrUnavailable.
 func (s *Service) Reverse(ctx context.Context, point domain.Point, lang string) ([]Place, error) {
 	key := fmt.Sprintf("reverse|%.4f,%.4f|%s", point.Lat, point.Lng, lang)
-	return s.lookup(ctx, key, func(provider Provider) ([]Place, error) {
+	return s.lookup(ctx, key, func(ctx context.Context, provider Provider) ([]Place, error) {
 		return provider.Reverse(ctx, point, lang)
 	})
 }
 
 // lookup serves an answer from the cache, else asks the provider within the
 // limits and caches what it says, empty answers included.
-func (s *Service) lookup(ctx context.Context, identity string, ask func(Provider) ([]Place, error)) ([]Place, error) {
+func (s *Service) lookup(ctx context.Context, identity string, ask func(context.Context, Provider) ([]Place, error)) ([]Place, error) {
 	if s.provider == nil {
 		return nil, ErrDisabled
 	}
 	now := s.now()
-	sum := sha256.Sum256([]byte(s.provider.Name() + "|" + identity))
+	sum := sha256.Sum256([]byte(s.provider.Name() + "|" + s.opts.CacheNamespace + "|" + identity))
 	key := sum[:]
 
 	if payload, ok, err := s.cache.Get(ctx, key, now); err != nil {
@@ -130,32 +136,35 @@ func (s *Service) lookup(ctx context.Context, identity string, ask func(Provider
 		}
 	}
 
-	if used, err := s.usage.Requests24h(ctx, now); err != nil {
-		s.logger.Warn("geocode usage read failed", slog.Any("error", err))
-	} else if s.opts.Daily > 0 && used >= s.opts.Daily {
-		return nil, ErrRateLimited
-	}
-	if !s.takeMinuteSlot(now) {
-		return nil, ErrRateLimited
-	}
-
-	places, err := ask(s.provider)
-	if recordErr := s.usage.Record(ctx, now, err == nil); recordErr != nil {
-		s.logger.Warn("geocode usage write failed", slog.Any("error", recordErr))
-	}
-	if err != nil {
-		s.logger.Warn("geocode request failed", slog.Any("error", err))
-		return nil, err
-	}
-	if places == nil {
-		places = []Place{}
-	}
-	if payload, err := json.Marshal(places); err == nil {
-		if err := s.cache.Put(ctx, key, s.provider.Name(), payload, now.Add(s.opts.CacheTTL)); err != nil {
-			s.logger.Warn("geocode cache write failed", slog.Any("error", err))
+	return s.work.Do(ctx, string(key), func(ctx context.Context) ([]Place, error) {
+		// A caller arriving just after the previous work finished may now hit.
+		if payload, ok, err := s.cache.Get(ctx, key, s.now()); err == nil && ok {
+			var places []Place
+			if json.Unmarshal(payload, &places) == nil {
+				return places, nil
+			}
 		}
-	}
-	return places, nil
+		release, err := s.admit(ctx)
+		if err != nil {
+			return nil, err
+		}
+		places, err := ask(ctx, s.provider)
+		release(err == nil)
+		if err != nil {
+			s.logger.Warn("geocode request failed", slog.Any("error", err))
+			return nil, err
+		}
+
+		if places == nil {
+			places = []Place{}
+		}
+		if payload, err := json.Marshal(places); err == nil {
+			if err := s.cache.Put(ctx, key, s.provider.Name(), payload, now.Add(s.opts.CacheTTL)); err != nil {
+				s.logger.Warn("geocode cache write failed", slog.Any("error", err))
+			}
+		}
+		return places, nil
+	})
 }
 
 // takeMinuteSlot reserves a request within the per-minute limit.
@@ -175,4 +184,38 @@ func (s *Service) takeMinuteSlot(now time.Time) bool {
 	}
 	s.recent = append(s.recent, now)
 	return true
+}
+
+// admit reserves a daily and minute allowance before the provider is called.
+// Its release records the attempt before freeing the in-flight daily slot.
+func (s *Service) admit(ctx context.Context) (func(bool), error) {
+	s.admission.Lock()
+	defer s.admission.Unlock()
+	now := s.now()
+	used, err := s.usage.Requests24h(ctx, now)
+	if err != nil {
+		return nil, fmt.Errorf("read provider usage: %w", err)
+	}
+	if s.opts.Daily > 0 && used+s.inflight >= s.opts.Daily {
+		return nil, ErrRateLimited
+	}
+	if !s.takeMinuteSlot(now) {
+		return nil, ErrRateLimited
+	}
+	s.inflight++
+	return func(success bool) {
+		s.admission.Lock()
+		defer s.admission.Unlock()
+		// The provider has finished even when its readers cancelled. Keep its
+		// attempted call in the quota, using a bounded cleanup context.
+		recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := s.usage.Record(recordCtx, now, success); err != nil {
+			s.logger.Warn("record provider usage failed", slog.Any("error", err))
+			// Keep the reservation when persistence fails: an uncounted attempt
+			// must not grant another slot until this process restarts.
+			return
+		}
+		s.inflight--
+	}, nil
 }

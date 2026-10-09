@@ -100,7 +100,7 @@ func (f *fakeStorage) Reserve(context.Context, int64) (func(), error) {
 // service with no key builds no client to ask, and the screen must still name it.
 func TestStatusNamesTheConfiguredProviders(t *testing.T) {
 	admin := domain.User{ID: uuid.New(), IsActive: true, IsAdmin: true}
-	s := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	s := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Auth:              &fakeAuth{user: admin},
 		Users:             fakeUsers{},
 		Database:          fakeProbe{},
@@ -138,7 +138,7 @@ func TestStorageStatusAndUpdate(t *testing.T) {
 	storage := &fakeStorage{usage: domain.StorageUsage{
 		MediaBytes: 10, DatabaseBytes: 5, LimitBytes: 100, TripQuotaBytes: 20,
 	}}
-	s := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	s := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Auth: &fakeAuth{user: admin}, Users: fakeUsers{}, Database: fakeProbe{}, Storage: storage,
 	})
 
@@ -171,7 +171,7 @@ func TestMailStatusSwitchAndTest(t *testing.T) {
 	mail := &fakeMail{stats: domain.MailStats{Queued: 3, Failed: 1}}
 	sender := &fakeMailSender{}
 	wakes := 0
-	s := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	s := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Auth: &fakeAuth{user: admin}, Users: fakeUsers{}, Database: fakeProbe{}, Mail: mail,
 		MailConfigured: true, MailSender: sender, WakeMail: func() { wakes++ },
 	})
@@ -197,7 +197,7 @@ func TestMailStatusSwitchAndTest(t *testing.T) {
 		t.Fatalf("test while disabled: %d %s sent=%+v", recorder.Code, recorder.Body.String(), sender.sent)
 	}
 
-	unconfigured := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	unconfigured := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Auth: &fakeAuth{user: admin}, Users: fakeUsers{}, Database: fakeProbe{}, Mail: &fakeMail{},
 	})
 	recorder = send(unconfigured, http.MethodPatch, "/api/v1/admin/mail", "good", `{"enabled":true}`)
@@ -209,7 +209,7 @@ func TestMailStatusSwitchAndTest(t *testing.T) {
 // TestPasswordResetRequestDoesNotRevealDisabledMail checks the public response
 // remains generic for valid and malformed addresses when delivery is paused.
 func TestPasswordResetRequestDoesNotRevealDisabledMail(t *testing.T) {
-	s := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	s := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Mail: &fakeMail{}, MailConfigured: true,
 	})
 	for _, body := range []string{`{"email":"person@example.com"}`, `{"email":"not an address"}`} {
@@ -225,7 +225,7 @@ func TestPasswordResetRequestDoesNotRevealDisabledMail(t *testing.T) {
 // the recovery endpoint.
 func TestPasswordResetRequestLimitsAccountsAndClients(t *testing.T) {
 	newServer := func() *Server {
-		return NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+		return newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 			Mail: &fakeMail{}, MailConfigured: true,
 		})
 	}
@@ -264,7 +264,7 @@ func TestPasswordResetRequestLimitsAccountsAndClients(t *testing.T) {
 // activation changes remain security notifications a recipient cannot silence.
 func TestAccountAccessMailIgnoresOrdinaryPreference(t *testing.T) {
 	mail := &fakeMail{settings: domain.MailSettings{Enabled: true}}
-	s := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	s := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Mail: mail, MailConfigured: true, WakeMail: func() {},
 	})
 	user := domain.User{ID: uuid.New(), Email: "person@example.com", Locale: "ru", IsActive: true,

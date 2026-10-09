@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useLoadGeneration } from '@/composables/useLoadGeneration'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -47,6 +48,7 @@ provideDocumentChange((document) => {
   plan.value = document
 })
 const loading = ref(false)
+const beginLoad = useLoadGeneration()
 const busy = ref(false)
 const error = ref('')
 // The place dialog is for a new place in this day, or in the unassigned list
@@ -241,6 +243,7 @@ onMounted(async () => {
 
 // load reads the plan of the open trip.
 async function load(): Promise<void> {
+  const active = beginLoad()
   const planId = trip.value?.plan_id
   if (!planId) {
     plan.value = null
@@ -249,16 +252,19 @@ async function load(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    plan.value = await store.readDocument(planId)
+    const next = await store.readDocument(planId)
+    if (!active()) return
+    plan.value = next
   } catch (err) {
-    error.value = errorMessage(err, t, te)
+    if (active()) error.value = errorMessage(err, t, te)
   } finally {
-    loading.value = false
+    if (active()) loading.value = false
   }
 
   // The feed exists now, so it can be watched and opened where the address
   // pointed. Without the address it opens at the first day, at the top.
   await nextTick()
+  if (!active()) return
   watchDays()
   if (dayIndex.value > 0) {
     viewedDay.value = dayIndex.value
@@ -278,15 +284,19 @@ async function apply(
   change: () => Promise<TripDocument>,
   options: { confirmed?: () => Promise<TripDocument>; tripChanged?: boolean } = {},
 ): Promise<boolean> {
+  const ownerId = trip.value?.id
   busy.value = true
   error.value = ''
   try {
-    plan.value = await change()
+    const next = await change()
+    if (trip.value?.id !== ownerId) return false
+    plan.value = next
     if (options.tripChanged && trip.value) {
       void store.load(trip.value.id)
     }
     return true
   } catch (err) {
+    if (trip.value?.id !== ownerId) return false
     if (err instanceof ApiError && err.code === 'days_would_be_removed' && options.confirmed) {
       const days = (err.details.days ?? []) as RemovedDay[]
       const agreed = await confirmDialog.value?.ask(t('plan.confirmRemoveDays'), {

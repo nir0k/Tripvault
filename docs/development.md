@@ -38,6 +38,16 @@ make push         # multi-architecture images, built and published
 make clean        # remove the build output
 ```
 
+## PostgreSQL regressions
+
+Unit tests run without a database. The focused repository regressions also run when `TRIPVAULT_TEST_DB_DSN` names a disposable PostgreSQL 16 database. They create and drop isolated schemas and exercise migrations and persisted behavior, including concurrent administrator deletion, report copies and confirmation before losing day content. The test account must be allowed to create schemas. This variable is used by the tests only and does not belong in deployment configuration.
+
+```sh
+TRIPVAULT_TEST_DB_DSN=postgres://postgres@127.0.0.1:5432/tripvault_test?sslmode=disable make test-backend
+```
+
+Never point that command at production. Migration rollback restores removed columns with neutral defaults; their unused provenance and ordering values cannot be reconstructed. Existing databases and backups still upgrade through every numbered migration, including the cleanup migration.
+
 ## The test stand
 
 `tests/docker-compose.yaml` builds the current source and runs it with examples, for checking changes by hand. It is not driven through the Makefile:

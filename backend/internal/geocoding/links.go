@@ -9,6 +9,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+
+	"github.com/nir0k/tripvault/backend/internal/requestwork"
 	"time"
 )
 
@@ -26,6 +29,9 @@ type Location struct {
 	Lng float64
 	// Name is the place name a link carried, such as a Google Maps place.
 	Name string
+	// Label and Ref are known when a name-only link was found by the geocoder.
+	Label string
+	Ref   string
 }
 
 var (
@@ -174,6 +180,9 @@ func IsShortLink(text string) bool {
 // Expander follows map short links to the full link they stand for.
 type Expander struct {
 	client *http.Client
+	mu     sync.Mutex
+	links  map[string]expandedLink
+	work   requestwork.Group[string]
 }
 
 // NewExpander - creates the short link expander.
@@ -205,6 +214,47 @@ const maxRedirects = 5
 //   - the expanded link.
 //   - ErrUnrecognized when the redirects lead elsewhere or nowhere.
 func (e *Expander) Expand(ctx context.Context, text string) (string, error) {
+	identity := strings.TrimSpace(text)
+	return e.work.Do(ctx, identity, func(ctx context.Context) (string, error) {
+		e.mu.Lock()
+		cached, found := e.links[identity]
+		e.mu.Unlock()
+		if found && time.Now().Before(cached.until) {
+			return cached.url, nil
+		}
+		result, err := e.expand(ctx, identity)
+		if err != nil {
+			return "", err
+		}
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		if e.links == nil {
+			e.links = make(map[string]expandedLink)
+		}
+		for key, entry := range e.links {
+			if !time.Now().Before(entry.until) {
+				delete(e.links, key)
+			}
+		}
+		if len(e.links) >= 256 {
+			for key := range e.links {
+				delete(e.links, key)
+				break
+			}
+		}
+		e.links[identity] = expandedLink{url: result, until: time.Now().Add(24 * time.Hour)}
+		return result, nil
+	})
+}
+
+// expandedLink keeps a successful redirect resolution for a day.
+type expandedLink struct {
+	url   string
+	until time.Time
+}
+
+// expand follows a bounded redirect chain restricted to known Google hosts.
+func (e *Expander) expand(ctx context.Context, text string) (string, error) {
 	current := strings.TrimSpace(text)
 	for range maxRedirects {
 		link, err := url.Parse(current)

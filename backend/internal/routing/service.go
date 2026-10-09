@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nir0k/tripvault/backend/internal/domain"
+	"github.com/nir0k/tripvault/backend/internal/requestwork"
 )
 
 // Cache stores provider routes shared by every trip.
@@ -38,6 +39,8 @@ type Options struct {
 	PerMinute int
 	Daily     int
 	CacheTTL  time.Duration
+	// CacheNamespace distinguishes installations of the same provider.
+	CacheNamespace string
 }
 
 // Service calculates legs, using the provider when it can and falling back to
@@ -49,9 +52,15 @@ type Service struct {
 	opts     Options
 	logger   *slog.Logger
 	now      func() time.Time
+	work     requestwork.Group[Result]
 
-	mu     sync.Mutex
-	recent []time.Time
+	mu        sync.Mutex
+	recent    []time.Time
+	inflight  int
+	admission sync.Mutex
+	requests  requestwork.Group[[]Route]
+	memoMu    sync.Mutex
+	memo      map[string]routeMemo
 }
 
 // NewService - creates the routing service.
@@ -164,7 +173,13 @@ func (s *Service) Forget(ctx context.Context, mode domain.TravelMode, from, to d
 	if !routed || s.provider == nil {
 		return nil
 	}
-	return s.cache.Delete(ctx, cacheKey(s.provider.Name(), profile, route, from, to))
+	key := cacheKey(s.provider.Name()+"|"+s.opts.CacheNamespace, profile, route, from, to)
+	s.memoMu.Lock()
+	for _, count := range []int{1, alternativeCount} {
+		delete(s.memo, string(key)+fmt.Sprint(count))
+	}
+	s.memoMu.Unlock()
+	return s.cache.Delete(ctx, key)
 }
 
 // Calculate - works out a leg's distance, time and line.
@@ -196,31 +211,41 @@ func (s *Service) Calculate(ctx context.Context, mode domain.TravelMode, from, t
 	}
 
 	now := s.now()
-	key := cacheKey(s.provider.Name(), profile, route, *from, *to)
+	key := cacheKey(s.provider.Name()+"|"+s.opts.CacheNamespace, profile, route, *from, *to)
 	if cached, ok, err := s.cache.Get(ctx, key, now); err != nil {
 		s.logger.Warn("route cache read failed", slog.Any("error", err))
 	} else if ok {
 		return providerResult(cached)
 	}
 
-	routes, err := s.ask(ctx, Request{
-		Profile: profile, Points: routePoints(route, *from, *to), Preference: preferenceOf(route), Alternatives: 1,
+	result, err := s.work.Do(ctx, string(key), func(ctx context.Context) (Result, error) {
+		if cached, ok, err := s.cache.Get(ctx, key, s.now()); err == nil && ok {
+			return providerResult(cached), nil
+		}
+
+		routes, err := s.requestRoutes(ctx, Request{
+			Profile: profile, Points: routePoints(route, *from, *to), Preference: preferenceOf(route), Alternatives: 1,
+		})
+		if err != nil {
+			return Result{}, err
+		}
+		if err := s.cache.Put(ctx, key, s.provider.Name(), profile, routes[0], now.Add(s.opts.CacheTTL)); err != nil {
+			s.logger.Warn("route cache write failed", slog.Any("error", err))
+		}
+		return providerResult(routes[0]), nil
 	})
 	if err != nil {
 		return Estimate(mode, *from, *to, estimateReason(err))
 	}
-	if err := s.cache.Put(ctx, key, s.provider.Name(), profile, routes[0], now.Add(s.opts.CacheTTL)); err != nil {
-		s.logger.Warn("route cache write failed", slog.Any("error", err))
-	}
-	return providerResult(routes[0])
+	return result
 }
 
 // alternativeCount is how many routes a leg is offered to choose from.
 const alternativeCount = 3
 
 // Alternatives - asks the provider for the routes a leg could take, for
-// somebody to choose one. They are not cached: the question is asked once,
-// when the choice is made, and the chosen route is stored on the leg.
+// somebody to choose one. Choices are cached briefly, and their primary route
+// fills the ordinary cache; the chosen route is stored on the leg.
 //
 // Arguments:
 //   - ctx: context bounding the provider request.
@@ -242,13 +267,18 @@ func (s *Service) Alternatives(ctx context.Context, mode domain.TravelMode, from
 	if s.provider == nil {
 		return nil, ErrDisabled
 	}
-	routes, err := s.ask(ctx, Request{
+	routes, err := s.requestRoutes(ctx, Request{
 		Profile: profile, Points: []domain.Point{from, to},
 		Preference: preferenceOf(domain.LegRoute{Preference: preference}), Alternatives: alternativeCount,
 	})
 	if err != nil {
 		return nil, err
 	}
+	key := cacheKey(s.provider.Name()+"|"+s.opts.CacheNamespace, profile, domain.LegRoute{Preference: preference}, from, to)
+	if err := s.cache.Put(ctx, key, s.provider.Name(), profile, routes[0], s.now().Add(s.opts.CacheTTL)); err != nil {
+		s.logger.Warn("route cache write failed", slog.Any("error", err))
+	}
+
 	results := make([]Result, len(routes))
 	for index, route := range routes {
 		results[index] = providerResult(route)
@@ -263,23 +293,16 @@ func (s *Service) Alternatives(ctx context.Context, mode domain.TravelMode, from
 //   - ErrDailyLimit or ErrRateLimited when a limit is reached first, or the
 //     provider's own error.
 func (s *Service) ask(ctx context.Context, request Request) ([]Route, error) {
-	now := s.now()
-	if used, err := s.usage.Requests24h(ctx, now); err != nil {
-		s.logger.Warn("routing usage read failed", slog.Any("error", err))
-	} else if s.opts.Daily > 0 && used >= s.opts.Daily {
-		return nil, ErrDailyLimit
-	}
-	if !s.takeMinuteSlot(now) {
-		return nil, ErrRateLimited
+	release, err := s.admit(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	routes, err := s.provider.Route(ctx, request)
 	if err == nil && len(routes) == 0 {
 		err = fmt.Errorf("%w: the answer held no route", ErrUnavailable)
 	}
-	if recordErr := s.usage.Record(ctx, now, err == nil || errors.Is(err, ErrNoRoute)); recordErr != nil {
-		s.logger.Warn("routing usage write failed", slog.Any("error", recordErr))
-	}
+	release(err == nil || errors.Is(err, ErrNoRoute))
 	if err != nil && !errors.Is(err, ErrNoRoute) && !errors.Is(err, ErrRateLimited) {
 		s.logger.Warn("routing request failed", slog.String("profile", request.Profile), slog.Any("error", err))
 	}
@@ -304,4 +327,92 @@ func estimateReason(err error) string {
 func providerResult(route Route) Result {
 	distance, duration := route.DistanceM, route.DurationS
 	return Result{DistanceM: &distance, DurationS: &duration, Geometry: route.Geometry, Source: domain.LegProvider}
+}
+
+// admit reserves a daily and minute allowance before the provider is called.
+// Its release records the attempt before freeing the in-flight daily slot.
+func (s *Service) admit(ctx context.Context) (func(bool), error) {
+	s.admission.Lock()
+	defer s.admission.Unlock()
+	now := s.now()
+	used, err := s.usage.Requests24h(ctx, now)
+	if err != nil {
+		return nil, fmt.Errorf("read provider usage: %w", err)
+	}
+	if s.opts.Daily > 0 && used+s.inflight >= s.opts.Daily {
+		return nil, ErrDailyLimit
+	}
+	if !s.takeMinuteSlot(now) {
+		return nil, ErrRateLimited
+	}
+	s.inflight++
+	return func(success bool) {
+		s.admission.Lock()
+		defer s.admission.Unlock()
+		// The provider has finished even when its readers cancelled. Keep its
+		// attempted call in the quota, using a bounded cleanup context.
+		recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := s.usage.Record(recordCtx, now, success); err != nil {
+			s.logger.Warn("record provider usage failed", slog.Any("error", err))
+			// Keep the reservation when persistence fails: an uncounted attempt
+			// must not grant another slot until this process restarts.
+			return
+		}
+		s.inflight--
+	}, nil
+}
+
+// routeMemo keeps a brief route choice or a negative answer; transient provider
+// failures are never retained.
+type routeMemo struct {
+	routes []Route
+	err    error
+	until  time.Time
+}
+
+// requestRoutes coalesces identical provider requests and briefly reuses route
+// choices and no-route answers. The bounded memory cache complements the
+// persistent primary-route cache without storing failed provider responses.
+func (s *Service) requestRoutes(ctx context.Context, request Request) ([]Route, error) {
+	last := len(request.Points) - 1
+	key := cacheKey(s.provider.Name()+"|"+s.opts.CacheNamespace, request.Profile,
+		domain.LegRoute{Preference: request.Preference, Via: request.Points[1:last]}, request.Points[0], request.Points[last])
+	identity := string(key) + fmt.Sprint(request.Alternatives)
+	return s.requests.Do(ctx, identity, func(ctx context.Context) ([]Route, error) {
+		s.memoMu.Lock()
+		cached, found := s.memo[identity]
+		s.memoMu.Unlock()
+		if found && s.now().Before(cached.until) {
+			return cached.routes, cached.err
+		}
+		routes, err := s.ask(ctx, request)
+		lifetime := time.Duration(0)
+		if errors.Is(err, ErrNoRoute) {
+			lifetime = time.Minute
+		}
+		if err == nil && request.Alternatives > 1 {
+			lifetime = 5 * time.Minute
+		}
+		if lifetime > 0 {
+			s.memoMu.Lock()
+			if s.memo == nil {
+				s.memo = make(map[string]routeMemo)
+			}
+			for key, entry := range s.memo {
+				if !s.now().Before(entry.until) {
+					delete(s.memo, key)
+				}
+			}
+			if len(s.memo) >= 256 {
+				for key := range s.memo {
+					delete(s.memo, key)
+					break
+				}
+			}
+			s.memo[identity] = routeMemo{routes: routes, err: err, until: s.now().Add(lifetime)}
+			s.memoMu.Unlock()
+		}
+		return routes, err
+	})
 }

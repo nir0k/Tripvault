@@ -1,8 +1,10 @@
 package media
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 )
 
@@ -13,13 +15,12 @@ import (
 // removed - so the file keeps its length and a download of it can still be
 // resumed by range.
 
-// LocationHeadSize is how much of a file ScrubLocation needs: the EXIF block
-// sits among the segments before the image data, each at most 64 KiB.
-const LocationHeadSize = 1 << 20
-
 // xmpPrefix starts the payload of the APP1 segment holding XMP, which an editor
 // may have written the position into as well.
 const xmpPrefix = "http://ns.adobe.com/xap/1.0/\x00"
+
+// extendedXMPPrefix identifies XMP spread over additional APP1 segments.
+const extendedXMPPrefix = "http://ns.adobe.com/xmp/extension/\x00"
 
 // ScrubLocation - blanks where a JPEG was taken, in place: the GPS directory of
 // its EXIF block is emptied and its values zeroed, and an XMP packet is
@@ -27,7 +28,7 @@ const xmpPrefix = "http://ns.adobe.com/xap/1.0/\x00"
 // stay.
 //
 // Arguments:
-//   - head: the leading bytes of the file, LocationHeadSize or the whole file;
+//   - head: the leading bytes through the start of image data, or the whole file;
 //     changed in place.
 //
 // Returns:
@@ -37,31 +38,48 @@ func ScrubLocation(head []byte) bool {
 		return false
 	}
 	changed := false
-	for offset := 2; offset+4 <= len(head); {
-		if head[offset] != 0xFF {
+	for offset := 2; offset < len(head); {
+		if head[offset] != 0xff {
 			return changed
 		}
-		marker := head[offset+1]
-		if marker == 0xDA || marker == 0xD9 {
+		for offset < len(head) && head[offset] == 0xff {
+			offset++
+		}
+		if offset >= len(head) {
 			return changed
 		}
-		length := int(binary.BigEndian.Uint16(head[offset+2:]))
-		if length < 2 || offset+2+length > len(head) {
+		marker := head[offset]
+		offset++
+		if marker == 0xda || marker == 0xd9 {
 			return changed
 		}
-		payload := head[offset+4 : offset+2+length]
-		if marker == 0xE1 {
+		if marker == 0x01 || marker >= 0xd0 && marker <= 0xd7 {
+			continue
+		}
+		if offset+2 > len(head) {
+			return changed
+		}
+		length := int(binary.BigEndian.Uint16(head[offset:]))
+		if length < 2 || offset+length > len(head) {
+			return changed
+		}
+		payload := head[offset+2 : offset+length]
+		if marker == 0xe1 {
 			switch {
-			case len(payload) > 6 && string(payload[:6]) == "Exif\x00\x00":
+			case bytes.HasPrefix(payload, []byte("Exif\x00\x00")):
 				changed = scrubGPS(payload[6:]) || changed
-			case len(payload) > len(xmpPrefix) && string(payload[:len(xmpPrefix)]) == xmpPrefix:
-				for index := len(xmpPrefix); index < len(payload); index++ {
+			case bytes.HasPrefix(payload, []byte(xmpPrefix)), bytes.HasPrefix(payload, []byte(extendedXMPPrefix)):
+				prefix := len(xmpPrefix)
+				if bytes.HasPrefix(payload, []byte(extendedXMPPrefix)) {
+					prefix = len(extendedXMPPrefix)
+				}
+				for index := prefix; index < len(payload); index++ {
 					payload[index] = ' '
 				}
 				changed = true
 			}
 		}
-		offset += 2 + length
+		offset += length
 	}
 	return changed
 }
@@ -133,10 +151,52 @@ var (
 //   - the file as it is to be sent.
 //   - an error when its head cannot be read.
 func NewLocationFree(file io.ReadCloser, size int64) (*LocationFree, error) {
-	head := make([]byte, min(size, LocationHeadSize))
+	// Read complete metadata segments rather than a fixed leading window. XMP
+	// can span more than a megabyte; returning an unprocessed tail would leak it.
+	head := make([]byte, 2)
 	if _, err := io.ReadFull(file, head); err != nil {
 		return nil, err
 	}
+	if head[0] != 0xff || head[1] != 0xd8 {
+		return nil, errors.New("invalid JPEG header")
+	}
+	for {
+		var marker [1]byte
+		if _, err := io.ReadFull(file, marker[:]); err != nil {
+			return nil, err
+		}
+		head = append(head, marker[0])
+		if marker[0] != 0xff {
+			return nil, errors.New("invalid JPEG metadata marker")
+		}
+		for marker[0] == 0xff {
+			if _, err := io.ReadFull(file, marker[:]); err != nil {
+				return nil, err
+			}
+			head = append(head, marker[0])
+		}
+		if marker[0] == 0xda || marker[0] == 0xd9 {
+			break
+		}
+		if marker[0] == 0x01 || marker[0] >= 0xd0 && marker[0] <= 0xd7 {
+			continue
+		}
+		var length [2]byte
+		if _, err := io.ReadFull(file, length[:]); err != nil {
+			return nil, err
+		}
+		head = append(head, length[:]...)
+		count := int(binary.BigEndian.Uint16(length[:])) - 2
+		if count < 0 || int64(len(head)+count) > size {
+			return nil, fmt.Errorf("invalid JPEG metadata length")
+		}
+		start := len(head)
+		head = append(head, make([]byte, count)...)
+		if _, err := io.ReadFull(file, head[start:]); err != nil {
+			return nil, err
+		}
+	}
+
 	ScrubLocation(head)
 	return &LocationFree{head: head, file: file, size: size, filePos: int64(len(head))}, nil
 }

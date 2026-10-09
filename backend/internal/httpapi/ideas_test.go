@@ -238,7 +238,7 @@ func (f *fakeIdeas) RemoveMember(_ context.Context, ownerID, userID uuid.UUID) e
 func newIdeaServer() (*Server, *fakeIdeas, uuid.UUID) {
 	ideas := &fakeIdeas{}
 	user := domain.User{ID: uuid.New(), IsActive: true, DefaultCurrency: "ISK"}
-	s := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	s := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Auth:  &fakeAuth{user: user},
 		Users: fakeUsers{},
 		Ideas: ideas,
@@ -353,7 +353,7 @@ func TestIdeaPhotosOverHTTP(t *testing.T) {
 		t.Fatalf("open the store: %v", err)
 	}
 	user := domain.User{ID: uuid.New(), IsActive: true, DefaultCurrency: "EUR"}
-	s := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	s := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Auth: &fakeAuth{user: user}, Users: fakeUsers{}, Ideas: ideas, MediaFiles: files,
 		MediaMaxBytes: 1024 * 1024,
 	})
@@ -420,7 +420,7 @@ func TestSharedIdeasOverHTTP(t *testing.T) {
 	viewer := domain.User{ID: uuid.New(), IsActive: true, DefaultCurrency: "EUR"}
 	stranger := domain.User{ID: uuid.New(), IsActive: true, DefaultCurrency: "EUR"}
 	signedIn := &fakeAuth{user: owner}
-	s := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	s := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Auth: signedIn, Users: fakeUsers{}, Ideas: ideas,
 	})
 	as := func(user domain.User, method, path, body string) *httptest.ResponseRecorder {

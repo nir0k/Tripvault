@@ -123,9 +123,11 @@ func (s *Server) handleGeoReverse(w http.ResponseWriter, r *http.Request) {
 
 // locationResponse is a position read from coordinates or a link.
 type locationResponse struct {
-	Lat  float64 `json:"lat"`
-	Lng  float64 `json:"lng"`
-	Name string  `json:"name"`
+	Lat   float64 `json:"lat"`
+	Lng   float64 `json:"lng"`
+	Name  string  `json:"name"`
+	Label string  `json:"label"`
+	Ref   string  `json:"ref"`
 }
 
 // handleParseLink reads a position from pasted coordinates or a Google Maps or
@@ -162,7 +164,7 @@ func (s *Server) handleParseLink(w http.ResponseWriter, r *http.Request) {
 		s.writeDomainError(w, r, "parse link", unrecognized)
 		return
 	}
-	writeJSON(w, s.logger, http.StatusOK, locationResponse{Lat: location.Lat, Lng: location.Lng, Name: location.Name})
+	writeJSON(w, s.logger, http.StatusOK, locationResponse{Lat: location.Lat, Lng: location.Lng, Name: location.Name, Label: location.Label, Ref: location.Ref})
 }
 
 // locatePlaceName finds the position of a place a link names without one,
@@ -189,5 +191,5 @@ func (s *Server) locatePlaceName(r *http.Request, name string) (geocoding.Locati
 		return geocoding.Location{}, geocoding.ErrUnrecognized
 	}
 	own, _, _ := strings.Cut(query, ",")
-	return geocoding.Location{Lat: places[0].Lat, Lng: places[0].Lng, Name: strings.TrimSpace(own)}, nil
+	return geocoding.Location{Lat: places[0].Lat, Lng: places[0].Lng, Name: strings.TrimSpace(own), Label: places[0].Label, Ref: places[0].Ref}, nil
 }

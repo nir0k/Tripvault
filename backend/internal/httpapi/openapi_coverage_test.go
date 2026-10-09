@@ -68,7 +68,7 @@ func routerOperations(t *testing.T) map[string]bool {
 
 	// The stores are nil: routing is registered in one place regardless of the
 	// dependencies, and no handler runs during a walk.
-	server := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{})
+	server := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{})
 
 	router, ok := server.routes().(chi.Routes)
 	if !ok {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useLoadGeneration } from '@/composables/useLoadGeneration'
 import { computed, ref, useTemplateRef, watch } from 'vue'
 import { VueDraggable } from 'vue-draggable-plus'
 import { useI18n } from 'vue-i18n'
@@ -34,6 +35,7 @@ const store = useTripStore()
 const list = ref<PackingList | null>(null)
 const members = ref<TripMember[]>([])
 const loading = ref(false)
+const beginLoad = useLoadGeneration()
 const busy = ref(false)
 const error = ref('')
 const exporting = ref(false)
@@ -71,6 +73,7 @@ const bringers = computed(() => Object.fromEntries(members.value.map((member) =>
 const progress = computed(() => (list.value && list.value.total > 0 ? Math.round((list.value.packed / list.value.total) * 100) : 0))
 // load reads the list and, for a member, who may bring something.
 async function load(): Promise<void> {
+  const active = beginLoad()
   if (!trip.value || trip.value.kind !== 'plan') {
     return
   }
@@ -81,12 +84,13 @@ async function load(): Promise<void> {
       packingApi.getPacking(tripId.value),
       tripId.value === null ? Promise.resolve([]) : listMembers(tripId.value),
     ])
+    if (!active()) return
     list.value = packing
     members.value = people
   } catch (err) {
-    error.value = errorMessage(err, t, te)
+    if (active()) error.value = errorMessage(err, t, te)
   } finally {
-    loading.value = false
+    if (active()) loading.value = false
   }
 }
 watch(() => trip.value?.id, () => void load(), { immediate: true })
@@ -96,12 +100,16 @@ watch(() => trip.value?.id, () => void load(), { immediate: true })
  * and the list read again, so a drag the server refused springs back.
  */
 async function apply(change: () => Promise<PackingList>): Promise<boolean> {
+  const ownerId = trip.value?.id
   busy.value = true
   error.value = ''
   try {
-    list.value = await change()
+    const next = await change()
+    if (trip.value?.id !== ownerId) return false
+    list.value = next
     return true
   } catch (err) {
+    if (trip.value?.id !== ownerId) return false
     error.value = errorMessage(err, t, te)
     await load()
     return false

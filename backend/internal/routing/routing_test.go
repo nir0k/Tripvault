@@ -126,10 +126,19 @@ func (m *memoryStore) Delete(_ context.Context, key []byte) error {
 }
 
 // Requests24h counts recorded requests.
-func (m *memoryStore) Requests24h(context.Context, time.Time) (int, error) { return m.requests, nil }
+func (m *memoryStore) Requests24h(context.Context, time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.requests, nil
+}
 
 // Record counts a request.
-func (m *memoryStore) Record(context.Context, time.Time, bool) error { m.requests++; return nil }
+func (m *memoryStore) Record(context.Context, time.Time, bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.requests++
+	return nil
+}
 
 // newTestService builds a service over a fake provider and memory stores.
 func newTestService(provider Provider, opts Options) (*Service, *memoryStore) {
@@ -219,7 +228,7 @@ func TestServiceAlternatives(t *testing.T) {
 		t.Fatalf("alternatives: %+v %v", results, err)
 	}
 	if provider.last.Alternatives != alternativeCount || provider.last.Preference != domain.RouteShortest ||
-		len(store.routes) != 0 || store.requests != 1 {
+		len(store.routes) != 1 || store.requests != 1 {
 		t.Errorf("asked %+v, cached %d, counted %d", provider.last, len(store.routes), store.requests)
 	}
 	if _, err := service.Alternatives(ctx, domain.ModeFlight, reykjavik, vik, ""); !errors.Is(err, ErrNotRouted) {

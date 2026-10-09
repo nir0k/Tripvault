@@ -237,7 +237,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "count users", err)
 		return
 	}
-	storage := domain.StorageUsage{TripQuotaBytes: s.mediaTripQuota}
+	storage := domain.StorageUsage{}
 	if s.storage != nil {
 		if storage, err = s.storage.Usage(r.Context()); err != nil {
 			s.internalError(w, r, "measure storage", err)

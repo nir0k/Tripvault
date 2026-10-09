@@ -14,12 +14,10 @@ import (
 	"github.com/nir0k/tripvault/backend/internal/domain"
 )
 
-// UserStore is the account persistence seeding needs. List is there for the
-// example trips, which have to find the administrator that owns them.
+// UserStore is the account persistence needed to create the first administrator.
 type UserStore interface {
 	Count(ctx context.Context) (int64, error)
 	Create(ctx context.Context, user domain.User) (domain.User, error)
-	List(ctx context.Context) ([]domain.User, error)
 }
 
 // Options carries the first administrator's details.

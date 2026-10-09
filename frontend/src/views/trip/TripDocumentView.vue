@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useLoadGeneration } from '@/composables/useLoadGeneration'
 import { computed, onMounted, provide, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
@@ -70,6 +71,7 @@ provideDocumentChange((changed) => {
 })
 const clientConfig = ref<ClientConfig | null>(null)
 const loading = ref(false)
+const beginLoad = useLoadGeneration()
 const busy = ref(false)
 const error = ref('')
 // The day a new place is added to.
@@ -192,6 +194,7 @@ onMounted(async () => {
 
 // load reads the document of the open trip.
 async function load(): Promise<void> {
+  const active = beginLoad()
   const id = documentId.value
   if (!id) {
     document.value = null
@@ -200,11 +203,12 @@ async function load(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    document.value = await store.readDocument(id)
+    const next = await store.readDocument(id)
+    if (active()) document.value = next
   } catch (err) {
-    error.value = errorMessage(err, t, te)
+    if (active()) error.value = errorMessage(err, t, te)
   } finally {
-    loading.value = false
+    if (active()) loading.value = false
   }
 }
 
@@ -224,11 +228,15 @@ watch(editing, forgetHints)
 
 // apply runs a change and shows the document the server returns.
 async function apply(change: () => Promise<TripDocument>): Promise<void> {
+  const ownerId = trip.value?.id
   busy.value = true
   error.value = ''
   try {
-    document.value = await change()
+    const next = await change()
+    if (trip.value?.id !== ownerId) return
+    document.value = next
   } catch (err) {
+    if (trip.value?.id !== ownerId) return
     error.value = errorMessage(err, t, te)
   } finally {
     busy.value = false

@@ -54,7 +54,7 @@ func attachDescribed(t *testing.T, s *Server, itemID, name string, data []byte,
 func newAttachmentServer(role domain.TripRole) (*Server, *fakeDocuments) {
 	s, docs := newDocumentServer(role)
 	s.attachmentMaxBytes = 1024
-	s.mediaTripQuota = 4096
+	s.storage = &fakeStorage{usage: domain.StorageUsage{TripQuotaBytes: 4096}}
 	return s, docs
 }
 
@@ -171,7 +171,7 @@ func TestAttachmentRefusals(t *testing.T) {
 // TestAttachmentQuota checks an attachment counts against the trip's allowance.
 func TestAttachmentQuota(t *testing.T) {
 	s, docs := newAttachmentServer(domain.RoleOwner)
-	s.mediaTripQuota = 10
+	s.storage = &fakeStorage{usage: domain.StorageUsage{TripQuotaBytes: 10}}
 	recorder := attach(t, s, docs.place.ID.String(), "ticket.pdf", ticket)
 	if recorder.Code != http.StatusConflict || errorCode(t, recorder) != "media_quota" {
 		t.Errorf("a file over the allowance: %d %s", recorder.Code, recorder.Body.String())

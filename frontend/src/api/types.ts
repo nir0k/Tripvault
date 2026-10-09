@@ -594,7 +594,6 @@ export interface Media {
    * anywhere in the report.
    */
   is_favorite: boolean
-  status: 'ready'
   created_at: string
 }
 
@@ -727,8 +726,6 @@ export interface PlanItem {
   actual_cost_amount: string | null
   /** How hard an activity is, 1 (very easy) to 5 (extreme); null on a place. */
   difficulty: number | null
-  /** The place of the plan this one was copied from. */
-  source_item_id: string | null
   /** The place's pictures, in the order they were linked. */
   media: Media[]
   cover_media_id: string | null
@@ -892,7 +889,6 @@ export interface Stay {
   actual_cost_amount: string | null
   nights: number
   price_per_night: string | null
-  source_stay_id: string | null
 }
 
 /**
@@ -926,7 +922,6 @@ export interface Transfer {
   cost_per_person: boolean
   /** What was really spent. Report only. */
   actual_cost_amount: string | null
-  source_transfer_id: string | null
 }
 
 /**
@@ -986,8 +981,6 @@ export interface TripDocument {
   id: string
   trip_id: string
   kind: DocumentKind
-  /** The plan a report was copied from. */
-  source_document_id: string | null
   /** The words before and after the days. */
   intro_md: string
   summary_md: string

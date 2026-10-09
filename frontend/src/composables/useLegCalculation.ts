@@ -43,10 +43,14 @@ export interface LegCalculation {
 export function useLegCalculation(options: LegCalculationOptions): LegCalculation {
   let timer: ReturnType<typeof setTimeout> | undefined
   let calculating = false
+  let disposed = false
 
   // schedule waits for edits to pause and then asks for one batch.
   function schedule(): void {
     clearTimeout(timer)
+    if (disposed) {
+      return
+    }
     if (!options.enabled() || !options.document.value || options.document.value.pending_legs === 0) {
       return
     }
@@ -61,7 +65,7 @@ export function useLegCalculation(options: LegCalculationOptions): LegCalculatio
       try {
         const next = await documentsApi.calculateLegs(current.id)
         // An edit made meanwhile has its own answer; this one would be stale.
-        if (options.document.value === current) {
+        if (!disposed && options.document.value === current) {
           options.document.value = next
         }
         if (next.pending_legs > 0 && next.pending_legs < before) {
@@ -83,14 +87,15 @@ export function useLegCalculation(options: LegCalculationOptions): LegCalculatio
    */
   async function retryEstimates(): Promise<void> {
     const current = options.document.value
-    if (!current || options.busy.value) {
+    if (disposed || !current || options.busy.value) {
       return
     }
     options.busy.value = true
     try {
       let left = current.estimated_legs
-      while (left > 0) {
+      while (!disposed && left > 0) {
         const next = await documentsApi.retryEstimatedLegs(current.id)
+        if (disposed || options.document.value?.id !== current.id) break
         if (options.document.value === current || options.document.value?.id === next.id) {
           options.document.value = next
         }
@@ -109,6 +114,6 @@ export function useLegCalculation(options: LegCalculationOptions): LegCalculatio
   }
 
   watch(() => [options.document.value?.pending_legs, options.enabled()], () => schedule())
-  onBeforeUnmount(() => clearTimeout(timer))
+  onBeforeUnmount(() => { disposed = true; clearTimeout(timer) })
   return { retryEstimates }
 }

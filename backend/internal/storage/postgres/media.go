@@ -32,14 +32,14 @@ func NewMediaRepository(pool *pgxpool.Pool) *MediaRepository {
 }
 
 var mediaColumns = `m.id, m.trip_id, m.storage_key, m.original_name, m.mime, m.size, m.checksum,
-	coalesce(m.width, 0), coalesce(m.height, 0), m.taken_at, m.lat, m.lng, m.is_private, m.status,
+	coalesce(m.width, 0), coalesce(m.height, 0), m.taken_at, m.lat, m.lng, m.is_private,
 	m.uploaded_by, m.created_at`
 
 // scanMedia reads one row in the order of mediaColumns.
 func scanMedia(row pgx.Row) (domain.Media, error) {
 	var m domain.Media
 	err := row.Scan(&m.ID, &m.TripID, &m.StorageKey, &m.OriginalName, &m.MIME, &m.Size, &m.Checksum,
-		&m.Width, &m.Height, &m.TakenAt, &m.Lat, &m.Lng, &m.IsPrivate, &m.Status, &m.UploadedBy, &m.CreatedAt)
+		&m.Width, &m.Height, &m.TakenAt, &m.Lat, &m.Lng, &m.IsPrivate, &m.UploadedBy, &m.CreatedAt)
 	return m, err
 }
 
@@ -93,10 +93,10 @@ func (r *MediaRepository) Create(ctx context.Context, media domain.Media, quota 
 		}
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO media (id, trip_id, storage_key, original_name, mime, size, checksum, width, height,
-			                    taken_at, lat, lng, is_private, status, uploaded_by, source_checksum)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, nullif($8, 0), nullif($9, 0), $10, $11, $12, $13, $14, $15, $16)`,
+			                    taken_at, lat, lng, is_private, uploaded_by, source_checksum)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, nullif($8, 0), nullif($9, 0), $10, $11, $12, $13, $14, $15)`,
 			media.ID, media.TripID, media.StorageKey, media.OriginalName, media.MIME, media.Size, media.Checksum,
-			media.Width, media.Height, media.TakenAt, media.Lat, media.Lng, media.IsPrivate, media.Status,
+			media.Width, media.Height, media.TakenAt, media.Lat, media.Lng, media.IsPrivate,
 			media.UploadedBy, media.SourceChecksum); err != nil {
 			return fmt.Errorf("create media: %w", err)
 		}
@@ -333,11 +333,11 @@ func (r *MediaRepository) SetLinks(ctx context.Context, target domain.MediaTarge
 			`DELETE FROM media_links WHERE `+column+` = $1`, targetID); err != nil {
 			return fmt.Errorf("clear media links: %w", err)
 		}
-		for position, mediaID := range mediaIDs {
+		for _, mediaID := range mediaIDs {
 			_, favorite := favorites[mediaID]
 			if _, err := tx.Exec(ctx,
-				`INSERT INTO media_links (media_id, `+column+`, position, is_favorite) VALUES ($1, $2, $3, $4)
-				 ON CONFLICT DO NOTHING`, mediaID, targetID, position, favorite); err != nil {
+				`INSERT INTO media_links (media_id, `+column+`, is_favorite) VALUES ($1, $2, $3)
+				 ON CONFLICT DO NOTHING`, mediaID, targetID, favorite); err != nil {
 				return fmt.Errorf("link media: %w", err)
 			}
 		}
@@ -523,14 +523,13 @@ func favoriteColumn(target domain.MediaTarget) (string, error) {
 //   - tripID: the trip.
 //
 // Returns:
-//   - the links, in the order their pictures were taken; the position a link
-//     was written with no longer orders anything.
+//   - the links, in the order their pictures were taken.
 func (r *MediaRepository) LinksOfTrip(ctx context.Context, tripID uuid.UUID) ([]domain.MediaLink, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT l.media_id, coalesce(l.trip_id, l.day_id, l.item_id),
 		        CASE WHEN l.trip_id IS NOT NULL THEN 'trip'
 		             WHEN l.day_id IS NOT NULL THEN 'day' ELSE 'item' END,
-		        l.position, l.is_favorite
+		        l.is_favorite
 		 FROM media_links l JOIN media m ON m.id = l.media_id
 		 WHERE m.trip_id = $1
 		 ORDER BY m.taken_at NULLS LAST, m.created_at, m.id`, tripID)
@@ -542,7 +541,7 @@ func (r *MediaRepository) LinksOfTrip(ctx context.Context, tripID uuid.UUID) ([]
 	links := make([]domain.MediaLink, 0)
 	for rows.Next() {
 		var link domain.MediaLink
-		if err := rows.Scan(&link.MediaID, &link.TargetID, &link.Target, &link.Position, &link.IsFavorite); err != nil {
+		if err := rows.Scan(&link.MediaID, &link.TargetID, &link.Target, &link.IsFavorite); err != nil {
 			return nil, fmt.Errorf("scan media link: %w", err)
 		}
 		links = append(links, link)

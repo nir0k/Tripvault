@@ -39,7 +39,7 @@ func newReportPDFServer(t *testing.T, role domain.TripRole) (*Server, *fakeDocum
 	trips.trip.ReportID = &documentID
 
 	catalogue := newFakePDFMedia(t, trips.trip.ID, dayID, docs.place.ID)
-	s := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	s := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Auth:       &fakeAuth{user: domain.User{ID: uuid.New(), IsActive: true, Locale: "ru"}},
 		Users:      fakeUsers{},
 		Trips:      trips,
@@ -69,10 +69,10 @@ func newFakePDFMedia(t *testing.T, tripID, dayID, placeID uuid.UUID) *fakePDFMed
 	privateBytes := samplePicture(t, 200)
 
 	public := domain.Media{ID: uuid.New(), TripID: tripID, StorageKey: "public.jpg",
-		OriginalName: "harbour.jpg", MIME: "image/jpeg", Size: int64(len(publicBytes)), Status: domain.MediaReady}
+		OriginalName: "harbour.jpg", MIME: "image/jpeg", Size: int64(len(publicBytes))}
 	private := domain.Media{ID: uuid.New(), TripID: tripID, StorageKey: "private.jpg",
 		OriginalName: "passport.jpg", MIME: "image/jpeg", Size: int64(len(privateBytes)),
-		IsPrivate: true, Status: domain.MediaReady}
+		IsPrivate: true}
 
 	return &fakePDFMedia{
 		items: []domain.Media{public, private},

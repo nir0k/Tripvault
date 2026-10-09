@@ -44,6 +44,10 @@ func (s *Server) calculateLegs(ctx context.Context, documentID uuid.UUID, force 
 	done := 0
 	for _, leg := range content.Legs {
 		forced := force[leg.ID]
+		// Explicit recalculation spends its batch only on the selected legs.
+		if force != nil && !forced {
+			continue
+		}
 		if leg.Composite() {
 			from, to := domain.LegEnds(items[leg.FromItemID], items[leg.ToItemID], stays, content.Tracks)
 			count, err := s.calculateSegments(ctx, leg, from, to, forced, retryEstimates, maxLegsPerCalculation-done)
@@ -270,24 +274,11 @@ func (s *Server) handleRecalculateDay(w http.ResponseWriter, r *http.Request) {
 //   - both ends, or a validation error naming the leg when either is unknown.
 //   - an error when the document cannot be read.
 func (s *Server) legEnds(ctx context.Context, leg domain.Leg) (domain.Point, domain.Point, error) {
-	content, err := s.documents.Content(ctx, leg.DocumentID)
+	start, end, err := s.legEndPoints(ctx, leg)
 	if err != nil {
 		return domain.Point{}, domain.Point{}, err
 	}
-	stays := make(map[uuid.UUID]domain.Stay, len(content.Stays))
-	for _, stay := range content.Stays {
-		stays[stay.ID] = stay
-	}
-	var from, to domain.Item
-	for _, item := range content.Items {
-		switch item.ID {
-		case leg.FromItemID:
-			from = item
-		case leg.ToItemID:
-			to = item
-		}
-	}
-	start, end := domain.LegEnds(from, to, stays, content.Tracks)
+
 	if start == nil || end == nil {
 		return domain.Point{}, domain.Point{}, domain.NewValidationError("leg", "missing_coordinates",
 			"both ends of the leg need a position")

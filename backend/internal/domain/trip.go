@@ -571,27 +571,6 @@ func normalizePageSize(limit int) int {
 	return min(limit, MaxPageSize)
 }
 
-// AdminTripFilter pages the list of every trip on the instance, whoever owns it.
-type AdminTripFilter struct {
-	Query  string
-	Limit  int
-	Cursor string
-}
-
-// Normalize - checks the filter of every trip and fills its defaults.
-//
-// Returns:
-//   - the normalised filter.
-//   - a *ValidationError when the query is too long.
-func (f AdminTripFilter) Normalize() (AdminTripFilter, error) {
-	f.Query = strings.TrimSpace(f.Query)
-	if utf8.RuneCountInString(f.Query) > maxTripTitleLength {
-		return f, NewValidationError("q", "too_long", "must be at most 200 characters")
-	}
-	f.Limit = normalizePageSize(f.Limit)
-	return f, nil
-}
-
 // TripPage is one page of a trip list.
 type TripPage struct {
 	Items []TripSummary

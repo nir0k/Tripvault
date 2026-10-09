@@ -115,7 +115,7 @@ func (f *fakePacking) ResetPacked(context.Context, uuid.UUID) error {
 func newPackingServer(role domain.TripRole) (*Server, *fakeTrips, *fakePacking) {
 	_, trips := newTripServer(role)
 	packing := &fakePacking{}
-	s := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	s := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Auth:    &fakeAuth{user: domain.User{ID: uuid.New(), IsActive: true}},
 		Users:   fakeUsers{},
 		Trips:   trips,

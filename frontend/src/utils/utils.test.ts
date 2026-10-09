@@ -463,7 +463,7 @@ describe('media hints', () => {
     desired_time: null, visit_minutes: 0, is_optional: false, booking_ref: '', planned_cost_amount: null,
     cost_per_person: false, cost_category: 'other' as const,
     cost_note: '', paid_by: null, cost_split: 'none' as const, cost_shares: [], schedule: null, status: 'visited' as const,
-    story_md: '', actual_time: null, actual_end_time: null, rating: null, actual_cost_amount: null, difficulty: null, source_item_id: null, track: null, attachments: [],
+    story_md: '', actual_time: null, actual_end_time: null, rating: null, actual_cost_amount: null, difficulty: null, track: null, attachments: [],
     media: [], cover_media_id: null,
   })
   const day = (id: string, position: number, date: string, items: ReturnType<typeof place>[]) => ({
@@ -478,7 +478,7 @@ describe('media hints', () => {
   // Skógafoss and a waterfall a few hundred metres away, on the second day.
   const skogafoss = place('p1', 'Skógafoss', 63.532, -19.511)
   const document = {
-    id: 'doc', trip_id: 't', kind: 'report' as const, source_document_id: null, intro_md: '', summary_md: '',
+    id: 'doc', trip_id: 't', kind: 'report' as const, intro_md: '', summary_md: '',
     days: [day('d1', 0, '2026-06-20', []), day('d2', 1, '2026-06-21', [skogafoss])],
     unassigned: [], stays: [], transfers: [], expenses: [], nights: [],
     stay_summary: { nights: 0, cost: '0', average_per_night: null }, pending_legs: 0, estimated_legs: 0,
@@ -525,7 +525,6 @@ describe('media hints', () => {
         from_lng: null, to_name: 'Copenhagen', to_address: '', to_lat: null, to_lng: null,
         departure_date: '2026-06-20', departure_time: null, arrival_date: null, arrival_time: null, booking_ref: '',
         url: '', notes_md: '', planned_cost_amount: null, cost_per_person: false, actual_cost_amount: null,
-        source_transfer_id: null,
       }
       const withFlight: TripDocument = { ...report, transfers: [flight], translations: { de: { f1: { to_name: 'Kopenhagen' } } } }
       expect(translateDocument(withFlight, 'de').transfers[0]).toMatchObject({ from_name: 'Keflavík', to_name: 'Kopenhagen', name: 'FI 204' })

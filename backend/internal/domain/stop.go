@@ -2,7 +2,6 @@ package domain
 
 import (
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -214,16 +213,6 @@ func StopsOf(tracks []Track, itemID uuid.UUID) []Stop {
 		return track.Stops
 	}
 	return nil
-}
-
-// SortStops orders stops along their line, the nearest the start first.
-func SortStops(stops []Stop) {
-	slices.SortStableFunc(stops, func(a, b Stop) int {
-		if a.DistanceM != b.DistanceM {
-			return a.DistanceM - b.DistanceM
-		}
-		return strings.Compare(a.ID.String(), b.ID.String())
-	})
 }
 
 // StopCostItems - describes the costs of every stop of a document as places of

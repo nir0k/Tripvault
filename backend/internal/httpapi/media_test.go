@@ -126,7 +126,7 @@ func (f *fakeMedia) SetLinks(_ context.Context, target domain.MediaTarget, targe
 		return domain.ErrNotFound
 	}
 	links := make([]domain.MediaLink, 0, len(mediaIDs))
-	for position, id := range mediaIDs {
+	for _, id := range mediaIDs {
 		item, known := f.items[id]
 		if !known || item.TripID != tripID {
 			return domain.NewValidationError("media_ids", "unknown_media", "must belong to the trip")
@@ -138,7 +138,7 @@ func (f *fakeMedia) SetLinks(_ context.Context, target domain.MediaTarget, targe
 			}
 		}
 		links = append(links, domain.MediaLink{
-			MediaID: id, Target: target, TargetID: targetID, Position: position, IsFavorite: favorite,
+			MediaID: id, Target: target, TargetID: targetID, IsFavorite: favorite,
 		})
 	}
 	f.links[targetID] = links
@@ -308,14 +308,14 @@ func newMediaServer(role domain.TripRole) (*Server, *fakeTrips, *fakeMedia, *mem
 	}}
 	catalogue := newFakeMedia()
 	files := &memoryFiles{files: map[string][]byte{}}
-	s := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
-		Auth:           &fakeAuth{user: domain.User{ID: uuid.New(), IsActive: true, DefaultCurrency: "ISK"}},
-		Users:          fakeUsers{},
-		Trips:          trips,
-		Media:          catalogue,
-		MediaFiles:     files,
-		MediaMaxBytes:  1024 * 1024,
-		MediaTripQuota: 2 * 1024 * 1024,
+	s := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+		Auth:          &fakeAuth{user: domain.User{ID: uuid.New(), IsActive: true, DefaultCurrency: "ISK"}},
+		Users:         fakeUsers{},
+		Trips:         trips,
+		Media:         catalogue,
+		MediaFiles:    files,
+		MediaMaxBytes: 1024 * 1024,
+		Storage:       &fakeStorage{usage: domain.StorageUsage{TripQuotaBytes: 2 * 1024 * 1024}},
 	})
 	return s, trips, catalogue, files
 }
@@ -451,8 +451,7 @@ func TestUploadRefusesWhatItCannotServe(t *testing.T) {
 
 	// A trip already at its allowance takes nothing more.
 	catalogue.items[uuid.New()] = domain.Media{
-		ID: uuid.New(), TripID: trips.trip.ID, Size: 2 * 1024 * 1024, Status: domain.MediaReady,
-	}
+		ID: uuid.New(), TripID: trips.trip.ID, Size: 2 * 1024 * 1024}
 	recorder = upload(t, s, id, "one-more.png", picture(t, 10, 10), false)
 	if recorder.Code != http.StatusConflict || errorCode(t, recorder) != "media_quota" {
 		t.Errorf("a trip out of room: %d %s", recorder.Code, recorder.Body.String())
@@ -478,7 +477,7 @@ func TestInstanceStorageQuota(t *testing.T) {
 // add up to.
 func TestUploadBoundsTheWholeRequest(t *testing.T) {
 	s, trips, _, _ := newMediaServer(domain.RoleEditor)
-	s.mediaTripQuota = 0
+	s.storage = &fakeStorage{usage: domain.StorageUsage{TripQuotaBytes: 0}}
 	send := func(build func(form *multipart.Writer)) *httptest.ResponseRecorder {
 		body := &bytes.Buffer{}
 		form := multipart.NewWriter(body)
@@ -557,7 +556,6 @@ func TestMediaRolesAreEnforced(t *testing.T) {
 		s, trips, catalogue, _ := newMediaServer(role)
 		item := domain.Media{
 			ID: uuid.New(), TripID: trips.trip.ID, StorageKey: "k", MIME: "image/png", Size: 10,
-			Status: domain.MediaReady,
 		}
 		catalogue.items[item.ID] = item
 		base := "/api/v1/media/" + item.ID.String()
@@ -630,7 +628,7 @@ func TestSharedMediaHidesPrivateFiles(t *testing.T) {
 
 		// A file of another trip is not part of what the link opens.
 		other := domain.Media{ID: uuid.New(), TripID: uuid.New(), StorageKey: "other", MIME: "image/png",
-			Size: 10, Status: domain.MediaReady}
+			Size: 10}
 		catalogue.items[other.ID] = other
 		files.files["other"] = data
 		if recorder := sendShared(s, "/api/v1/shared/media/"+other.ID.String(), link.Token); recorder.Code != http.StatusNotFound {
@@ -727,7 +725,7 @@ func TestBackgroundRendersPreviews(t *testing.T) {
 	s, trips, catalogue, files := newMediaServer(domain.RoleEditor)
 	s.workContext = t.Context()
 
-	older := domain.Media{ID: uuid.New(), TripID: trips.trip.ID, StorageKey: "older.png", Status: domain.MediaReady}
+	older := domain.Media{ID: uuid.New(), TripID: trips.trip.ID, StorageKey: "older.png"}
 	catalogue.items[older.ID] = older
 	files.files[older.StorageKey] = picture(t, 300, 200)
 
@@ -932,7 +930,7 @@ func TestSetMediaLinksBuildsAGallery(t *testing.T) {
 	}
 
 	// A file of another trip has nothing to do with this day.
-	stranger := domain.Media{ID: uuid.New(), TripID: uuid.New(), Status: domain.MediaReady}
+	stranger := domain.Media{ID: uuid.New(), TripID: uuid.New()}
 	catalogue.items[stranger.ID] = stranger
 	body = `{"target_type":"day","target_id":"` + dayID.String() + `","media_ids":["` + stranger.ID.String() + `"]}`
 	if recorder := send(s, http.MethodPut, "/api/v1/media-links", "good", body); recorder.Code != http.StatusUnprocessableEntity {
@@ -1030,7 +1028,7 @@ func TestFavoritesChooseWhatTheReportShows(t *testing.T) {
 // choose what the report shows.
 func TestFavoritesNeedEditingRights(t *testing.T) {
 	s, trips, catalogue, _ := newMediaServer(domain.RoleViewer)
-	item := domain.Media{ID: uuid.New(), TripID: trips.trip.ID, Status: domain.MediaReady}
+	item := domain.Media{ID: uuid.New(), TripID: trips.trip.ID}
 	catalogue.items[item.ID] = item
 
 	body := `{"media_ids":["` + item.ID.String() + `"],"favorite":true}`
@@ -1225,8 +1223,7 @@ func TestMediaDownloads(t *testing.T) {
 	}
 	s.now = time.Now
 
-	other := domain.Media{ID: uuid.New(), TripID: uuid.New(), StorageKey: "other", MIME: "image/png", Size: 1,
-		Status: domain.MediaReady}
+	other := domain.Media{ID: uuid.New(), TripID: uuid.New(), StorageKey: "other", MIME: "image/png", Size: 1}
 	catalogue.items[other.ID] = other
 	if recorder = send(s, http.MethodPost, downloadPath, "good", `{"media_ids":["`+other.ID.String()+`"]}`); recorder.Code != http.StatusNotFound {
 		t.Errorf("a picture of another trip: %d", recorder.Code)

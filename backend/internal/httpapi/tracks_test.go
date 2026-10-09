@@ -50,7 +50,7 @@ func importTrack(t *testing.T, s *Server, itemID string, name string, data []byt
 // a place, with its length measured and its points counted.
 func TestImportTrackStoresTheRecordedLine(t *testing.T) {
 	s, docs := newReportServerWithTracks(t)
-	s.mediaTripQuota = 4096
+	s.storage = &fakeStorage{usage: domain.StorageUsage{TripQuotaBytes: 4096}}
 	recorder := importTrack(t, s, docs.place.ID.String(), "day1.gpx",
 		gpx([][2]float64{{63.532, -19.511}, {63.500, -19.400}, {63.491, -19.364}}))
 	if recorder.Code != http.StatusOK {
@@ -86,7 +86,7 @@ func TestImportTrackStoresTheRecordedLine(t *testing.T) {
 // administrator policy as photographs and attachments.
 func TestTrackCountsAgainstTripQuota(t *testing.T) {
 	s, docs := newReportServerWithTracks(t)
-	s.mediaTripQuota = 1
+	s.storage = &fakeStorage{usage: domain.StorageUsage{TripQuotaBytes: 1}}
 	recorder := importTrack(t, s, docs.place.ID.String(), "day.gpx",
 		gpx([][2]float64{{63.5, -19.5}, {63.51, -19.51}}))
 	if recorder.Code != http.StatusConflict || errorCode(t, recorder) != "media_quota" || docs.track != nil {

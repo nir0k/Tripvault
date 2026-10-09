@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useLoadGeneration } from '@/composables/useLoadGeneration'
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -57,6 +58,7 @@ const items = ref<Media[]>([])
 // days and places, and a report's photographs never mix with a plan's.
 const documents = ref<TripDocument[]>([])
 const loading = ref(false)
+const beginLoad = useLoadGeneration()
 const busy = ref(false)
 const error = ref('')
 // Filing a whole afternoon under one day picture by picture is no way to spend
@@ -263,6 +265,7 @@ const order = computed(() => sections.value
 // off the screen and leave the reader at the top of the page, far from the
 // picture they were working on; only the first read shows it.
 async function load(quiet = false): Promise<void> {
+  const active = beginLoad()
   const current = trip.value
   if (!current) {
     return
@@ -271,12 +274,16 @@ async function load(quiet = false): Promise<void> {
   error.value = ''
   try {
     const ids = [current.plan_id, current.report_id].filter((id): id is string => id !== null)
-    documents.value = await Promise.all(ids.map((id) => store.readDocument(id)))
-    items.value = store.shared ? filedMedia(documents.value) : await mediaApi.listMedia(current.id)
+    const shared = store.shared
+    const nextDocuments = await Promise.all(ids.map((id) => store.readDocument(id)))
+    const nextItems = shared ? filedMedia(nextDocuments) : await mediaApi.listMedia(current.id)
+    if (!active()) return
+    documents.value = nextDocuments
+    items.value = nextItems
   } catch (err) {
-    error.value = errorMessage(err, t, te)
+    if (active()) error.value = errorMessage(err, t, te)
   } finally {
-    loading.value = false
+    if (active()) loading.value = false
   }
 }
 
@@ -292,15 +299,18 @@ function choose(next: Filter): void {
 // server agree without the reader having to reload it. A change that already
 // put its own result on the page passes reload false and is not read back.
 async function apply(change: () => Promise<unknown>, reload = true): Promise<boolean> {
+  const ownerId = trip.value?.id
   busy.value = true
   error.value = ''
   try {
     await change()
+    if (trip.value?.id !== ownerId) return false
     if (reload) {
       await load(true)
     }
     return true
   } catch (err) {
+    if (trip.value?.id !== ownerId) return false
     error.value = errorMessage(err, t, te)
     return false
   } finally {

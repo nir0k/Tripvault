@@ -63,21 +63,14 @@ func (s *Server) handleUpdateStorage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.logger, http.StatusOK, newStorageResponse(usage))
 }
 
-// tripQuota returns the current administrator-controlled trip allowance, with
-// the configured seed retained as a fallback for focused handler tests.
+// tripQuota returns the current administrator-controlled trip allowance.
 func (s *Server) tripQuota(ctx context.Context) (int64, error) {
-	if s.storage == nil {
-		return s.mediaTripQuota, nil
-	}
 	settings, err := s.storage.Settings(ctx)
 	return settings.TripQuotaBytes, err
 }
 
 // reserveStorage holds the instance quota lock for a file-producing operation.
 func (s *Server) reserveStorage(ctx context.Context, growth int64) (func(), error) {
-	if s.storage == nil {
-		return func() {}, nil
-	}
 	return s.storage.Reserve(ctx, growth)
 }
 

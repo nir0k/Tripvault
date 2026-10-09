@@ -91,19 +91,20 @@ func (s *Server) handleCreateReport(w http.ResponseWriter, r *http.Request) {
 	user := principalFrom(r.Context()).user
 	source := plan.ID
 	report, err := domain.Trip{
-		ID:           uuid.Must(uuid.NewV7()),
-		OwnerID:      user.ID,
-		Kind:         domain.DocumentReport,
-		SourceTripID: &source,
-		Title:        plan.Title,
-		Summary:      plan.Summary,
-		StartDate:    plan.StartDate,
-		EndDate:      plan.EndDate,
-		Timezone:     plan.Timezone,
-		Currency:     plan.Currency,
-		Travelers:    plan.Travelers,
-		Budget:       plan.Budget,
-		Languages:    []string{domain.ContentLanguage(user.Locale)},
+		ID:            uuid.Must(uuid.NewV7()),
+		OwnerID:       user.ID,
+		Kind:          domain.DocumentReport,
+		SourceTripID:  &source,
+		Title:         plan.Title,
+		Summary:       plan.Summary,
+		StartDate:     plan.StartDate,
+		EndDate:       plan.EndDate,
+		Timezone:      plan.Timezone,
+		Currency:      plan.Currency,
+		Travelers:     plan.Travelers,
+		Budget:        plan.Budget,
+		TrackSpeedKmh: plan.TrackSpeedKmh,
+		Languages:     []string{domain.ContentLanguage(user.Locale)},
 	}.Normalize()
 	if err != nil {
 		s.writeDomainError(w, r, "validate report", err)

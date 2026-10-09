@@ -25,7 +25,7 @@ func newAvatarServer(lastAdmin bool) (*Server, domain.User, fakeUsers, *memoryFi
 		lastAdmin: lastAdmin,
 	}
 	files := &memoryFiles{files: map[string][]byte{}}
-	s := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	s := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Auth:          &fakeAuth{user: user},
 		Users:         users,
 		MediaFiles:    files,

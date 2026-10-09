@@ -26,14 +26,6 @@ var (
 	ErrMediaDuplicate = errors.New("the trip already holds this picture")
 )
 
-// MediaStatus says whether a file is ready to be served. Everything the
-// service accepts is ready the moment it is stored, so ready is the only
-// status there is; the column keeps room for more.
-type MediaStatus string
-
-// MediaReady is the status of every stored file.
-const MediaReady MediaStatus = "ready"
-
 // MediaTarget is the kind of thing a file is shown under.
 type MediaTarget string
 
@@ -96,7 +88,6 @@ type Media struct {
 	// IsPrivate keeps the file out of read-only links that do not ask for
 	// private files.
 	IsPrivate bool
-	Status    MediaStatus
 	// UploadedBy is nil once that account has been deleted; the file stays with
 	// the trip it belongs to.
 	UploadedBy *uuid.UUID
@@ -109,12 +100,11 @@ type MediaChanges struct {
 	IsPrivate *bool
 }
 
-// MediaLink is one place a file is shown, and where it sits among the others.
+// MediaLink names where a photograph is shown and whether it is a favourite.
 type MediaLink struct {
 	MediaID  uuid.UUID
 	Target   MediaTarget
 	TargetID uuid.UUID
-	Position int
 	// IsFavorite marks one of the pictures the report shows for this day or
 	// place, out of everything that hangs on it.
 	IsFavorite bool
@@ -133,9 +123,6 @@ func (m Media) Normalize() (Media, error) {
 	}
 	if m.Size <= 0 {
 		return Media{}, NewValidationError("file", "empty_file", "the file is empty")
-	}
-	if m.Status == "" {
-		m.Status = MediaReady
 	}
 	if (m.Lat == nil) != (m.Lng == nil) {
 		m.Lat, m.Lng = nil, nil

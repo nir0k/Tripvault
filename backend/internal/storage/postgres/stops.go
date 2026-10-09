@@ -40,7 +40,7 @@ func readStops(ctx context.Context, q querier, documentID uuid.UUID) ([]domain.S
 	if err != nil {
 		return nil, err
 	}
-	shares, err := readStopShares(ctx, q, `s.stop_id IN (SELECT id FROM activity_stops WHERE document_id = $1)`,
+	shares, err := readShares(ctx, q, stopShares, `s.stop_id IN (SELECT id FROM activity_stops WHERE document_id = $1)`,
 		documentID)
 	if err != nil {
 		return nil, err
@@ -62,47 +62,6 @@ func attachStops(tracks []domain.Track, stops []domain.Stop) {
 	}
 }
 
-// readStopShares reads the members the costs of some stops are shared among,
-// in the order they were listed, by stop. where selects the shares, as s.
-func readStopShares(ctx context.Context, q querier, where string, args ...any) (map[uuid.UUID][]domain.CostShare, error) {
-	rows, err := q.Query(ctx,
-		`SELECT s.stop_id, s.user_id, (s.amount * 100)::bigint FROM stop_cost_shares s
-		 WHERE `+where+` ORDER BY s.stop_id, s.position`, args...)
-	if err != nil {
-		return nil, fmt.Errorf("query stop cost shares: %w", err)
-	}
-	defer rows.Close()
-	shares := make(map[uuid.UUID][]domain.CostShare)
-	for rows.Next() {
-		var stopID uuid.UUID
-		var share domain.CostShare
-		if err := rows.Scan(&stopID, &share.UserID, &share.Amount); err != nil {
-			return nil, fmt.Errorf("scan stop cost share: %w", err)
-		}
-		shares[stopID] = append(shares[stopID], share)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read stop cost shares: %w", err)
-	}
-	return shares, nil
-}
-
-// writeStopShares replaces the members a stop's cost is shared among with the
-// ones the stop lists.
-func writeStopShares(ctx context.Context, tx pgx.Tx, stop domain.Stop) error {
-	if _, err := tx.Exec(ctx, `DELETE FROM stop_cost_shares WHERE stop_id = $1`, stop.ID); err != nil {
-		return fmt.Errorf("clear stop cost shares: %w", err)
-	}
-	for position, share := range stop.CostShares {
-		if _, err := tx.Exec(ctx,
-			`INSERT INTO stop_cost_shares (stop_id, user_id, position, amount) VALUES ($1, $2, $3, $4::numeric)`,
-			stop.ID, share.UserID, position, moneyParam(share.Amount)); err != nil {
-			return fmt.Errorf("add stop cost share: %w", err)
-		}
-	}
-	return nil
-}
-
 // Stop - reads one stop with the members its cost is shared among.
 //
 // Arguments:
@@ -118,7 +77,7 @@ func (r *DocumentRepository) Stop(ctx context.Context, id uuid.UUID) (domain.Sto
 	if err != nil {
 		return stop, err
 	}
-	shares, err := readStopShares(ctx, r.pool, `s.stop_id = $1`, id)
+	shares, err := readShares(ctx, r.pool, stopShares, `s.stop_id = $1`, id)
 	stop.CostShares = shares[id]
 	return stop, err
 }
@@ -164,7 +123,7 @@ func (r *DocumentRepository) CreateStop(ctx context.Context, stop domain.Stop) e
 		if tag.RowsAffected() == 0 {
 			return domain.ErrNotFound
 		}
-		return writeStopShares(ctx, tx, stop)
+		return writeShares(ctx, tx, stopShares, stop.ID, stop.CostShares)
 	})
 }
 
@@ -196,7 +155,7 @@ func (r *DocumentRepository) UpdateStop(ctx context.Context, stop domain.Stop) e
 		if tag.RowsAffected() == 0 {
 			return domain.ErrNotFound
 		}
-		return writeStopShares(ctx, tx, stop)
+		return writeShares(ctx, tx, stopShares, stop.ID, stop.CostShares)
 	})
 }
 

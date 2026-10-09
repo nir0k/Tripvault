@@ -175,7 +175,7 @@ func (fakeUsers) Search(context.Context, string, uuid.UUID) ([]domain.TripUser, 
 
 // newTestServer builds a server whose token "good" signs in as user.
 func newTestServer(user domain.User) *Server {
-	return NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	return newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Auth:  &fakeAuth{user: user},
 		Users: fakeUsers{},
 	})
@@ -287,4 +287,13 @@ func TestErrorMapping(t *testing.T) {
 		!strings.Contains(recorder.Body.String(), `"email_notifications":true`) {
 		t.Errorf("profile update: %d %s", recorder.Code, recorder.Body.String())
 	}
+}
+
+// newHandlerServer supplies unlimited storage unless a test provides its own policy.
+// Runtime wiring must always supply the actual persistent quota service.
+func newHandlerServer(opts Options, logger *slog.Logger, deps Dependencies) *Server {
+	if deps.Storage == nil {
+		deps.Storage = &fakeStorage{}
+	}
+	return NewServer(opts, logger, deps)
 }

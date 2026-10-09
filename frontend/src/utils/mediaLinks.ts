@@ -6,9 +6,7 @@ import type { Media, MediaTarget, TripDocument } from '@/api/types'
 // ticked off. The API replaces a gallery whole rather than taking a difference,
 // so what this works out is what each touched gallery should hold afterwards.
 //
-// Both documents of a trip are fair game: a picture hangs on a day of the plan
-// as readily as on a day of the report, and a trip still being planned has no
-// report at all.
+// A picture may hang on a day of the trip's document, whether a plan or a report.
 
 /** MediaLinkPlace is a day of a document, or a place of one of its days. */
 export type MediaLinkPlace = Extract<MediaTarget, 'day' | 'item'>
@@ -35,7 +33,7 @@ export interface MediaLinkUpdate {
  * into it.
  *
  * Arguments:
- *   - documents: the trip's plan and report, whichever of them it has.
+ *   - documents: the loaded documents whose galleries are being filed.
  *   - media: the pictures being filed.
  *   - changes: the galleries they are put into, or taken out of.
  *

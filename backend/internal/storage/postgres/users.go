@@ -368,6 +368,9 @@ func avatarTime(key string, at time.Time) time.Time {
 func (r *UserRepository) Delete(ctx context.Context, id uuid.UUID) ([]string, error) {
 	var keys []string
 	err := pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+		if err := lockAdministrators(ctx, tx); err != nil {
+			return err
+		}
 		var isAdmin, isActive bool
 		var avatarKey string
 		err := tx.QueryRow(ctx,
@@ -502,9 +505,8 @@ func (r *UserRepository) ResetPassword(ctx context.Context, id uuid.UUID, hash s
 func (r *UserRepository) Update(ctx context.Context, id uuid.UUID, changes domain.UserChanges) (domain.User, error) {
 	var updated domain.User
 	err := pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
-		// Serialises every change that could affect the administrator count.
-		if _, err := tx.Exec(ctx, `SELECT id FROM users WHERE is_admin AND is_active FOR UPDATE`); err != nil {
-			return fmt.Errorf("lock administrators: %w", err)
+		if err := lockAdministrators(ctx, tx); err != nil {
+			return err
 		}
 
 		var err error
@@ -608,4 +610,14 @@ func (r *UserRepository) Search(ctx context.Context, query string, exclude uuid.
 		return nil, fmt.Errorf("read users: %w", err)
 	}
 	return users, nil
+}
+
+// lockAdministrators serialises deletion and role changes under the same
+// transaction lock, including when a concurrent transaction removes a row.
+func lockAdministrators(ctx context.Context, tx pgx.Tx) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(684293017)`)
+	if err != nil {
+		return fmt.Errorf("lock administrators: %w", err)
+	}
+	return nil
 }

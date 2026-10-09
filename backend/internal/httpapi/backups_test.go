@@ -238,7 +238,7 @@ func newBackupServer(t *testing.T, sealer SecretSealer) (*Server, *fakeBackups, 
 	service := &fakeBackupService{store: store, archives: map[string]map[string]string{"": {}}}
 	admin := domain.User{ID: uuid.New(), IsActive: true, IsAdmin: true}
 
-	server := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	server := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Auth:           &fakeAuth{user: admin},
 		Users:          fakeUsers{},
 		Backups:        store,
@@ -268,7 +268,7 @@ func createConfig(t *testing.T, s *Server, body string) backupConfigResponse {
 func TestBackupsAreForAdministratorsOnly(t *testing.T) {
 	store := newFakeBackups()
 	member := domain.User{ID: uuid.New(), IsActive: true}
-	s := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	s := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Auth:          &fakeAuth{user: member},
 		Users:         fakeUsers{},
 		Backups:       store,
@@ -291,7 +291,7 @@ func TestBackupsAreForAdministratorsOnly(t *testing.T) {
 // no usable backup directory says so rather than failing on a missing service.
 func TestBackupsUnavailableWithoutADirectory(t *testing.T) {
 	admin := domain.User{ID: uuid.New(), IsActive: true, IsAdmin: true}
-	s := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	s := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Auth:  &fakeAuth{user: admin},
 		Users: fakeUsers{},
 	})

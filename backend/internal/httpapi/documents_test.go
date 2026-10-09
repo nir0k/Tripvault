@@ -595,7 +595,7 @@ func newRoutingServer(role domain.TripRole) (*Server, *fakeDocuments, *fakeRoute
 	docs.leg = domain.Leg{ID: uuid.New(), DocumentID: docs.document.ID, DayID: dayID, FromItemID: docs.place.ID,
 		ToItemID: docs.anchor.ID, Mode: domain.ModeCar, Source: domain.LegPending, Input: "car|?|?"}
 	router := &fakeRouter{}
-	s := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	s := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Auth:      &fakeAuth{user: domain.User{ID: uuid.New(), IsActive: true}},
 		Users:     fakeUsers{},
 		Trips:     trips,

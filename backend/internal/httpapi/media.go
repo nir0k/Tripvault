@@ -44,7 +44,6 @@ type mediaResponse struct {
 	// of the pictures the report shows there; in the trip's own list of files it
 	// says whether the file is a favourite anywhere in the report.
 	IsFavorite bool      `json:"is_favorite"`
-	Status     string    `json:"status"`
 	CreatedAt  time.Time `json:"created_at"`
 }
 
@@ -62,7 +61,6 @@ func newMediaResponse(item domain.Media) mediaResponse {
 		Lat:          item.Lat,
 		Lng:          item.Lng,
 		IsPrivate:    item.IsPrivate,
-		Status:       string(item.Status),
 		CreatedAt:    item.CreatedAt,
 	}
 }
@@ -458,7 +456,6 @@ func (s *Server) storePart(r *http.Request, tripID uuid.UUID, part *multipart.Pa
 		Lat:            meta.Lat,
 		Lng:            meta.Lng,
 		IsPrivate:      private,
-		Status:         domain.MediaReady,
 		UploadedBy:     &uploader,
 	}.Normalize()
 	if err != nil {
@@ -797,9 +794,10 @@ func (s *Server) sharedMedia(w http.ResponseWriter, r *http.Request) (domain.Med
 const mediaCacheControl = "private, no-cache"
 
 // hidesLocation reports whether a picture must leave without the place it was
-// taken at: a JPEG, the one kind whose location is read, taken inside a circle.
+// taken at. Metadata can contain XMP positions the catalogue cannot read, so
+// every shared JPEG is scrubbed while the trip has privacy zones.
 func hidesLocation(item domain.Media, zones domain.PrivacyZones) bool {
-	return item.MIME == "image/jpeg" && zones.Hides(item.Lat, item.Lng)
+	return item.MIME == "image/jpeg" && len(zones) > 0
 }
 
 // openMedia opens a stored file to be sent; with scrub, where it was taken is

@@ -12,7 +12,15 @@ export async function reversePlace(lat: number, lng: number, lang: string): Prom
   return (await http.get<ListResponse<GeoPlace>>('/api/v1/geo/reverse', { params: { lat, lng, lang } })).data.items
 }
 
+export interface ParsedLocation {
+  lat: number
+  lng: number
+  name: string
+  label: string
+  ref: string
+}
+
 /** parseLink reads a position from pasted coordinates or a map link. */
-export async function parseLink(url: string): Promise<{ lat: number; lng: number; name: string }> {
-  return (await http.get<{ lat: number; lng: number; name: string }>('/api/v1/geo/parse-link', { params: { url } })).data
+export async function parseLink(url: string, lang: string): Promise<ParsedLocation> {
+  return (await http.get<ParsedLocation>('/api/v1/geo/parse-link', { params: { url, lang } })).data
 }

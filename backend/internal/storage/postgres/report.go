@@ -11,7 +11,7 @@ import (
 )
 
 // A report made from a plan is a snapshot, not a view: every row is copied, and
-// each copy remembers the row it came from. From then on the two are
+// the copied rows carry no dependency on their originals. The two are
 // independent - they are separate trips - so editing or deleting the plan can
 // never move the figures a finished report compares against.
 //
@@ -76,8 +76,8 @@ func (r *DocumentRepository) CreateReport(ctx context.Context, report domain.Tri
 func copyPlan(ctx context.Context, tx pgx.Tx, tripID uuid.UUID, plan domain.DocumentContent) (uuid.UUID, error) {
 	reportID := uuid.Must(uuid.NewV7())
 	_, err := tx.Exec(ctx,
-		`INSERT INTO documents (id, trip_id, kind, source_document_id, intro_md, summary_md)
-		 VALUES ($1, $2, 'report', $3, '', '')`, reportID, tripID, plan.Document.ID)
+		`INSERT INTO documents (id, trip_id, kind, intro_md, summary_md)
+		 VALUES ($1, $2, 'report', '', '')`, reportID, tripID)
 	if isUniqueViolation(err) {
 		return uuid.Nil, domain.ErrAlreadyExists
 	}
@@ -137,10 +137,10 @@ func copyDays(ctx context.Context, tx pgx.Tx, reportID uuid.UUID, days []domain.
 		id := uuid.Must(uuid.NewV7())
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO days (id, document_id, position, date, title, notes_md, start_time, default_mode, timezone,
-			                   morning_anchor, evening_anchor, no_overnight, source_day_id)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7::time, $8, $9, $10, $11, $12, $13)`,
+			                   morning_anchor, evening_anchor, no_overnight)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7::time, $8, $9, $10, $11, $12)`,
 			id, reportID, day.Position, day.Date, day.Title, day.NotesMD, day.StartTime.String(),
-			day.DefaultMode, day.Timezone, day.MorningAnchor, day.EveningAnchor, day.NoOvernight, day.ID); err != nil {
+			day.DefaultMode, day.Timezone, day.MorningAnchor, day.EveningAnchor, day.NoOvernight); err != nil {
 			return nil, fmt.Errorf("copy day: %w", err)
 		}
 		copies[day.ID] = id
@@ -158,12 +158,11 @@ func copyStays(ctx context.Context, tx pgx.Tx, reportID uuid.UUID, stays []domai
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO stays (id, document_id, name, kind, address, lat, lng, check_in_date, check_in_time,
 			                    check_out_date, check_out_time, booking_ref, url, contacts, notes_md,
-			                    planned_cost_amount, source_stay_id)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::time, $10, $11::time, $12, $13, $14, $15, $16::numeric, $17)`,
+			                    planned_cost_amount)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::time, $10, $11::time, $12, $13, $14, $15, $16::numeric)`,
 			id, reportID, stay.Name, stay.Kind, stay.Address, stay.Lat, stay.Lng,
 			stay.CheckInDate, clockParam(stay.CheckInTime), stay.CheckOutDate, clockParam(stay.CheckOutTime),
-			stay.BookingRef, stay.URL, stay.Contacts, stay.NotesMD, moneyParam(stay.PlannedCost),
-			stay.ID); err != nil {
+			stay.BookingRef, stay.URL, stay.Contacts, stay.NotesMD, moneyParam(stay.PlannedCost)); err != nil {
 			return fmt.Errorf("copy stay: %w", err)
 		}
 	}
@@ -189,14 +188,14 @@ func copyPlaces(ctx context.Context, tx pgx.Tx, reportID uuid.UUID, items []doma
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO items (id, document_id, day_id, position, kind, name, category, lat, lng, address, osm_ref,
 			                    description_md, url, desired_time, visit_minutes, is_optional, booking_ref,
-			                    planned_cost_amount, cost_per_person, cost_category, status, source_item_id,
+			                    planned_cost_amount, cost_per_person, cost_category, status,
 			                    activity_type, difficulty, cost_note)
-			 VALUES ($1, $2, $3, $4, $21, $5, $6, $7, $8, $9, nullif($10, ''), $11, $12, $13::time, $14, $15, $16,
-			         $17::numeric, $18, $19, 'visited', $20, nullif($22, ''), $23, $24)`,
+			 VALUES ($1, $2, $3, $4, $20, $5, $6, $7, $8, $9, nullif($10, ''), $11, $12, $13::time, $14, $15, $16,
+			         $17::numeric, $18, $19, 'visited', nullif($21, ''), $22, $23)`,
 			id, reportID, dayID, item.Position, item.Name, item.Category, item.Lat, item.Lng, item.Address,
 			item.OSMRef, item.DescriptionMD, item.URL, clockParam(item.DesiredTime), item.VisitMinutes,
 			item.IsOptional, item.BookingRef, moneyParam(item.PlannedCost), item.CostPerPerson, item.CostCategory,
-			item.ID, item.Kind, item.ActivityType, item.Difficulty, item.CostNote); err != nil {
+			item.Kind, item.ActivityType, item.Difficulty, item.CostNote); err != nil {
 			return nil, fmt.Errorf("copy place: %w", err)
 		}
 		copies[item.ID] = id
@@ -217,9 +216,9 @@ func copyTracks(ctx context.Context, tx pgx.Tx, reportID uuid.UUID, tracks []dom
 		}
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO tracks (id, document_id, item_id, original_name, format, geometry, distance_m, point_count,
-			                     ascent_m, descent_m, started_at, ended_at, file_gz, climb_version, grades, file_size)
+			                     ascent_m, descent_m, started_at, ended_at, file_gz, climb_version, grades, file_size, speed_kmh)
 			 SELECT $1, $2, $3, original_name, format, geometry, distance_m, point_count,
-			        ascent_m, descent_m, started_at, ended_at, file_gz, climb_version, grades, file_size
+			        ascent_m, descent_m, started_at, ended_at, file_gz, climb_version, grades, file_size, speed_kmh
 			 FROM tracks WHERE id = $4`,
 			uuid.Must(uuid.NewV7()), reportID, itemID, track.ID); err != nil {
 			return fmt.Errorf("copy track: %w", err)
@@ -241,11 +240,10 @@ func copyExpenses(ctx context.Context, tx pgx.Tx, reportID uuid.UUID, expenses [
 			dayID = &copied
 		}
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO expenses (id, document_id, day_id, category, planned_amount, note, comment, url,
-			                       source_expense_id)
-			 VALUES ($1, $2, $3, $4, $5::numeric, $6, $7, $8, $9)`,
+			`INSERT INTO expenses (id, document_id, day_id, category, planned_amount, note, comment, url)
+			 VALUES ($1, $2, $3, $4, $5::numeric, $6, $7, $8)`,
 			uuid.Must(uuid.NewV7()), reportID, dayID, expense.Category, moneyParam(expense.Planned),
-			expense.Note, expense.Comment, expense.URL, expense.ID); err != nil {
+			expense.Note, expense.Comment, expense.URL); err != nil {
 			return fmt.Errorf("copy expense: %w", err)
 		}
 	}
@@ -315,12 +313,12 @@ func copyLegs(ctx context.Context, tx pgx.Tx, reportID uuid.UUID, legs []domain.
 			`INSERT INTO legs (id, document_id, day_id, from_item_id, to_item_id, mode, distance_m, duration_s,
 			                   geometry, calc_source, calc_error, calc_input, calculated_at,
 			                   manual_distance_m, manual_duration_s, planned_cost_amount,
-			                   route_preference, via, route_pinned)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::numeric, $17, $18, $19)`,
+			                   route_preference, via, route_pinned, note)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::numeric, $17, $18, $19, $20)`,
 			id, reportID, dayID, from, to, leg.Mode, leg.DistanceM, leg.DurationS,
 			geometry, leg.Source, calcError, leg.Input, leg.CalculatedAt,
 			leg.ManualDistanceM, leg.ManualDurationS, moneyParam(leg.PlannedCost),
-			leg.Route().Preference, via, leg.Pinned); err != nil {
+			leg.Route().Preference, via, leg.Pinned, leg.Note); err != nil {
 			return fmt.Errorf("copy leg: %w", err)
 		}
 		// A journey with changes comes along with its parts and its tickets,

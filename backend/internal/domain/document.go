@@ -240,14 +240,13 @@ const (
 
 // Document is a plan or a report.
 type Document struct {
-	ID               uuid.UUID
-	TripID           uuid.UUID
-	Kind             DocumentKind
-	SourceDocumentID *uuid.UUID
-	IntroMD          string
-	SummaryMD        string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID        uuid.UUID
+	TripID    uuid.UUID
+	Kind      DocumentKind
+	IntroMD   string
+	SummaryMD string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // CheckDocumentText - checks the words around a document's days.
@@ -343,18 +342,6 @@ func (d Day) CheckKind(kind DocumentKind) error {
 	return nil
 }
 
-// HasContent - reports whether removing the day would lose something the
-// person wrote: a title, notes or places.
-//
-// Arguments:
-//   - places: how many places the day holds.
-//
-// Returns:
-//   - true when the day is not empty.
-func (d Day) HasContent(places int) bool {
-	return d.Title != "" || strings.TrimSpace(d.NotesMD) != "" || places > 0
-}
-
 // Stay is a place to sleep, covering the nights from CheckInDate up to the
 // night before CheckOutDate.
 type Stay struct {
@@ -376,10 +363,8 @@ type Stay struct {
 	PlannedCost  *Money
 	// ActualCost belongs to a report; in a plan it stays empty.
 	ActualCost *Money
-	// SourceStayID is the stay of the plan this one was copied from.
-	SourceStayID *uuid.UUID
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // Normalize - trims a stay's text and checks its fields.
@@ -520,8 +505,6 @@ type Item struct {
 	ActualCost *Money
 	// CoverMediaID is the picture the place is shown by, out of its own media.
 	CoverMediaID *uuid.UUID
-	// SourceItemID is the place of the plan this one was copied from.
-	SourceItemID *uuid.UUID
 	// Difficulty is how hard an activity is, MinDifficulty to MaxDifficulty,
 	// or nil when nobody said. A place has none.
 	Difficulty *int

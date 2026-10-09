@@ -243,6 +243,7 @@ export function useMediaUrl(path: Ref<string | null>, options: MediaUrlOptions =
   }, { immediate: true })
 
   onBeforeUnmount(() => {
+    generation++
     cancel?.()
     release()
   })

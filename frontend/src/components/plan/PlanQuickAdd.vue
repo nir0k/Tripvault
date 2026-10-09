@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useLocationSearch } from '@/composables/useLocationSearch'
 import { ApiError } from '@/api/client'
 import { getClientConfig } from '@/api/config'
 import type { PlaceFields } from '@/api/documents'
-import { parseLink, reversePlace, searchPlaces } from '@/api/geo'
+import { parseLink, reversePlace } from '@/api/geo'
 import type { GeoPlace } from '@/api/types'
 import AppIcon from '@/components/AppIcon.vue'
 import { errorMessage } from '@/utils/errors'
@@ -34,14 +35,10 @@ const { t, te, locale } = useI18n()
 
 const field = useTemplateRef<HTMLInputElement>('field')
 const text = ref('')
-const results = ref<GeoPlace[]>([])
-const searching = ref(false)
 const resolving = ref(false)
 const message = ref('')
 const geocodingEnabled = ref(false)
 const highlighted = ref(0)
-let searchTimer: ReturnType<typeof setTimeout> | undefined
-let generation = 0
 
 const busy = computed(() => resolving.value || props.saving)
 
@@ -60,39 +57,12 @@ onMounted(async () => {
     // Without the configuration the tile still takes a link or a bare name.
   }
 })
-onBeforeUnmount(() => clearTimeout(searchTimer))
 
-// The search waits for a pause in typing, and shows only the newest answer.
-watch(text, (value) => {
-  clearTimeout(searchTimer)
-  generation++
-  results.value = []
-  highlighted.value = 0
-  message.value = ''
-  const trimmed = value.trim()
-  if (trimmed.length < 2 || !geocodingEnabled.value || isPosition(trimmed)) {
-    searching.value = false
-    return
-  }
-  searching.value = true
-  searchTimer = setTimeout(async () => {
-    const current = ++generation
-    try {
-      const found = await searchPlaces(trimmed, locale.value, props.focus)
-      if (current === generation) {
-        results.value = found
-      }
-    } catch (err) {
-      if (current === generation) {
-        message.value = errorMessage(err, t, te)
-      }
-    } finally {
-      if (current === generation) {
-        searching.value = false
-      }
-    }
-  }, 350)
-})
+const { results, searching } = useLocationSearch(text,
+  () => geocodingEnabled.value, () => props.focus,
+  (err) => { message.value = errorMessage(err, t, te) }, isPosition)
+watch(text, () => { highlighted.value = 0; message.value = '' })
+
 
 // fieldsFor is what a new element is created with: its kind with the kind's
 // default type, and whatever the field found.
@@ -121,10 +91,10 @@ async function resolvePosition(value: string): Promise<void> {
   resolving.value = true
   message.value = ''
   try {
-    const location = await parseLink(value.trim())
+    const location = await parseLink(value.trim(), locale.value)
     let name = location.name
-    let address = ''
-    if (geocodingEnabled.value) {
+    let address = location.label
+    if (geocodingEnabled.value && !address) {
       try {
         const [nearest] = await reversePlace(location.lat, location.lng, locale.value)
         name ||= nearest?.name ?? ''
@@ -138,6 +108,7 @@ async function resolvePosition(value: string): Promise<void> {
       lat: location.lat,
       lng: location.lng,
       address,
+      osm_ref: location.ref,
     }))
   } catch (err) {
     message.value = err instanceof ApiError && err.code === 'validation_failed'

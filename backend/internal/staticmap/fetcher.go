@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/nir0k/tripvault/backend/internal/requestwork"
 )
 
 // TileCache keeps the tiles fetched, so a second map of the same place does not
@@ -48,6 +50,7 @@ type Fetcher struct {
 	logger    *slog.Logger
 	now       func() time.Time
 	slots     chan struct{}
+	work      requestwork.Group[image.Image]
 }
 
 // NewFetcher - builds the tile source the report's maps are drawn from.
@@ -107,25 +110,33 @@ func (f *Fetcher) Tile(ctx context.Context, zoom, x, y int) (image.Image, error)
 		}
 	}
 
-	select {
-	case f.slots <- struct{}{}:
-		defer func() { <-f.slots }()
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
+	return f.work.Do(ctx, string(key), func(ctx context.Context) (image.Image, error) {
+		if body, found, err := f.cache.Tile(ctx, key, f.now()); err == nil && found {
+			if tile, _, err := image.Decode(bytes.NewReader(body)); err == nil {
+				return tile, nil
+			}
+		}
 
-	body, err := f.fetch(ctx, address)
-	if err != nil {
-		return nil, err
-	}
-	tile, _, err := image.Decode(bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("the tile server sent something that is not a picture: %w", err)
-	}
-	if err := f.cache.SaveTile(ctx, key, body, f.now().Add(cacheFor)); err != nil {
-		f.logger.Warn("keep a map tile failed", slog.Any("error", err))
-	}
-	return tile, nil
+		select {
+		case f.slots <- struct{}{}:
+			defer func() { <-f.slots }()
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+
+		body, err := f.fetch(ctx, address)
+		if err != nil {
+			return nil, err
+		}
+		tile, _, err := image.Decode(bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("the tile server sent something that is not a picture: %w", err)
+		}
+		if err := f.cache.SaveTile(ctx, key, body, f.now().Add(cacheFor)); err != nil {
+			f.logger.Warn("keep a map tile failed", slog.Any("error", err))
+		}
+		return tile, nil
+	})
 }
 
 // errTileRefused is a tile server that answered, but not with a tile.

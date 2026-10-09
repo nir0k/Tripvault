@@ -718,6 +718,11 @@ paths:
           schema:
             type: string
             maxLength: 2000
+        - name: lang
+          in: query
+          schema:
+            type: string
+          description: Place language; defaults to the reader's profile, then English.
       responses:
         "200":
           description: The position, with the place name when the link carries one.
@@ -725,7 +730,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [lat, lng, name]
+                required: [lat, lng, name, label, ref]
                 properties:
                   lat:
                     type: number
@@ -733,6 +738,12 @@ paths:
                     type: number
                   name:
                     type: string
+                  label:
+                    type: string
+                    description: Address already found by geocoding, or empty for coordinate-only links.
+                  ref:
+                    type: string
+                    description: Source identifier already found by geocoding, or empty.
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -5907,6 +5918,7 @@ components:
                 type: array
                 items:
                   $ref: "#/components/schemas/Place"
+
     Document:
       description: The document.
       content:
@@ -7789,7 +7801,7 @@ components:
                  planned_cost_amount, cost_per_person, cost_category, cost_note, paid_by, cost_split,
                  cost_shares, schedule,
                  status, story_md, actual_time, actual_end_time, rating, actual_cost_amount, difficulty,
-                 source_item_id, track, attachments]
+                 track, attachments]
       properties:
         id:
           type: string
@@ -7888,10 +7900,6 @@ components:
           minimum: 1
           maximum: 5
           description: How hard an activity is, from 1 (very easy) to 5 (extreme). Always null on a place.
-        source_item_id:
-          type: [string, "null"]
-          format: uuid
-          description: The place of the plan this one was copied from.
         schedule:
           description: Set for elements of a day, null for unassigned places.
           oneOf:
@@ -8124,7 +8132,7 @@ components:
     Media:
       type: object
       required: [id, trip_id, original_name, mime, size, width, height, taken_at, lat, lng, is_private,
-                 is_favorite, status, created_at]
+                 is_favorite, created_at]
       properties:
         id:
           type: string
@@ -8169,10 +8177,6 @@ components:
             In the gallery of a day or a place, whether this is one of the pictures
             the report shows there; in the trip's own list of files, whether the file
             is a favourite anywhere in the report.
-        status:
-          type: string
-          description: Always `ready`; every file is ready the moment it is stored.
-          enum: [ready]
         created_at:
           type: string
           format: date-time
@@ -8320,7 +8324,7 @@ components:
       type: object
       required: [id, name, kind, address, lat, lng, check_in_date, check_in_time, check_out_date, check_out_time,
                  booking_ref, url, contacts, notes_md, planned_cost_amount, actual_cost_amount, nights,
-                 price_per_night, source_stay_id]
+                 price_per_night]
       properties:
         id:
           type: string
@@ -8367,16 +8371,13 @@ components:
           type: integer
         price_per_night:
           $ref: "#/components/schemas/NullableAmount"
-        source_stay_id:
-          type: [string, "null"]
-          format: uuid
 
     Transfer:
       type: object
       description: A booked journey between two places, by the date it departs.
       required: [id, kind, name, from_name, from_address, from_lat, from_lng, to_name, to_address, to_lat, to_lng,
                  departure_date, departure_time, arrival_date, arrival_time, booking_ref, url, notes_md,
-                 planned_cost_amount, cost_per_person, actual_cost_amount, source_transfer_id]
+                 planned_cost_amount, cost_per_person, actual_cost_amount]
       properties:
         id:
           type: string
@@ -8437,13 +8438,9 @@ components:
           allOf:
             - $ref: "#/components/schemas/NullableAmount"
           description: Report only.
-        source_transfer_id:
-          type: [string, "null"]
-          format: uuid
-
     Document:
       type: object
-      required: [id, trip_id, kind, source_document_id, intro_md, summary_md, days, unassigned, stays, transfers,
+      required: [id, trip_id, kind, intro_md, summary_md, days, unassigned, stays, transfers,
                  expenses, nights, stay_summary, pending_legs, estimated_legs, totals, translations, created_at, updated_at]
       properties:
         id:
@@ -8455,10 +8452,6 @@ components:
         kind:
           type: string
           enum: [plan, report]
-        source_document_id:
-          type: [string, "null"]
-          format: uuid
-          description: The plan a report was copied from.
         intro_md:
           type: string
           description: The words before the days.

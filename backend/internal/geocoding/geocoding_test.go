@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -116,27 +117,41 @@ func (f *fakeGeocoder) Reverse(context.Context, domain.Point, string) ([]Place, 
 
 // memory is an in-memory cache and usage counter.
 type memory struct {
+	mu       sync.Mutex
 	entries  map[string][]byte
 	requests int
 }
 
 // Get returns a cached answer.
 func (m *memory) Get(_ context.Context, key []byte, _ time.Time) ([]byte, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	value, ok := m.entries[string(key)]
 	return value, ok, nil
 }
 
 // Put stores an answer.
 func (m *memory) Put(_ context.Context, key []byte, _ string, payload []byte, _ time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.entries[string(key)] = payload
 	return nil
 }
 
 // Requests24h counts requests.
-func (m *memory) Requests24h(context.Context, time.Time) (int, error) { return m.requests, nil }
+func (m *memory) Requests24h(context.Context, time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.requests, nil
+}
 
 // Record counts a request.
-func (m *memory) Record(context.Context, time.Time, bool) error { m.requests++; return nil }
+func (m *memory) Record(context.Context, time.Time, bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.requests++
+	return nil
+}
 
 // TestService checks caching, the limits and a missing provider.
 func TestService(t *testing.T) {

@@ -106,3 +106,29 @@ type nopCloser struct{ *bytes.Reader }
 
 // Close does nothing.
 func (nopCloser) Close() error { return nil }
+
+// TestLocationFreeScrubsExtendedXMPLateInTheHeader checks extended packets and
+// marker padding after more than a megabyte of metadata cannot bypass privacy.
+func TestLocationFreeScrubsExtendedXMPLateInTheHeader(t *testing.T) {
+	picture := jpegBytes(t, 8, 4)
+	var out bytes.Buffer
+	out.Write(picture[:2])
+	for range 20 {
+		out.Write([]byte{0xff, 0xe2, 0xff, 0xff})
+		out.Write(make([]byte, 65533))
+	}
+	payload := []byte(extendedXMPPrefix + "GPSLatitude=home")
+	out.Write([]byte{0xff, 0xff, 0xe1})
+	_ = binary.Write(&out, binary.BigEndian, uint16(len(payload)+2))
+	out.Write(payload)
+	out.Write(picture[2:])
+	original := out.Bytes()
+	file, err := NewLocationFree(nopCloser{bytes.NewReader(original)}, int64(len(original)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(file)
+	if err != nil || len(data) != len(original) || bytes.Contains(data, []byte("GPSLatitude")) {
+		t.Fatalf("extended metadata survived or file changed length: %v", err)
+	}
+}

@@ -63,7 +63,7 @@ func themeFileBody(name, color string) string {
 
 // newThemeServer builds a server whose reader is user, over the given themes.
 func newThemeServer(user domain.User, themes *fakeThemes) *Server {
-	return NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	return newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Auth:   &fakeAuth{user: user},
 		Users:  fakeUsers{},
 		Themes: themes,

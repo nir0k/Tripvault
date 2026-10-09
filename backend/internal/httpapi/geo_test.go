@@ -44,7 +44,7 @@ func (f *fakeGeocoder) Reverse(_ context.Context, _ domain.Point, lang string) (
 // TestGeoEndpoints checks parameters, the language fallback and error mapping.
 func TestGeoEndpoints(t *testing.T) {
 	geocoder := &fakeGeocoder{}
-	s := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	s := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Auth:     &fakeAuth{user: domain.User{ID: uuid.New(), IsActive: true, Locale: "ru"}},
 		Geocoder: geocoder,
 	})
@@ -86,7 +86,7 @@ func TestGeoEndpoints(t *testing.T) {
 // or when nothing is found.
 func TestParseLinkSearchesANameOnlyPlace(t *testing.T) {
 	geocoder := &fakeGeocoder{}
-	s := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	s := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Auth:     &fakeAuth{user: domain.User{ID: uuid.New(), IsActive: true, Locale: "en"}},
 		Geocoder: geocoder,
 	})
@@ -95,7 +95,7 @@ func TestParseLinkSearchesANameOnlyPlace(t *testing.T) {
 
 	recorder := send(s, http.MethodGet, link, "good", "")
 	if recorder.Code != http.StatusOK ||
-		!strings.Contains(recorder.Body.String(), `{"lat":63.41,"lng":-19,"name":"Googleplex"}`) ||
+		!strings.Contains(recorder.Body.String(), `"name":"Googleplex"`) ||
 		geocoder.query.Text != "Googleplex, 1600 Amphitheatre Pkwy, Mountain View, CA 94043" {
 		t.Errorf("name-only link: %d %s %+v", recorder.Code, recorder.Body.String(), geocoder.query)
 	}

@@ -269,12 +269,9 @@ type Dependencies struct {
 	// Media is the catalogue of the files; MediaFiles is where their bytes live.
 	Media      MediaStore
 	MediaFiles media.Store
-	// MediaMaxBytes bounds one uploaded file, MediaTripQuota everything a trip
-	// keeps; a quota of zero is unlimited.
-	MediaMaxBytes  int64
-	MediaTripQuota int64
-	// Storage applies the instance-wide allowance. MediaTripQuota remains the
-	// seed and test fallback for the administrator-controlled trip quota.
+	// MediaMaxBytes bounds one uploaded file.
+	MediaMaxBytes int64
+	// Storage applies the instance-wide allowance and persistent trip quota.
 	Storage        StorageService
 	Mail           MailStore
 	Invitations    InvitationStore
@@ -346,7 +343,6 @@ type Server struct {
 	media          MediaStore
 	mediaFiles     media.Store
 	mediaMaxBytes  int64
-	mediaTripQuota int64
 	storage        StorageService
 	mail           MailStore
 	invitations    InvitationStore
@@ -453,7 +449,6 @@ func NewServer(opts Options, logger *slog.Logger, deps Dependencies) *Server {
 		media:              deps.Media,
 		mediaFiles:         deps.MediaFiles,
 		mediaMaxBytes:      deps.MediaMaxBytes,
-		mediaTripQuota:     deps.MediaTripQuota,
 		storage:            deps.Storage,
 		mail:               deps.Mail,
 		invitations:        deps.Invitations,

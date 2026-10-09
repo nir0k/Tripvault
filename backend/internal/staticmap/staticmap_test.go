@@ -182,3 +182,27 @@ func TestFetcherRefusesWhatIsNotATile(t *testing.T) {
 		t.Errorf("%d answers that are not tiles were kept", len(cache.tiles))
 	}
 }
+
+// TestConcurrentTileMissesFetchOnce checks overlapping maps share a tile fetch.
+func TestConcurrentTileMissesFetchOnce(t *testing.T) {
+	var tile bytes.Buffer
+	if err := png.Encode(&tile, image.NewRGBA(image.Rect(0, 0, TileSize, TileSize))); err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); _, _ = w.Write(tile.Bytes()) }))
+	defer server.Close()
+	fetcher := NewFetcher(server.URL+"/{z}/{x}/{y}", "dev", &memoryCache{tiles: map[string][]byte{}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	var workers sync.WaitGroup
+	for range 8 {
+		workers.Go(func() {
+			if _, err := fetcher.Tile(t.Context(), 2, 1, 1); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	workers.Wait()
+	if calls.Load() != 1 {
+		t.Fatalf("same tile fetched %d times", calls.Load())
+	}
+}

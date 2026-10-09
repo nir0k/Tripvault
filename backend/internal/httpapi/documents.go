@@ -77,8 +77,6 @@ type itemResponse struct {
 	ActualCostAmount *string `json:"actual_cost_amount"`
 	// Difficulty is an activity's, 1 to 5, or null.
 	Difficulty *int `json:"difficulty"`
-	// SourceItemID is the place of the plan this one was copied from.
-	SourceItemID *string `json:"source_item_id"`
 	// Media are the place's pictures and CoverMediaID the one it is shown by.
 	Media        []mediaResponse `json:"media"`
 	CoverMediaID *string         `json:"cover_media_id"`
@@ -280,8 +278,6 @@ type stayResponse struct {
 	ActualCostAmount  *string  `json:"actual_cost_amount"`
 	Nights            int      `json:"nights"`
 	PricePerNight     *string  `json:"price_per_night"`
-	// SourceStayID is the stay of the plan this one was copied from.
-	SourceStayID *string `json:"source_stay_id"`
 }
 
 // expenseResponse is a cost tied to no place, stay or leg. day_id is null for
@@ -330,20 +326,18 @@ type staySummaryResponse struct {
 
 // documentResponse is a whole document.
 type documentResponse struct {
-	ID     string `json:"id"`
-	TripID string `json:"trip_id"`
-	Kind   string `json:"kind"`
-	// SourceDocumentID is the plan a report was copied from; null otherwise.
-	SourceDocumentID *string             `json:"source_document_id"`
-	IntroMD          string              `json:"intro_md"`
-	SummaryMD        string              `json:"summary_md"`
-	Days             []dayResponse       `json:"days"`
-	Unassigned       []itemResponse      `json:"unassigned"`
-	Stays            []stayResponse      `json:"stays"`
-	Transfers        []transferResponse  `json:"transfers"`
-	Expenses         []expenseResponse   `json:"expenses"`
-	Nights           []nightResponse     `json:"nights"`
-	StaySummary      staySummaryResponse `json:"stay_summary"`
+	ID          string              `json:"id"`
+	TripID      string              `json:"trip_id"`
+	Kind        string              `json:"kind"`
+	IntroMD     string              `json:"intro_md"`
+	SummaryMD   string              `json:"summary_md"`
+	Days        []dayResponse       `json:"days"`
+	Unassigned  []itemResponse      `json:"unassigned"`
+	Stays       []stayResponse      `json:"stays"`
+	Transfers   []transferResponse  `json:"transfers"`
+	Expenses    []expenseResponse   `json:"expenses"`
+	Nights      []nightResponse     `json:"nights"`
+	StaySummary staySummaryResponse `json:"stay_summary"`
 	// PendingLegs counts legs waiting for a calculation across the document.
 	PendingLegs int `json:"pending_legs"`
 	// EstimatedLegs counts the legs holding an estimate the provider could be
@@ -442,7 +436,6 @@ func newItemResponse(item domain.Item, stays map[uuid.UUID]domain.Stay, schedule
 		Rating:            item.Rating,
 		Difficulty:        item.Difficulty,
 		ActualCostAmount:  formatMoney(item.ActualCost),
-		SourceItemID:      formatID(item.SourceItemID),
 		Media:             pictures.of(item.ID),
 		CoverMediaID:      pictures.coverID(item.CoverMediaID),
 	}
@@ -482,7 +475,6 @@ func newStayResponse(stay domain.Stay) stayResponse {
 		ActualCostAmount:  formatMoney(stay.ActualCost),
 		Nights:            stay.Nights(),
 		PricePerNight:     formatMoney(stay.PricePerNight()),
-		SourceStayID:      formatID(stay.SourceStayID),
 	}
 }
 
@@ -497,21 +489,20 @@ func newDocumentResponse(content domain.DocumentContent, trip domain.TripSummary
 	}
 
 	response := documentResponse{
-		ID:               content.Document.ID.String(),
-		TripID:           content.Document.TripID.String(),
-		Kind:             string(content.Document.Kind),
-		SourceDocumentID: formatID(content.Document.SourceDocumentID),
-		IntroMD:          content.Document.IntroMD,
-		SummaryMD:        content.Document.SummaryMD,
-		Days:             make([]dayResponse, 0, len(content.Days)),
-		Unassigned:       []itemResponse{},
-		Stays:            make([]stayResponse, 0, len(content.Stays)),
-		Transfers:        make([]transferResponse, 0, len(content.Transfers)),
-		Expenses:         make([]expenseResponse, 0, len(content.Expenses)),
-		Nights:           []nightResponse{},
-		Translations:     newTranslationsResponse(content.Translations),
-		CreatedAt:        content.Document.CreatedAt,
-		UpdatedAt:        content.Document.UpdatedAt,
+		ID:           content.Document.ID.String(),
+		TripID:       content.Document.TripID.String(),
+		Kind:         string(content.Document.Kind),
+		IntroMD:      content.Document.IntroMD,
+		SummaryMD:    content.Document.SummaryMD,
+		Days:         make([]dayResponse, 0, len(content.Days)),
+		Unassigned:   []itemResponse{},
+		Stays:        make([]stayResponse, 0, len(content.Stays)),
+		Transfers:    make([]transferResponse, 0, len(content.Transfers)),
+		Expenses:     make([]expenseResponse, 0, len(content.Expenses)),
+		Nights:       []nightResponse{},
+		Translations: newTranslationsResponse(content.Translations),
+		CreatedAt:    content.Document.CreatedAt,
+		UpdatedAt:    content.Document.UpdatedAt,
 	}
 
 	for _, day := range content.Days {

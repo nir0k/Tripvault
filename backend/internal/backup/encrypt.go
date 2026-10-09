@@ -7,12 +7,8 @@ import (
 	"filippo.io/age"
 )
 
-// ScryptWorkFactor is the scrypt cost archives are locked with, as a power of
-// two. 18 is age's own default, about a second of one processor, which is
-// what makes guessing a passphrase slow; an archive records its cost, so one
-// locked at any cost opens the same way. It is a variable only so tests, which
-// lock and open archives by the dozen, can make it cheap.
-var ScryptWorkFactor = 18
+// scryptWorkFactor fixes the production archive encryption cost.
+const scryptWorkFactor = 18
 
 // Encryption is what a configuration asks for, resolved into something usable.
 //
@@ -60,7 +56,7 @@ func (e Encryption) Wrap(w io.Writer) (io.WriteCloser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("prepare encryption: %w", err)
 	}
-	recipient.SetWorkFactor(ScryptWorkFactor)
+	recipient.SetWorkFactor(scryptWorkFactor)
 
 	encrypted, err := age.Encrypt(w, recipient)
 	if err != nil {

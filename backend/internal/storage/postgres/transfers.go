@@ -19,7 +19,7 @@ var transferColumns = `t.id, t.document_id, t.kind, t.name, t.from_name, t.from_
 	t.to_name, t.to_address, t.to_lat, t.to_lng, t.departure_date, ` + clockColumn("t.departure_time") + `,
 	t.arrival_date, ` + clockColumn("t.arrival_time") + `, t.booking_ref, t.url, t.notes_md,
 	(t.planned_cost_amount * 100)::bigint, t.cost_per_person, (t.actual_cost_amount * 100)::bigint,
-	t.source_transfer_id, t.created_at, t.updated_at`
+	t.created_at, t.updated_at`
 
 // transferOrder is the order a document's transfers are read in: by departure,
 // a transfer with no time last on its day.
@@ -31,7 +31,7 @@ func scanTransfer(row pgx.Row) (domain.Transfer, error) {
 	err := row.Scan(&t.ID, &t.DocumentID, &t.Kind, &t.Name, &t.FromName, &t.FromAddress, &t.FromLat, &t.FromLng,
 		&t.ToName, &t.ToAddress, &t.ToLat, &t.ToLng, &t.DepartureDate, &t.DepartureTime,
 		&t.ArrivalDate, &t.ArrivalTime, &t.BookingRef, &t.URL, &t.NotesMD,
-		&t.PlannedCost, &t.CostPerPerson, &t.ActualCost, &t.SourceTransferID, &t.CreatedAt, &t.UpdatedAt)
+		&t.PlannedCost, &t.CostPerPerson, &t.ActualCost, &t.CreatedAt, &t.UpdatedAt)
 	return t, err
 }
 
@@ -135,18 +135,18 @@ func (r *DocumentRepository) DeleteTransfer(ctx context.Context, id uuid.UUID) e
 }
 
 // copyTransfers writes the report's transfers with their planned costs as a
-// snapshot, each remembering the plan's transfer it came from.
+// snapshot.
 func copyTransfers(ctx context.Context, tx pgx.Tx, reportID uuid.UUID, transfers []domain.Transfer) error {
 	for _, transfer := range transfers {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO transfers (id, document_id, kind, name, from_name, from_address, from_lat, from_lng,
 			                        to_name, to_address, to_lat, to_lng, departure_date, departure_time,
 			                        arrival_date, arrival_time, booking_ref, url, notes_md,
-			                        planned_cost_amount, cost_per_person, source_transfer_id)
+			                        planned_cost_amount, cost_per_person)
 			 SELECT $1, $2, kind, name, from_name, from_address, from_lat, from_lng,
 			        to_name, to_address, to_lat, to_lng, departure_date, departure_time,
 			        arrival_date, arrival_time, booking_ref, url, notes_md,
-			        planned_cost_amount, cost_per_person, id
+			        planned_cost_amount, cost_per_person
 			 FROM transfers WHERE id = $3`,
 			uuid.Must(uuid.NewV7()), reportID, transfer.ID); err != nil {
 			return fmt.Errorf("copy transfer: %w", err)

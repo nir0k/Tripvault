@@ -113,7 +113,7 @@ async function locate(): Promise<void> {
   located.value = ''
   error.value = ''
   try {
-    const found = await parseLink(text)
+    const found = await parseLink(text, locale.value)
     const [lat, lng] = line.value.length > 0 ? nearestOnLine(line.value, [found.lat, found.lng]) : [found.lat, found.lng]
     form.lat = Number(lat.toFixed(6))
     form.lng = Number(lng.toFixed(6))

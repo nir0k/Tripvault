@@ -245,17 +245,19 @@ func serve() error {
 
 	routingLimits := cfg.Routing.Limits()
 	router := routing.NewService(roadRouter(cfg, logger), routes, routes, routing.Options{
-		PerMinute: routingLimits.PerMinute,
-		Daily:     routingLimits.Daily,
-		CacheTTL:  cfg.Routing.CacheTTL,
+		PerMinute:      routingLimits.PerMinute,
+		Daily:          routingLimits.Daily,
+		CacheTTL:       cfg.Routing.CacheTTL,
+		CacheNamespace: cfg.Routing.Address(),
 	}, logger)
 
 	geocodes := postgres.NewGeocodingRepository(pool)
 	geocodingLimits := cfg.Geocoding.Limits()
 	places := geocoding.NewService(placeFinder(cfg, logger), geocodes, geocodes, geocoding.Options{
-		PerMinute: geocodingLimits.PerMinute,
-		Daily:     geocodingLimits.Daily,
-		CacheTTL:  cfg.Geocoding.CacheTTL,
+		PerMinute:      geocodingLimits.PerMinute,
+		Daily:          geocodingLimits.Daily,
+		CacheTTL:       cfg.Geocoding.CacheTTL,
+		CacheNamespace: cfg.Geocoding.Address(),
 	}, logger)
 
 	if err := bootstrap.Seed(ctx, users, bootstrap.Options{
@@ -320,7 +322,6 @@ func serve() error {
 		Media:              mediaCatalogue,
 		MediaFiles:         mediaFiles,
 		MediaMaxBytes:      cfg.Media.MaxSizeBytes(),
-		MediaTripQuota:     cfg.Media.TripQuotaBytes(),
 		Storage:            storageQuota,
 		Mail:               mailRepository,
 		Invitations:        invitations,

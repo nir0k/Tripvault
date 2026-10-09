@@ -64,7 +64,7 @@ func (f *fakeRegistrations) ConfirmEmailByCode(_ context.Context, _ string, code
 
 // newRegistrationServer builds a server whose mail and registrations live in memory.
 func newRegistrationServer(user domain.User, mail *fakeMail, registrations *fakeRegistrations, configured bool) *Server {
-	return NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	return newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Auth: &fakeAuth{user: user}, Users: fakeUsers{}, Database: fakeProbe{}, Mail: mail,
 		Registrations: registrations, MailConfigured: configured, MailPublicURL: "https://trips.example.com",
 	})

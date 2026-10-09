@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { useTripStore } from '@/stores/trip'
 import { computed, ref } from 'vue'
 import * as authApi from '@/api/auth'
 import { readRefreshToken, refreshSession } from '@/api/client'
@@ -24,6 +25,7 @@ export const useSessionStore = defineStore('session', () => {
    * language, theme, units and the way it writes dates and times.
    */
   function setUser(next: User | null): void {
+    if (user.value?.id !== next?.id) useTripStore().reset()
     user.value = next
     if (next) {
       applyLocale(resolveLocale(next.locale, readStoredLocale(), navigator.languages))
@@ -89,12 +91,12 @@ export const useSessionStore = defineStore('session', () => {
   /** logout ends the session and forgets the account. */
   async function logout(): Promise<void> {
     await authApi.logout()
-    user.value = null
+    setUser(null)
   }
 
   /** forget drops the account locally when the server ended the session. */
   function forget(): void {
-    user.value = null
+    setUser(null)
   }
 
   /** reload reads the account again, after something changed it. */

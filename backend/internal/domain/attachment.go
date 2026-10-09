@@ -14,7 +14,7 @@ import (
 // An attachment is a file a place or an activity carries besides its
 // pictures: a ticket, a booking, a timetable. It is not a picture of the trip -
 // it never reaches a gallery, a cover or a read-only link - and it belongs to
-// the one place it was attached to, in the one plan or report: copying the
+// the one place it was attached to, in its plan: copying the
 // place, the day or the plan into a report leaves it behind, since the tickets
 // of one group are nobody else's. The file is kept with its row and leaves with
 // the place.

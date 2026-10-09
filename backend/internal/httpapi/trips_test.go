@@ -172,7 +172,7 @@ func newTripServer(role domain.TripRole) (*Server, *fakeTrips) {
 		Owner: domain.TripUser{ID: uuid.New(), DisplayName: "Ada", Email: "ada@example.com"},
 		Role:  role,
 	}}
-	s := NewServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+	s := newHandlerServer(Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
 		Auth:  &fakeAuth{user: domain.User{ID: uuid.New(), IsActive: true, DefaultCurrency: "ISK"}},
 		Users: fakeUsers{},
 		Trips: trips,

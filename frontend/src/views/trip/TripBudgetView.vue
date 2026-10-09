@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useLoadGeneration } from '@/composables/useLoadGeneration'
 import { computed, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import * as documentsApi from '@/api/documents'
@@ -43,6 +44,7 @@ const budget = ref<Budget | null>(null)
 // The plan behind the figures, read so a cost can be edited where it is listed.
 const plan = ref<TripDocument | null>(null)
 const loading = ref(false)
+const beginLoad = useLoadGeneration()
 const busy = ref(false)
 const error = ref('')
 const filterDay = ref('')
@@ -146,6 +148,7 @@ function dayNumber(dayId: string | null): string {
 
 // load reads the budget of the open trip, and the plan the figures come from.
 async function load(): Promise<void> {
+  const active = beginLoad()
   const tripId = trip.value?.id
   if (!tripId) {
     return
@@ -154,12 +157,14 @@ async function load(): Promise<void> {
   error.value = ''
   try {
     const next = await getBudget(tripId)
+    const document = next.document_id ? await documentsApi.getDocument(next.document_id) : null
+    if (!active()) return
     apply(next)
-    plan.value = next.document_id ? await documentsApi.getDocument(next.document_id) : null
+    plan.value = document
   } catch (err) {
-    error.value = errorMessage(err, t, te)
+    if (active()) error.value = errorMessage(err, t, te)
   } finally {
-    loading.value = false
+    if (active()) loading.value = false
   }
 }
 

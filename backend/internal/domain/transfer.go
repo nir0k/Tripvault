@@ -67,10 +67,8 @@ type Transfer struct {
 	CostPerPerson bool
 	// ActualCost belongs to a report; in a plan it stays empty.
 	ActualCost *Money
-	// SourceTransferID is the transfer of the plan this one was copied from.
-	SourceTransferID *uuid.UUID
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // Normalize - trims a transfer's text and checks its fields.

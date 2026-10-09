@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { useLoadGeneration } from '@/composables/useLoadGeneration'
 import { getDocument } from '@/api/documents'
 import { getShared, getSharedDocument } from '@/api/shared'
 import { getTrip } from '@/api/trips'
@@ -47,6 +48,7 @@ function sharedTrip(shared: Shared): Trip {
 /** useTripStore holds the trip whose pages are open, shared by its tabs. */
 export const useTripStore = defineStore('trip', () => {
   const trip = ref<Trip | null>(null)
+  const beginLoad = useLoadGeneration()
   const error = ref<unknown>(null)
   const loading = ref(false)
   // shared says the trip was opened by a read-only link, and is read through it.
@@ -57,6 +59,7 @@ export const useTripStore = defineStore('trip', () => {
 
   /** load reads a trip, dropping the previous one first so no tab shows stale data. */
   async function load(tripId: string): Promise<void> {
+    const current = beginLoad()
     if (shared.value || trip.value?.id !== tripId) {
       trip.value = null
     }
@@ -65,16 +68,18 @@ export const useTripStore = defineStore('trip', () => {
     loading.value = true
     error.value = null
     try {
-      trip.value = await getTrip(tripId)
+      const next = await getTrip(tripId)
+      if (current()) trip.value = next
     } catch (err) {
-      error.value = err
+      if (current()) error.value = err
     } finally {
-      loading.value = false
+      if (current()) loading.value = false
     }
   }
 
   /** loadShared reads the trip the tab's read-only link opens. */
   async function loadShared(): Promise<void> {
+    const current = beginLoad()
     trip.value = null
     shared.value = true
     loading.value = true
@@ -82,12 +87,13 @@ export const useTripStore = defineStore('trip', () => {
     canDownload.value = false
     try {
       const opened = await getShared()
+      if (!current()) return
       canDownload.value = opened.allow_download
       trip.value = sharedTrip(opened)
     } catch (err) {
-      error.value = err
+      if (current()) error.value = err
     } finally {
-      loading.value = false
+      if (current()) loading.value = false
     }
   }
 
@@ -101,8 +107,19 @@ export const useTripStore = defineStore('trip', () => {
 
   /** set replaces the trip after a change the server confirmed. */
   function set(next: Trip): void {
+    beginLoad()
     trip.value = next
   }
 
-  return { trip, error, loading, shared, canDownload, load, loadShared, readDocument, set }
+  /** reset forgets account-specific content and invalidates outstanding loads. */
+  function reset(): void {
+    beginLoad()
+    trip.value = null
+    error.value = null
+    loading.value = false
+    shared.value = false
+    canDownload.value = false
+  }
+
+  return { trip, error, loading, shared, canDownload, load, loadShared, readDocument, set, reset }
 })

@@ -79,13 +79,13 @@ func one[T any](value T, err error, action string) (T, error) {
 	return value, nil
 }
 
-const documentColumns = `doc.id, doc.trip_id, doc.kind, doc.source_document_id, doc.intro_md, doc.summary_md,
+const documentColumns = `doc.id, doc.trip_id, doc.kind, doc.intro_md, doc.summary_md,
 	doc.created_at, doc.updated_at`
 
 // scanDocument reads one row in the order of documentColumns.
 func scanDocument(row pgx.Row) (domain.Document, error) {
 	var d domain.Document
-	err := row.Scan(&d.ID, &d.TripID, &d.Kind, &d.SourceDocumentID, &d.IntroMD, &d.SummaryMD, &d.CreatedAt, &d.UpdatedAt)
+	err := row.Scan(&d.ID, &d.TripID, &d.Kind, &d.IntroMD, &d.SummaryMD, &d.CreatedAt, &d.UpdatedAt)
 	return d, err
 }
 
@@ -105,14 +105,14 @@ func scanDay(row pgx.Row) (domain.Day, error) {
 var stayColumns = `s.id, s.document_id, s.name, s.kind, s.address, s.lat, s.lng, s.check_in_date, ` +
 	clockColumn("s.check_in_time") + `, s.check_out_date, ` + clockColumn("s.check_out_time") + `,
 	s.booking_ref, s.url, s.contacts, s.notes_md, (s.planned_cost_amount * 100)::bigint,
-	(s.actual_cost_amount * 100)::bigint, s.source_stay_id, s.created_at, s.updated_at`
+	(s.actual_cost_amount * 100)::bigint, s.created_at, s.updated_at`
 
 // scanStay reads one row in the order of stayColumns.
 func scanStay(row pgx.Row) (domain.Stay, error) {
 	var s domain.Stay
 	err := row.Scan(&s.ID, &s.DocumentID, &s.Name, &s.Kind, &s.Address, &s.Lat, &s.Lng, &s.CheckInDate,
 		&s.CheckInTime, &s.CheckOutDate, &s.CheckOutTime, &s.BookingRef, &s.URL, &s.Contacts, &s.NotesMD,
-		&s.PlannedCost, &s.ActualCost, &s.SourceStayID, &s.CreatedAt, &s.UpdatedAt)
+		&s.PlannedCost, &s.ActualCost, &s.CreatedAt, &s.UpdatedAt)
 	return s, err
 }
 
@@ -180,7 +180,7 @@ var itemColumns = `i.id, i.document_id, i.day_id, i.position, i.kind, coalesce(i
 	clockColumn("i.desired_time") + `, i.visit_minutes, i.is_optional, i.booking_ref,
 	(i.planned_cost_amount * 100)::bigint, i.cost_per_person, i.cost_category, i.cost_note, i.paid_by, i.cost_split,
 	i.status, i.story_md, ` + clockColumn("i.actual_time") + `, ` + clockColumn("i.actual_end_time") + `, i.rating,
-	(i.actual_cost_amount * 100)::bigint, i.cover_media_id, i.source_item_id, i.difficulty, i.created_at, i.updated_at`
+	(i.actual_cost_amount * 100)::bigint, i.cover_media_id, i.difficulty, i.created_at, i.updated_at`
 
 // scanItem reads one row in the order of itemColumns.
 func scanItem(row pgx.Row) (domain.Item, error) {
@@ -190,7 +190,7 @@ func scanItem(row pgx.Row) (domain.Item, error) {
 		&i.DesiredTime, &i.VisitMinutes, &i.IsOptional, &i.BookingRef,
 		&i.PlannedCost, &i.CostPerPerson, &i.CostCategory, &i.CostNote, &i.PaidBy, &i.CostSplit,
 		&i.Status, &i.StoryMD, &i.ActualTime, &i.ActualEndTime, &i.Rating, &i.ActualCost, &i.CoverMediaID,
-		&i.SourceItemID, &i.Difficulty, &i.CreatedAt, &i.UpdatedAt)
+		&i.Difficulty, &i.CreatedAt, &i.UpdatedAt)
 	return i, err
 }
 
@@ -235,7 +235,7 @@ func (r *DocumentRepository) Item(ctx context.Context, id uuid.UUID) (domain.Ite
 	if err != nil {
 		return item, err
 	}
-	shares, err := readCostShares(ctx, r.pool, `s.item_id = $1`, id)
+	shares, err := readShares(ctx, r.pool, itemShares, `s.item_id = $1`, id)
 	item.CostShares = shares[id]
 	return item, err
 }
@@ -291,7 +291,7 @@ func readContent(ctx context.Context, q querier, id uuid.UUID) (domain.DocumentC
 		`SELECT `+itemColumns+` FROM items i WHERE i.document_id = $1 ORDER BY i.position, i.created_at`, id); err != nil {
 		return content, err
 	}
-	shares, err := readCostShares(ctx, q, `s.item_id IN (SELECT id FROM items WHERE document_id = $1)`, id)
+	shares, err := readShares(ctx, q, itemShares, `s.item_id IN (SELECT id FROM items WHERE document_id = $1)`, id)
 	if err != nil {
 		return content, err
 	}
@@ -328,47 +328,6 @@ func readContent(ctx context.Context, q querier, id uuid.UUID) (domain.DocumentC
 	attachStops(content.Tracks, stops)
 	content.Translations, err = documentTranslations(ctx, q, content.Document.TripID)
 	return content, err
-}
-
-// readCostShares reads the members the costs of some items are shared among,
-// in the order they were listed, by item. where selects the shares, as s.
-func readCostShares(ctx context.Context, q querier, where string, args ...any) (map[uuid.UUID][]domain.CostShare, error) {
-	rows, err := q.Query(ctx,
-		`SELECT s.item_id, s.user_id, (s.amount * 100)::bigint FROM item_cost_shares s
-		 WHERE `+where+` ORDER BY s.item_id, s.position`, args...)
-	if err != nil {
-		return nil, fmt.Errorf("query cost shares: %w", err)
-	}
-	defer rows.Close()
-	shares := make(map[uuid.UUID][]domain.CostShare)
-	for rows.Next() {
-		var itemID uuid.UUID
-		var share domain.CostShare
-		if err := rows.Scan(&itemID, &share.UserID, &share.Amount); err != nil {
-			return nil, fmt.Errorf("scan cost share: %w", err)
-		}
-		shares[itemID] = append(shares[itemID], share)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read cost shares: %w", err)
-	}
-	return shares, nil
-}
-
-// writeCostShares replaces the members a place's cost is shared among with
-// the ones the place lists.
-func writeCostShares(ctx context.Context, tx pgx.Tx, place domain.Item) error {
-	if _, err := tx.Exec(ctx, `DELETE FROM item_cost_shares WHERE item_id = $1`, place.ID); err != nil {
-		return fmt.Errorf("clear cost shares: %w", err)
-	}
-	for position, share := range place.CostShares {
-		if _, err := tx.Exec(ctx,
-			`INSERT INTO item_cost_shares (item_id, user_id, position, amount) VALUES ($1, $2, $3, $4::numeric)`,
-			place.ID, share.UserID, position, moneyParam(share.Amount)); err != nil {
-			return fmt.Errorf("add cost share: %w", err)
-		}
-	}
-	return nil
 }
 
 // collect runs a query and scans every row with scan.
@@ -491,8 +450,12 @@ func fitDocuments(ctx context.Context, tx pgx.Tx, tripID uuid.UUID, length int, 
 	}, `SELECT doc.kind, d.position, d.date, d.title
 	    FROM days d JOIN documents doc ON doc.id = d.document_id
 	    WHERE doc.trip_id = $1 AND d.position >= $2
-	      AND (d.title <> '' OR btrim(d.notes_md) <> ''
-	           OR EXISTS (SELECT 1 FROM items i WHERE i.day_id = d.id AND i.kind <> 'stay_anchor'))
+	      AND (d.title <> '' OR btrim(d.notes_md) <> '' OR d.highlight <> ''
+	           OR EXISTS (SELECT 1 FROM items i WHERE i.day_id = d.id
+	                      AND (i.kind <> 'stay_anchor' OR btrim(i.story_md) <> ''))
+	           OR EXISTS (SELECT 1 FROM media_links m WHERE m.day_id = d.id
+	                      OR m.item_id IN (SELECT id FROM items WHERE day_id = d.id))
+	           OR EXISTS (SELECT 1 FROM expenses e WHERE e.day_id = d.id))
 	    ORDER BY doc.kind, d.position`, tripID, length)
 	if err != nil {
 		return err
@@ -726,7 +689,7 @@ func reshapeTrip(ctx context.Context, tx pgx.Tx, tripID uuid.UUID, oldStart, new
 }
 
 // resizeTrip changes the day count of a trip with dates by delta, moving its
-// end date and fitting the other documents to the new length.
+// end date and fitting its document to the new length.
 func resizeTrip(ctx context.Context, tx pgx.Tx, tripID uuid.UUID, start *time.Time, length int, confirm bool) error {
 	if start == nil {
 		return nil
@@ -775,7 +738,7 @@ func insertDayAt(ctx context.Context, tx pgx.Tx, day domain.Day, count int, posi
 // AddDay - inserts a day into a document.
 //
 // On a trip with dates every day has a date, so a new day lengthens the trip by
-// one: the end date moves and the other document gains an empty day at its end.
+// one: the end date moves with the inserted day.
 //
 // Arguments:
 //   - ctx: context bounding the transaction.
@@ -849,12 +812,15 @@ func (r *DocumentRepository) DuplicateDay(ctx context.Context, sourceID uuid.UUI
 			                      address, osm_ref,
 			                      description_md, url, desired_time, visit_minutes, is_optional, booking_ref,
 			                      planned_cost_amount, cost_per_person, cost_category, difficulty,
-			                      cost_note, paid_by, cost_split)
+			                      cost_note, paid_by, cost_split, status)
 			   SELECT source.copy_id, document_id, $2, position, kind, name, category, activity_type, lat, lng,
 			          address, osm_ref,
 			          description_md, url, desired_time, visit_minutes, is_optional, booking_ref,
 			          planned_cost_amount, cost_per_person, cost_category, difficulty,
-			          cost_note, paid_by, cost_split
+			          cost_note, paid_by, cost_split,
+			          CASE WHEN $3 = 'report' THEN
+			               CASE WHEN status = 'unplanned' THEN 'unplanned' ELSE 'visited' END
+			               ELSE 'planned' END
 			   FROM items JOIN source ON source.id = items.id
 			 ), shares AS (
 			   INSERT INTO item_cost_shares (item_id, user_id, position, amount)
@@ -864,7 +830,7 @@ func (r *DocumentRepository) DuplicateDay(ctx context.Context, sourceID uuid.UUI
 			 INSERT INTO translations (trip_id, item_id, field, lang, value)
 			 SELECT tr.trip_id, source.copy_id, tr.field, tr.lang, tr.value
 			 FROM translations tr JOIN source ON source.id = tr.item_id
-			 WHERE tr.field IN ('name', 'description_md')`, sourceID, copyID); err != nil {
+			 WHERE tr.field IN ('name', 'description_md')`, sourceID, copyID, string(document.Kind)); err != nil {
 			return fmt.Errorf("copy places: %w", err)
 		}
 		if _, err := tx.Exec(ctx,
@@ -919,8 +885,7 @@ func (r *DocumentRepository) UpdateDay(ctx context.Context, day domain.Day) erro
 // DeleteDay - removes a day.
 //
 // A plan day hands its places to the unassigned list. On a trip with dates the
-// trip becomes one day shorter; the other document then loses its last day,
-// which needs confirm when that day holds content. A document keeps at least
+// trip becomes one day shorter. A document keeps at least
 // one day.
 //
 // Arguments:
@@ -1051,22 +1016,22 @@ func insertPlace(ctx context.Context, tx pgx.Tx, place domain.Item, position int
 		`INSERT INTO items (id, document_id, day_id, position, kind, name, category, lat, lng, address, osm_ref,
 		                    description_md, url, desired_time, visit_minutes, is_optional, booking_ref,
 		                    planned_cost_amount, cost_per_person, cost_category,
-		                    status, story_md, actual_time, rating, actual_cost_amount, source_item_id,
+		                    status, story_md, actual_time, rating, actual_cost_amount,
 		                    activity_type, actual_end_time, difficulty, cost_note, paid_by, cost_split)
-		 VALUES ($1, $2, $3, $4, $26, $5, $6, $7, $8, $9, nullif($10, ''), $11, $12, $13::time, $14, $15, $16,
-		         $17::numeric, $18, $19, $20, $21, $22::time, $23, $24::numeric, $25, nullif($27, ''),
-		         $28::time, $29, $30, $31, $32)`,
+		 VALUES ($1, $2, $3, $4, $25, $5, $6, $7, $8, $9, nullif($10, ''), $11, $12, $13::time, $14, $15, $16,
+		         $17::numeric, $18, $19, $20, $21, $22::time, $23, $24::numeric, nullif($26, ''),
+		         $27::time, $28, $29, $30, $31)`,
 		place.ID, place.DocumentID, place.DayID, position, place.Name, place.Category, place.Lat, place.Lng,
 		place.Address, place.OSMRef, place.DescriptionMD, place.URL, clockParam(place.DesiredTime),
 		place.VisitMinutes, place.IsOptional, place.BookingRef, moneyParam(place.PlannedCost),
 		place.CostPerPerson, place.CostCategory,
 		place.Status, place.StoryMD, clockParam(place.ActualTime), place.Rating, moneyParam(place.ActualCost),
-		place.SourceItemID, place.Kind, place.ActivityType, clockParam(place.ActualEndTime), place.Difficulty,
+		place.Kind, place.ActivityType, clockParam(place.ActualEndTime), place.Difficulty,
 		place.CostNote, place.PaidBy, splitParam(place.CostSplit))
 	if err != nil {
 		return fmt.Errorf("add place: %w", err)
 	}
-	return writeCostShares(ctx, tx, place)
+	return writeShares(ctx, tx, itemShares, place.ID, place.CostShares)
 }
 
 // splitParam stores an unset split as none, the column's own default.
@@ -1174,7 +1139,7 @@ func (r *DocumentRepository) UpdatePlace(ctx context.Context, place domain.Item)
 		if tag.RowsAffected() == 0 {
 			return domain.ErrNotFound
 		}
-		if err := writeCostShares(ctx, tx, place); err != nil {
+		if err := writeShares(ctx, tx, itemShares, place.ID, place.CostShares); err != nil {
 			return err
 		}
 		// Only an activity carries a track, so an activity turned into a place

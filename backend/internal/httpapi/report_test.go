@@ -36,6 +36,7 @@ func decodeDocument(t *testing.T, body []byte) documentResponse {
 func TestCreateReport(t *testing.T) {
 	for _, role := range []domain.TripRole{domain.RoleOwner, domain.RoleViewer} {
 		s, docs := newDocumentServer(role)
+		docs.trips.trip.TrackSpeedKmh = 2.5
 		path := "/api/v1/trips/" + docs.document.TripID.String() + "/reports"
 
 		recorder := send(s, http.MethodPost, path, "good", "")
@@ -51,7 +52,7 @@ func TestCreateReport(t *testing.T) {
 		}
 		copied := docs.copied
 		if copied == nil || copied.ID == plan.ID || copied.Budget == nil || *copied.Budget != *plan.Budget ||
-			copied.Travelers != plan.Travelers {
+			copied.Travelers != plan.Travelers || copied.TrackSpeedKmh != plan.TrackSpeedKmh {
 			t.Errorf("%s: the report copied %+v", role, copied)
 		}
 	}

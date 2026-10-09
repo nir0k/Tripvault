@@ -47,11 +47,9 @@ type Expense struct {
 	// Comment is anything longer said about the expense, as plain text.
 	Comment string
 	// URL links to a booking, a receipt or the page something was bought on.
-	URL string
-	// SourceExpenseID is the expense of the plan this one was copied from.
-	SourceExpenseID *uuid.UUID
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	URL       string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // maxExpenseComment bounds the plain-text comment of an expense.

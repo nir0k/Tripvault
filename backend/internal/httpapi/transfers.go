@@ -37,8 +37,6 @@ type transferResponse struct {
 	PlannedCostAmount *string `json:"planned_cost_amount"`
 	CostPerPerson     bool    `json:"cost_per_person"`
 	ActualCostAmount  *string `json:"actual_cost_amount"`
-	// SourceTransferID is the transfer of the plan this one was copied from.
-	SourceTransferID *string `json:"source_transfer_id"`
 }
 
 // newTransferResponse maps a transfer onto the wire.
@@ -65,7 +63,6 @@ func newTransferResponse(transfer domain.Transfer) transferResponse {
 		PlannedCostAmount: formatMoney(transfer.PlannedCost),
 		CostPerPerson:     transfer.CostPerPerson,
 		ActualCostAmount:  formatMoney(transfer.ActualCost),
-		SourceTransferID:  formatID(transfer.SourceTransferID),
 	}
 }
 
