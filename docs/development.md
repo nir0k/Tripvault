@@ -40,7 +40,7 @@ make clean        # remove the build output
 
 ## PostgreSQL regressions
 
-Unit tests run without a database. The focused repository regressions also run when `TRIPVAULT_TEST_DB_DSN` names a disposable PostgreSQL 16 database. They create and drop isolated schemas and exercise migrations and persisted behavior, including concurrent administrator deletion, report copies and confirmation before losing day content. The test account must be allowed to create schemas. This variable is used by the tests only and does not belong in deployment configuration.
+Unit tests run without a database. The focused repository regressions also run when `TRIPVAULT_TEST_DB_DSN` names a disposable PostgreSQL 18 database. They create and drop isolated schemas and exercise migrations and persisted behavior, including concurrent administrator deletion, report copies and confirmation before losing day content. The test account must be allowed to create schemas. This variable is used by the tests only and does not belong in deployment configuration.
 
 ```sh
 TRIPVAULT_TEST_DB_DSN=postgres://postgres@127.0.0.1:5432/tripvault_test?sslmode=disable make test-backend
@@ -83,7 +83,7 @@ npm ci
 npm run dev
 ```
 
-The backend then runs from `bin/tripvault-backend` against a PostgreSQL 16 of your own, configured through environment variables:
+The backend then runs from `bin/tripvault-backend` against a PostgreSQL 18 of your own, configured through environment variables:
 
 ```sh
 export TRIPVAULT_ENV=development

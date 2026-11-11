@@ -6,7 +6,7 @@ This guide is for whoever runs a Tripvault instance. It assumes the [quick start
 
 | Container | Image | Role |
 |---|---|---|
-| `tripvault-db` | `postgres:16` | The database. It publishes no port. |
+| `tripvault-db` | `postgres:18.6-alpine3.24` | The database. It publishes no port. |
 | `tripvault-backend` | `ghcr.io/nir0k/tripvault-backend` | The API, the PDF renderer, previews and backups. It publishes no port. |
 | `tripvault-frontend` | `ghcr.io/nir0k/tripvault-frontend` | nginx serving the interface and proxying `/api`, `/docs` and the probes to the backend. It is the only published port. |
 
@@ -213,12 +213,73 @@ server {
 
 | Volume | Mounted at | Holds |
 |---|---|---|
-| `tripvault-pgdata` | the database's data directory | Every record: accounts, trips, documents, tracks and attachments. |
+| `tripvault-pgdata` | `/var/lib/postgresql` | Every record: accounts, trips, documents, tracks and attachments. PostgreSQL 18 keeps them in `18/docker` inside the volume. |
 | `tripvault-media` | `/app/media` | Photographs, avatars and photos of ideas, with their previews under `.previews/`. |
 | `tripvault-backups` | `/app/backups` | Archives written to the server's own disk. |
 | `tripvault-config` | `/app/config` | The key that seals the stored backup credentials, unless `TRIPVAULT_SECRETS_KEY` is set. |
 
 `docker compose down` keeps the volumes; only `docker compose down --volumes` destroys them. A copy of the volumes is not a backup to rely on: use the [backups](backups.md), which are consistent and verified on restore.
+
+## Upgrading from PostgreSQL 16
+
+Releases up to 1.12 ran the database on PostgreSQL 16; later ones run PostgreSQL 18. The data files of one major version cannot be read by another, so an existing installation moves its database across with a dump and a restore, once. The new compose file mounts the volume at `/var/lib/postgresql` instead of `/var/lib/postgresql/data`, and PostgreSQL 18 refuses to start on a volume that PostgreSQL 16 wrote, whichever path it is mounted at.
+
+The commands below run in the directory with `docker-compose.yaml` and `.env`. They read the database name and user from the container's `POSTGRES_DB` and `POSTGRES_USER`, so they work whatever `.env` sets. Take a [backup](backups.md) from the interface first as well.
+
+1. Stop the backend so nothing writes during the dump:
+
+   ```sh
+   docker compose stop tripvault-backend
+   ```
+
+2. Dump the database, check that the dump reads back, and record how many rows each table has. `-T` matters: without it a terminal mangles the binary dump.
+
+   ```sh
+   docker compose exec -T tripvault-db sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > tripvault-pg16.dump
+   docker compose exec -T tripvault-db pg_restore --list < tripvault-pg16.dump > /dev/null && echo "dump OK"
+   docker compose exec -T tripvault-db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At' > rows-before.txt <<'SQL'
+   SELECT table_name || ' ' || (xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM public.%I', table_name), false, true, '')))[1]
+   FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name;
+   SQL
+   ```
+
+   Do not go on unless the second command prints `dump OK`.
+
+3. Stop everything and remove the old database volume. Remove only this one: `docker compose down --volumes` would destroy the photographs and backups too. From here on the dump is the only copy of the database, so keep it until the upgrade is checked and the next backup has run.
+
+   ```sh
+   docker compose down
+   docker volume rm tripvault_tripvault-pgdata
+   ```
+
+4. Replace `docker-compose.yaml` with the current one, which carries the new image and volume path, and start the database alone:
+
+   ```sh
+   curl -fsSLO https://raw.githubusercontent.com/nir0k/Tripvault/master/docker-compose.yaml
+   docker compose up -d --wait tripvault-db
+   ```
+
+5. Restore the dump and count the rows again. `pg_restore` should print nothing, and neither should `diff`.
+
+   ```sh
+   docker compose exec -T tripvault-db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < tripvault-pg16.dump
+   docker compose exec -T tripvault-db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At' > rows-after.txt <<'SQL'
+   SELECT table_name || ' ' || (xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM public.%I', table_name), false, true, '')))[1]
+   FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name;
+   SQL
+   diff rows-before.txt rows-after.txt
+   ```
+
+6. Start the rest, then check that the backend found its schema up to date and the interface shows your trips:
+
+   ```sh
+   docker compose up -d
+   docker compose logs tripvault-backend | grep -i migrat
+   ```
+
+7. Once everything checks out and a new backup has completed, delete `tripvault-pg16.dump` and the two row counts.
+
+To go back before step 6, remove the new volume, restore the previous `docker-compose.yaml` (image `postgres:16.15-alpine`, volume at `/var/lib/postgresql/data`), start the database and restore the same dump into it as in step 5.
 
 ## Health and status
 

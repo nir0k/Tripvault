@@ -55,6 +55,8 @@ docker compose up -d
 
 Database migrations are applied automatically when the backend starts. Set `TRIPVAULT_VERSION` in `.env` to a release such as `1.11.0` to decide when upgrades happen instead of following `latest`. Take a backup before upgrading: an archive cannot be restored into a build older than the one that wrote it.
 
+An installation started from release 1.12 or earlier runs PostgreSQL 16 and moves its database to PostgreSQL 18 once, by hand, before the new compose file can start: see [Upgrading from PostgreSQL 16](docs/deployment.md#upgrading-from-postgresql-16).
+
 ## Documentation
 
 - [Deployment](docs/deployment.md) - configuration, reverse proxy, map tiles, routing and place search, volumes, security.
